@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --navy: #1B2A4A;
+  --navy-dark: #141f38;
+  --orange: #E84C0E;
+  --orange-hover: #c93d09;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Poppins', sans-serif;
+  background-color: #f0f2f5;
+  color: #1B2A4A;
+}
+
+/* ── Scrollbar ─────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f0f2f5; }
+::-webkit-scrollbar-thumb { background: #c1c9d4; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #9aa5b1; }
+
+/* ── Table ─────────────────────────────── */
+.task-table th {
+  @apply bg-navy text-white text-xs font-semibold uppercase tracking-wider px-4 py-3 text-left;
+}
+
+.task-table td {
+  @apply px-4 py-3 text-sm border-b border-gray-100;
+}
+
+.task-table tr:hover td {
+  @apply bg-blue-50;
+}
+
+/* ── Action dropdown ───────────────────── */
+.action-select {
+  @apply text-sm border border-gray-200 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer;
+}
+
+.action-select.delete {
+  @apply border-red-200 text-red-700 bg-red-50;
+}
+
+.action-select.reschedule {
+  @apply border-green-200 text-green-700 bg-green-50;
+}
+
+.action-select.delay {
+  @apply border-blue-200 text-blue-700 bg-blue-50;
+}
