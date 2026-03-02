@@ -261,7 +261,7 @@ function HomePageContent() {
       >
         <div className="flex items-center gap-3">
           <img
-            src="/valstone-logo.png"
+            src="/Valstone logo.png"
             alt="Valstone"
             className="h-8 w-auto"
           />
