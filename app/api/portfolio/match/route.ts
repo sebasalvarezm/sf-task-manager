@@ -7,6 +7,28 @@ import path from "path";
 // Server-side cache so we don't re-query the same company name twice per session
 const matchCache = new Map<string, { matched: boolean; group: string | null }>();
 
+// Fetch homepage text from a company's website (best-effort, 5s timeout)
+async function fetchWebsiteText(url: string): Promise<string | null> {
+  try {
+    const normalized = url.startsWith("http") ? url : `https://${url}`;
+    const res = await fetch(normalized, {
+      signal: AbortSignal.timeout(5000),
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; portfolio-matcher/1.0)" },
+    });
+    const html = await res.text();
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 800);
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
 function loadGroupDescriptions(): string {
   const groupsDir = path.join(process.cwd(), "content", "groups");
   const files = fs.readdirSync(groupsDir).filter((f) => f.endsWith(".md") && f !== "CLAUDE.md");
@@ -29,7 +51,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { accountName } = await request.json();
+  const { accountName, accountWebsite } = await request.json();
 
   if (!accountName || typeof accountName !== "string") {
     return NextResponse.json({ matched: false, group: null });
@@ -50,6 +72,9 @@ export async function POST(request: NextRequest) {
   try {
     const groups = loadGroupDescriptions();
 
+    // Try to fetch website content for richer context (best-effort)
+    const websiteText = accountWebsite ? await fetchWebsiteText(accountWebsite) : null;
+
     const message = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 100,
@@ -59,11 +84,11 @@ export async function POST(request: NextRequest) {
           content: `You are classifying a software company into one of 9 industrial M&A portfolio groups.
 
 Company name: "${accountName}"
-
+${websiteText ? `\nCompany website text (scraped homepage):\n"${websiteText}"\n` : ""}
 Portfolio groups:
 ${groups}
 
-Based on the company name, determine if this company likely sells software to one of these industrial verticals. Use your knowledge of real companies and industries — even if the name only partially hints at the industry (e.g. "Softree" → forestry, "Certainty" → compliance/safety, "AquaSpy" → agriculture/irrigation). Lean toward matching if there is a reasonable connection.
+Based on the company name${websiteText ? " and website content" : ""}, determine if this company sells software to one of these industrial verticals. Use all available signals. Lean toward matching if there is a reasonable connection.
 
 Respond with ONLY valid JSON, no explanation:
 - If it fits a group: {"matched": true, "group": "exact group title from above"}

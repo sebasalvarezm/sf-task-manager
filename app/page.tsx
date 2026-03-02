@@ -107,11 +107,11 @@ function HomePageContent() {
   function runPortfolioMatching(tasks: SalesforceTask[]) {
     // Collect unique accounts that haven't been matched yet
     const seen = new Set<string>();
-    const toMatch: { accountId: string; accountName: string }[] = [];
+    const toMatch: { accountId: string; accountName: string; accountWebsite: string | null }[] = [];
     for (const task of tasks) {
       if (task.AccountId && task.AccountName && !seen.has(task.AccountId)) {
         seen.add(task.AccountId);
-        toMatch.push({ accountId: task.AccountId, accountName: task.AccountName });
+        toMatch.push({ accountId: task.AccountId, accountName: task.AccountName, accountWebsite: task.AccountWebsite ?? null });
       }
     }
     if (toMatch.length === 0) return;
@@ -128,12 +128,12 @@ function HomePageContent() {
     });
 
     // Fire requests staggered 250ms apart to avoid hitting API rate limits
-    toMatch.forEach(({ accountId, accountName }, i) => {
+    toMatch.forEach(({ accountId, accountName, accountWebsite }, i) => {
       setTimeout(() => {
         fetch("/api/portfolio/match", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accountName }),
+          body: JSON.stringify({ accountName, accountWebsite }),
         })
           .then((res) => res.json())
           .then((data) => {
