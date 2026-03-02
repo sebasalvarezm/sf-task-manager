@@ -14,18 +14,12 @@ function loadGroupDescriptions(): string {
   return files
     .map((file) => {
       const content = fs.readFileSync(path.join(groupsDir, file), "utf-8");
-      // Extract just the title and Group Overview section to keep the prompt lean
-      const lines = content.split("\n");
-      const title = lines[0].replace(/^#\s*/, "").trim();
-      const overviewStart = lines.findIndex((l) => l.includes("## Group Overview"));
-      const overviewEnd = lines.findIndex(
-        (l, i) => i > overviewStart && l.startsWith("## ")
-      );
-      const overview = lines
-        .slice(overviewStart + 1, overviewEnd > overviewStart ? overviewEnd : overviewStart + 8)
+      // Include full file content (overview + core outreach) for richer matching context
+      return content
+        .split("\n")
+        .filter((l) => l.trim() !== "---")
         .join("\n")
         .trim();
-      return `### ${title}\n${overview}`;
     })
     .join("\n\n");
 }
