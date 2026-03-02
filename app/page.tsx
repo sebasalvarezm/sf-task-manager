@@ -127,33 +127,35 @@ function HomePageContent() {
       return next;
     });
 
-    // Fire requests in parallel
-    for (const { accountId, accountName } of toMatch) {
-      fetch("/api/portfolio/match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountName }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          setPortfolioMatches((prev) => {
-            const next = new Map(prev);
-            next.set(accountId, {
-              matched: data.matched ?? false,
-              group: data.group ?? null,
-              unavailable: data.unavailable ?? false,
-            });
-            return next;
-          });
+    // Fire requests staggered 250ms apart to avoid hitting API rate limits
+    toMatch.forEach(({ accountId, accountName }, i) => {
+      setTimeout(() => {
+        fetch("/api/portfolio/match", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accountName }),
         })
-        .catch(() => {
-          setPortfolioMatches((prev) => {
-            const next = new Map(prev);
-            next.set(accountId, { matched: false, group: null, unavailable: true });
-            return next;
+          .then((res) => res.json())
+          .then((data) => {
+            setPortfolioMatches((prev) => {
+              const next = new Map(prev);
+              next.set(accountId, {
+                matched: data.matched ?? false,
+                group: data.group ?? null,
+                unavailable: data.unavailable ?? false,
+              });
+              return next;
+            });
+          })
+          .catch(() => {
+            setPortfolioMatches((prev) => {
+              const next = new Map(prev);
+              next.set(accountId, { matched: false, group: null, unavailable: true });
+              return next;
+            });
           });
-        });
-    }
+      }, i * 250);
+    });
   }
 
   // ── Filter tasks to the selected week ───────────────────────────────────────

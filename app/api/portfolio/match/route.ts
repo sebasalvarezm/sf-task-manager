@@ -62,14 +62,14 @@ export async function POST(request: NextRequest) {
       messages: [
         {
           role: "user",
-          content: `You are classifying a software company into one of 9 M&A portfolio groups.
+          content: `You are classifying a software company into one of 9 industrial M&A portfolio groups.
 
 Company name: "${accountName}"
 
 Portfolio groups:
 ${groups}
 
-Does this company's name suggest it belongs to one of these groups? Consider what type of software the company likely sells based on its name.
+Based on the company name, determine if this company likely sells software to one of these industrial verticals. Use your knowledge of real companies and industries — even if the name only partially hints at the industry (e.g. "Softree" → forestry, "Certainty" → compliance/safety, "AquaSpy" → agriculture/irrigation). Lean toward matching if there is a reasonable connection.
 
 Respond with ONLY valid JSON, no explanation:
 - If it fits a group: {"matched": true, "group": "exact group title from above"}
