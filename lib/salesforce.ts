@@ -9,6 +9,7 @@ export type SalesforceTask = {
   AccountId: string | null;
   AccountName: string | null;
   AccountUrl: string | null;
+  AccountWebsite: string | null; // Company's own website (e.g. https://acme.com)
   Priority: string;
 };
 
@@ -22,7 +23,7 @@ export async function fetchOpenTasks(): Promise<SalesforceTask[]> {
   if (!userId) throw new Error("NOT_CONNECTED");
 
   const query = encodeURIComponent(
-    `SELECT Id, Subject, ActivityDate, AccountId, Account.Name, Priority ` +
+    `SELECT Id, Subject, ActivityDate, AccountId, Account.Name, Account.Website, Priority ` +
       `FROM Task ` +
       `WHERE Status = 'Open' ` +
       `AND OwnerId = '${userId}' ` +
@@ -52,7 +53,7 @@ export async function fetchOpenTasks(): Promise<SalesforceTask[]> {
       Subject: string;
       ActivityDate: string;
       AccountId: string | null;
-      Account?: { Name: string } | null;
+      Account?: { Name: string; Website?: string | null } | null;
       Priority: string;
     }): SalesforceTask => ({
       Id: r.Id,
@@ -63,6 +64,7 @@ export async function fetchOpenTasks(): Promise<SalesforceTask[]> {
       AccountUrl: r.AccountId
         ? `${credentials.instance_url}/${r.AccountId}`
         : null,
+      AccountWebsite: r.Account?.Website ?? null,
       Priority: r.Priority,
     })
   );

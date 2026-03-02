@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { SalesforceTask } from "@/lib/salesforce";
 import WeekSelector, { WeekRange, generateWeeks } from "./components/WeekSelector";
-import TaskTable, { TaskAction } from "./components/TaskTable";
+import TaskTable, { TaskAction, PortfolioMatch } from "./components/TaskTable";
 import ConnectSalesforce from "./components/ConnectSalesforce";
 
 type ApplyResult = {
@@ -40,6 +40,8 @@ function HomePageContent() {
 
   const [selectedWeek, setSelectedWeek] = useState<WeekRange | null>(null);
   const [actions, setActions] = useState<Map<string, TaskAction>>(new Map());
+
+  const [portfolioMatches, setPortfolioMatches] = useState<Map<string, PortfolioMatch>>(new Map());
 
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
@@ -88,7 +90,9 @@ function HomePageContent() {
         throw new Error(err.error ?? "Failed to load tasks");
       }
       const data = await res.json();
-      setAllTasks(data.tasks ?? []);
+      const tasks: SalesforceTask[] = data.tasks ?? [];
+      setAllTasks(tasks);
+      runPortfolioMatching(tasks);
 
       // Default to the current week if not already set
       setSelectedWeek((prev) => prev ?? generateWeeks()[4]);
@@ -98,6 +102,59 @@ function HomePageContent() {
       setTasksLoading(false);
     }
   }, []);
+
+  // ── Portfolio matching — runs once after tasks load ──────────────────────────
+  function runPortfolioMatching(tasks: SalesforceTask[]) {
+    // Collect unique accounts that haven't been matched yet
+    const seen = new Set<string>();
+    const toMatch: { accountId: string; accountName: string }[] = [];
+    for (const task of tasks) {
+      if (task.AccountId && task.AccountName && !seen.has(task.AccountId)) {
+        seen.add(task.AccountId);
+        toMatch.push({ accountId: task.AccountId, accountName: task.AccountName });
+      }
+    }
+    if (toMatch.length === 0) return;
+
+    // Mark all as loading
+    setPortfolioMatches((prev) => {
+      const next = new Map(prev);
+      for (const { accountId } of toMatch) {
+        if (!next.has(accountId)) {
+          next.set(accountId, { matched: false, group: null, loading: true });
+        }
+      }
+      return next;
+    });
+
+    // Fire requests in parallel
+    for (const { accountId, accountName } of toMatch) {
+      fetch("/api/portfolio/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountName }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          setPortfolioMatches((prev) => {
+            const next = new Map(prev);
+            next.set(accountId, {
+              matched: data.matched ?? false,
+              group: data.group ?? null,
+              unavailable: data.unavailable ?? false,
+            });
+            return next;
+          });
+        })
+        .catch(() => {
+          setPortfolioMatches((prev) => {
+            const next = new Map(prev);
+            next.set(accountId, { matched: false, group: null, unavailable: true });
+            return next;
+          });
+        });
+    }
+  }
 
   // ── Filter tasks to the selected week ───────────────────────────────────────
   const weekTasks = selectedWeek
@@ -180,6 +237,7 @@ function HomePageContent() {
     await fetch("/api/salesforce/status", { method: "DELETE" });
     setConnected(false);
     setAllTasks([]);
+    setPortfolioMatches(new Map());
   }
 
   async function handleLogout() {
@@ -301,6 +359,7 @@ function HomePageContent() {
               <TaskTable
                 tasks={weekTasks}
                 actions={actions}
+                portfolioMatches={portfolioMatches}
                 onActionChange={handleActionChange}
               />
             )}
