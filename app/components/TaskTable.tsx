@@ -109,6 +109,20 @@ export default function TaskTable({
       } else if (e.key === "Enter" && e.shiftKey) {
         e.preventDefault();
         if (row > 0) focusCell(row - 1, col);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (row < tasks.length - 1) focusCell(row + 1, col);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (row > 0) focusCell(row - 1, col);
+      } else if (e.key === "ArrowRight" && col !== INTERACTIVE_COL) {
+        e.preventDefault();
+        if (col < LAST_COL) focusCell(row, col + 1);
+        else if (row < tasks.length - 1) focusCell(row + 1, FIRST_COL);
+      } else if (e.key === "ArrowLeft" && col !== INTERACTIVE_COL) {
+        e.preventDefault();
+        if (col > FIRST_COL) focusCell(row, col - 1);
+        else if (row > 0) focusCell(row - 1, LAST_COL);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,7 +158,7 @@ export default function TaskTable({
     if (!match || match.loading) {
       return <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-brand-orange rounded-full animate-spin" />;
     }
-    if (match.unavailable) return <span className="text-gray-300 text-xs">—</span>;
+    if (match.unavailable) return <span className="text-orange-400 text-xs" title="Portfolio API unavailable">~</span>;
     if (match.matched && match.group) {
       return <span className="text-green-600 text-xs font-medium whitespace-nowrap">✅ {match.group}</span>;
     }
@@ -226,7 +240,7 @@ export default function TaskTable({
                     ?
                   </button>
                   {showTooltip && (
-                    <div className="absolute left-6 top-0 z-50 w-72 bg-navy text-white text-xs rounded-lg p-3 shadow-2xl border border-navy-light">
+                    <div className="absolute right-6 top-0 z-50 w-72 bg-navy text-white text-xs rounded-lg p-3 shadow-2xl border border-navy-light">
                       <p className="font-semibold mb-2 text-white">Shortcode reference:</p>
                       <div className="space-y-1.5">
                         <div className="flex gap-2">
