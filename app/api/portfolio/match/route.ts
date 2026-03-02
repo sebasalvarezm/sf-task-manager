@@ -7,7 +7,25 @@ import path from "path";
 // Server-side cache so we don't re-query the same company name twice per session
 const matchCache = new Map<string, { matched: boolean; group: string | null }>();
 
-// Fetch homepage text from a company's website (best-effort, 5s timeout)
+// Extract page title and meta description from raw HTML (present even in JavaScript SPAs)
+function extractPageMeta(html: string): string | null {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)
+    ?? html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i);
+  const ogDescMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i);
+  const ogTitleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+
+  const parts = [
+    titleMatch?.[1]?.trim(),
+    ogTitleMatch?.[1]?.trim(),
+    descMatch?.[1]?.trim(),
+    ogDescMatch?.[1]?.trim(),
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
+
+// Fetch homepage meta from a company's website (best-effort, 5s timeout)
 async function fetchWebsiteText(url: string): Promise<string | null> {
   try {
     const normalized = url.startsWith("http") ? url : `https://${url}`;
@@ -16,14 +34,7 @@ async function fetchWebsiteText(url: string): Promise<string | null> {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; portfolio-matcher/1.0)" },
     });
     const html = await res.text();
-    const text = html
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 800);
-    return text || null;
+    return extractPageMeta(html);
   } catch {
     return null;
   }
