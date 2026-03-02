@@ -263,7 +263,7 @@ function HomePageContent() {
           <img
             src="/Valstone logo.png"
             alt="Valstone"
-            className="h-8 w-auto"
+            className="h-8 w-auto mix-blend-multiply"
           />
           <span className="text-sm font-normal text-gray-300">
             Task Manager
