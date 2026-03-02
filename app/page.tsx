@@ -92,7 +92,6 @@ function HomePageContent() {
       const data = await res.json();
       const tasks: SalesforceTask[] = data.tasks ?? [];
       setAllTasks(tasks);
-      runPortfolioMatching(tasks);
 
       // Default to the current week if not already set
       setSelectedWeek((prev) => prev ?? generateWeeks()[4]);
@@ -103,7 +102,7 @@ function HomePageContent() {
     }
   }, []);
 
-  // ── Portfolio matching — runs once after tasks load ──────────────────────────
+  // ── Portfolio matching — runs when selected week changes ────────────────────
   function runPortfolioMatching(tasks: SalesforceTask[]) {
     // Collect unique accounts that haven't been matched yet
     const seen = new Set<string>();
@@ -111,7 +110,11 @@ function HomePageContent() {
     for (const task of tasks) {
       if (task.AccountId && task.AccountName && !seen.has(task.AccountId)) {
         seen.add(task.AccountId);
-        toMatch.push({ accountId: task.AccountId, accountName: task.AccountName, accountWebsite: task.AccountWebsite ?? null });
+        // Skip if already resolved (matched or confirmed no-match) — only re-queue if loading
+        const existing = portfolioMatches.get(task.AccountId);
+        if (!existing || existing.loading) {
+          toMatch.push({ accountId: task.AccountId, accountName: task.AccountName, accountWebsite: task.AccountWebsite ?? null });
+        }
       }
     }
     if (toMatch.length === 0) return;
@@ -165,6 +168,14 @@ function HomePageContent() {
         return t.ActivityDate >= selectedWeek.start && t.ActivityDate <= selectedWeek.end;
       })
     : [];
+
+  // ── Run portfolio matching whenever the visible week changes ────────────────
+  useEffect(() => {
+    if (weekTasks.length > 0) {
+      runPortfolioMatching(weekTasks);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekTasks]);
 
   // ── Action management ────────────────────────────────────────────────────────
   function handleActionChange(taskId: string, action: TaskAction) {

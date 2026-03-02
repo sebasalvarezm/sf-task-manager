@@ -7,34 +7,19 @@ import path from "path";
 // Server-side cache so we don't re-query the same company name twice per session
 const matchCache = new Map<string, { matched: boolean; group: string | null }>();
 
-// Extract page title and meta description from raw HTML (present even in JavaScript SPAs)
-function extractPageMeta(html: string): string | null {
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)
-    ?? html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i);
-  const ogDescMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i);
-  const ogTitleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
-
-  const parts = [
-    titleMatch?.[1]?.trim(),
-    ogTitleMatch?.[1]?.trim(),
-    descMatch?.[1]?.trim(),
-    ogDescMatch?.[1]?.trim(),
-  ].filter(Boolean);
-
-  return parts.length > 0 ? parts.join(" | ") : null;
-}
-
-// Fetch homepage meta from a company's website (best-effort, 5s timeout)
+// Fetch a plain-text summary of a company's website via Jina AI Reader (free, no API key)
+// Jina renders the page like a browser and returns clean readable text — works on SPAs too
 async function fetchWebsiteText(url: string): Promise<string | null> {
   try {
     const normalized = url.startsWith("http") ? url : `https://${url}`;
-    const res = await fetch(normalized, {
-      signal: AbortSignal.timeout(5000),
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; portfolio-matcher/1.0)" },
+    const jinaUrl = `https://r.jina.ai/${normalized}`;
+    const res = await fetch(jinaUrl, {
+      signal: AbortSignal.timeout(8000),
+      headers: { Accept: "text/plain" },
     });
-    const html = await res.text();
-    return extractPageMeta(html);
+    const text = await res.text();
+    // First 800 chars is plenty to understand what the company does
+    return text.trim().slice(0, 800) || null;
   } catch {
     return null;
   }
@@ -69,7 +54,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Return cached result if available (versioned so prompt changes invalidate old results)
-  const CACHE_VERSION = "v5";
+  const CACHE_VERSION = "v6";
   const cacheKey = `${CACHE_VERSION}_${accountName.toLowerCase().trim()}`;
   if (matchCache.has(cacheKey)) {
     return NextResponse.json(matchCache.get(cacheKey));
@@ -97,7 +82,7 @@ export async function POST(request: NextRequest) {
 
 Company name: "${accountName}"
 ${accountWebsite ? `Company website URL: "${accountWebsite}"` : ""}
-${websiteText ? `\nWebsite content excerpt:\n"${websiteText}"\n` : ""}
+${websiteText ? `\nCompany description:\n"${websiteText}"\n` : ""}
 Portfolio groups:
 ${groups}
 
