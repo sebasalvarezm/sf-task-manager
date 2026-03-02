@@ -259,9 +259,13 @@ function HomePageContent() {
         className="flex items-center justify-between px-8 py-4 shadow-lg"
         style={{ background: "var(--navy)" }}
       >
-        <div className="text-2xl font-bold text-white tracking-tight">
-          <span style={{ color: "var(--orange)" }}>VAL</span>STONE
-          <span className="text-sm font-normal text-gray-300 ml-3">
+        <div className="flex items-center gap-3">
+          <img
+            src="/valstone-logo.png"
+            alt="Valstone"
+            className="h-8 w-auto"
+          />
+          <span className="text-sm font-normal text-gray-300">
             Task Manager
           </span>
         </div>

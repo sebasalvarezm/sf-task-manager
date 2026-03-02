@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Return cached result if available (versioned so prompt changes invalidate old results)
-  const CACHE_VERSION = "v4";
+  const CACHE_VERSION = "v5";
   const cacheKey = `${CACHE_VERSION}_${accountName.toLowerCase().trim()}`;
   if (matchCache.has(cacheKey)) {
     return NextResponse.json(matchCache.get(cacheKey));
