@@ -57,8 +57,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ matched: false, group: null });
   }
 
-  // Return cached result if available
-  const cacheKey = accountName.toLowerCase().trim();
+  // Return cached result if available (versioned so prompt changes invalidate old results)
+  const CACHE_VERSION = "v4";
+  const cacheKey = `${CACHE_VERSION}_${accountName.toLowerCase().trim()}`;
   if (matchCache.has(cacheKey)) {
     return NextResponse.json(matchCache.get(cacheKey));
   }
@@ -84,11 +85,12 @@ export async function POST(request: NextRequest) {
           content: `You are classifying a software company into one of 9 industrial M&A portfolio groups.
 
 Company name: "${accountName}"
-${websiteText ? `\nCompany website text (scraped homepage):\n"${websiteText}"\n` : ""}
+${accountWebsite ? `Company website URL: "${accountWebsite}"` : ""}
+${websiteText ? `\nWebsite content excerpt:\n"${websiteText}"\n` : ""}
 Portfolio groups:
 ${groups}
 
-Based on the company name${websiteText ? " and website content" : ""}, determine if this company sells software to one of these industrial verticals. Use all available signals. Lean toward matching if there is a reasonable connection.
+Based on the company name${accountWebsite ? ", website URL," : ""}${websiteText ? " and website content" : ""} determine if this company sells software to one of these industrial verticals. Use all available signals — the domain name itself is often a strong clue (e.g. trashflow.com → waste, crewtracks.com → construction crews). Lean toward matching if there is a reasonable connection.
 
 Respond with ONLY valid JSON, no explanation:
 - If it fits a group: {"matched": true, "group": "exact group title from above"}
