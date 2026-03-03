@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
   // If no API key or client unavailable, return gracefully
   const anthropic = getAnthropicClient();
   if (!anthropic) {
+    console.warn("[portfolio/match] ANTHROPIC_API_KEY is not set or client unavailable");
     return NextResponse.json({ matched: false, group: null, unavailable: true });
   }
 
@@ -115,8 +116,9 @@ Respond with ONLY valid JSON, no explanation:
 
     matchCache.set(cacheKey, result);
     return NextResponse.json(result);
-  } catch {
+  } catch (err) {
     // API error (no credits, network issue, etc.) — return gracefully, don't crash
+    console.error("[portfolio/match] Claude API error:", err instanceof Error ? err.message : err);
     return NextResponse.json({ matched: false, group: null, unavailable: true });
   }
 }
