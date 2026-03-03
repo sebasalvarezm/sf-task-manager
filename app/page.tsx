@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { SalesforceTask } from "@/lib/salesforce";
 import WeekSelector, { WeekRange, generateWeeks } from "./components/WeekSelector";
@@ -42,6 +42,8 @@ function HomePageContent() {
   const [actions, setActions] = useState<Map<string, TaskAction>>(new Map());
 
   const [portfolioMatches, setPortfolioMatches] = useState<Map<string, PortfolioMatch>>(new Map());
+  // Tracks in-flight portfolio requests — immune to stale closures, no re-renders
+  const fetchingAccounts = useRef<Set<string>>(new Set());
 
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
@@ -79,14 +81,9 @@ function HomePageContent() {
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
     setTasksError(null);
-    // Clear unavailable entries so they're retried after the refresh
-    setPortfolioMatches((prev) => {
-      const next = new Map(prev);
-      for (const [key, val] of next) {
-        if (val.unavailable) next.delete(key);
-      }
-      return next;
-    });
+    // Fresh start: clear in-flight tracking and all cached match results
+    fetchingAccounts.current = new Set();
+    setPortfolioMatches(new Map());
     try {
       const res = await fetch("/api/salesforce/tasks");
       if (!res.ok) {
@@ -112,28 +109,30 @@ function HomePageContent() {
 
   // ── Portfolio matching — runs when selected week changes ────────────────────
   function runPortfolioMatching(tasks: SalesforceTask[]) {
-    // Collect unique accounts that haven't been matched yet
+    // Collect accounts that have no result yet AND no request already in flight.
+    // We use a ref (not state) for the in-flight check so it's always current —
+    // reading portfolioMatches from the closure can be stale, causing duplicate fetches.
     const seen = new Set<string>();
     const toMatch: { accountId: string; accountName: string; accountWebsite: string | null }[] = [];
     for (const task of tasks) {
       if (task.AccountId && task.AccountName && !seen.has(task.AccountId)) {
         seen.add(task.AccountId);
-        // Skip if already resolved (matched or confirmed no-match) — only re-queue if loading
         const existing = portfolioMatches.get(task.AccountId);
-        if (!existing || existing.loading) {
+        const inFlight = fetchingAccounts.current.has(task.AccountId);
+        // Only queue if no result in state AND no request already in flight
+        if (!existing && !inFlight) {
+          fetchingAccounts.current.add(task.AccountId); // mark synchronously before fetch
           toMatch.push({ accountId: task.AccountId, accountName: task.AccountName, accountWebsite: task.AccountWebsite ?? null });
         }
       }
     }
     if (toMatch.length === 0) return;
 
-    // Mark all as loading
+    // Mark queued accounts as loading (shows spinner in UI)
     setPortfolioMatches((prev) => {
       const next = new Map(prev);
       for (const { accountId } of toMatch) {
-        if (!next.has(accountId)) {
-          next.set(accountId, { matched: false, group: null, loading: true });
-        }
+        next.set(accountId, { matched: false, group: null, loading: true });
       }
       return next;
     });
@@ -148,6 +147,7 @@ function HomePageContent() {
         })
           .then((res) => res.json())
           .then((data) => {
+            fetchingAccounts.current.delete(accountId);
             setPortfolioMatches((prev) => {
               const next = new Map(prev);
               next.set(accountId, {
@@ -159,6 +159,7 @@ function HomePageContent() {
             });
           })
           .catch(() => {
+            fetchingAccounts.current.delete(accountId);
             setPortfolioMatches((prev) => {
               const next = new Map(prev);
               next.set(accountId, { matched: false, group: null, unavailable: true });
@@ -355,14 +356,9 @@ function HomePageContent() {
                     setSelectedWeek(week);
                     setActions(new Map());
                     setApplyResult(null);
-                    // Clear unavailable entries so they're retried for the new week's companies
-                    setPortfolioMatches((prev) => {
-                      const next = new Map(prev);
-                      for (const [key, val] of next) {
-                        if (val.unavailable) next.delete(key);
-                      }
-                      return next;
-                    });
+                    // Fresh start for the new week: clear in-flight tracking and cached results
+                    fetchingAccounts.current = new Set();
+                    setPortfolioMatches(new Map());
                   }}
                 />
                 <button
