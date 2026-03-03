@@ -110,7 +110,10 @@ export async function completeAndReschedule(
         Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ Status: "Completed" }),
+      body: JSON.stringify({
+        Status: "Completed",
+        ActivityDate: format(new Date(), "yyyy-MM-dd"),
+      }),
     }
   );
 

@@ -296,7 +296,7 @@ function HomePageContent() {
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
-      <main className="flex-1 px-8 py-8 max-w-screen-xl mx-auto w-full">
+      <main className={`flex-1 px-8 py-8 max-w-screen-xl mx-auto w-full${activeActionCount > 0 ? " pb-24" : ""}`}>
 
         {/* Connection prompt */}
         {connected === false && (
