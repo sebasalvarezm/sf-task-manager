@@ -79,6 +79,14 @@ function HomePageContent() {
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
     setTasksError(null);
+    // Clear unavailable entries so they're retried after the refresh
+    setPortfolioMatches((prev) => {
+      const next = new Map(prev);
+      for (const [key, val] of next) {
+        if (val.unavailable) next.delete(key);
+      }
+      return next;
+    });
     try {
       const res = await fetch("/api/salesforce/tasks");
       if (!res.ok) {
@@ -110,9 +118,9 @@ function HomePageContent() {
     for (const task of tasks) {
       if (task.AccountId && task.AccountName && !seen.has(task.AccountId)) {
         seen.add(task.AccountId);
-        // Skip if already resolved (matched or confirmed no-match) — retry if loading or unavailable
+        // Skip if already resolved (matched or confirmed no-match) — only re-queue if loading
         const existing = portfolioMatches.get(task.AccountId);
-        if (!existing || existing.loading || existing.unavailable) {
+        if (!existing || existing.loading) {
           toMatch.push({ accountId: task.AccountId, accountName: task.AccountName, accountWebsite: task.AccountWebsite ?? null });
         }
       }
@@ -347,6 +355,14 @@ function HomePageContent() {
                     setSelectedWeek(week);
                     setActions(new Map());
                     setApplyResult(null);
+                    // Clear unavailable entries so they're retried for the new week's companies
+                    setPortfolioMatches((prev) => {
+                      const next = new Map(prev);
+                      for (const [key, val] of next) {
+                        if (val.unavailable) next.delete(key);
+                      }
+                      return next;
+                    });
                   }}
                 />
                 <button
