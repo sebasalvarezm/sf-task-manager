@@ -18,8 +18,8 @@ async function fetchWebsiteText(url: string): Promise<string | null> {
       headers: { Accept: "text/plain" },
     });
     const text = await res.text();
-    // First 800 chars is plenty to understand what the company does
-    return text.trim().slice(0, 800) || null;
+    // 3,000 chars reliably covers the "what we do" section of any homepage
+    return text.trim().slice(0, 3000) || null;
   } catch {
     return null;
   }
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Return cached result if available (versioned so prompt changes invalidate old results)
-  const CACHE_VERSION = "v6";
+  const CACHE_VERSION = "v7";
   const cacheKey = `${CACHE_VERSION}_${accountName.toLowerCase().trim()}`;
   if (matchCache.has(cacheKey)) {
     return NextResponse.json(matchCache.get(cacheKey));
@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     const websiteText = accountWebsite ? await fetchWebsiteText(accountWebsite) : null;
 
     const message = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-sonnet-4-6",
       max_tokens: 100,
       messages: [
         {
