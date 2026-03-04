@@ -460,7 +460,7 @@ export default function CallLoggerTable({
                         <input
                           type="text"
                           value={searchInputs.get(meeting.eventId) ?? ""}
-                          placeholder={meeting.externalDomains[0]?.split(".")[0] ?? "Search account..."}
+                          placeholder={meeting.externalDomains.length > 0 ? meeting.externalDomains[0].split(".")[0] : "Search account..."}
                           onChange={(e) => setSearchInputs((prev) => new Map(prev).set(meeting.eventId, e.target.value))}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {

@@ -1,6 +1,6 @@
 "use client";
 
-import { startOfWeek, addWeeks, format, endOfWeek } from "date-fns";
+import { startOfWeek, addWeeks, format, endOfWeek, differenceInWeeks } from "date-fns";
 
 export type WeekRange = {
   label: string;
@@ -8,12 +8,17 @@ export type WeekRange = {
   end: string;   // "yyyy-MM-dd"
 };
 
-// Generates 12 weeks: 4 in the past, current week, 7 ahead
+// Generates weeks from Jan 1 of the current year through 7 weeks ahead
 export function generateWeeks(): WeekRange[] {
   const today = new Date();
+  const jan1 = new Date(today.getFullYear(), 0, 1);
+  const firstMonday = startOfWeek(jan1, { weekStartsOn: 1 });
+  const currentMonday = startOfWeek(today, { weekStartsOn: 1 });
+  const weeksBack = differenceInWeeks(currentMonday, firstMonday);
+
   const weeks: WeekRange[] = [];
 
-  for (let i = -4; i <= 7; i++) {
+  for (let i = -weeksBack; i <= 7; i++) {
     const weekStart = startOfWeek(addWeeks(today, i), { weekStartsOn: 1 }); // Monday
     const weekEnd = endOfWeek(addWeeks(today, i), { weekStartsOn: 1 });
 
@@ -29,6 +34,15 @@ export function generateWeeks(): WeekRange[] {
   return weeks;
 }
 
+// Index of the current week in the generated array
+export function currentWeekIndex(): number {
+  const today = new Date();
+  const jan1 = new Date(today.getFullYear(), 0, 1);
+  const firstMonday = startOfWeek(jan1, { weekStartsOn: 1 });
+  const currentMonday = startOfWeek(today, { weekStartsOn: 1 });
+  return differenceInWeeks(currentMonday, firstMonday);
+}
+
 type Props = {
   selected: WeekRange | null;
   onChange: (week: WeekRange) => void;
@@ -37,8 +51,8 @@ type Props = {
 export default function WeekSelector({ selected, onChange }: Props) {
   const weeks = generateWeeks();
 
-  // Default to current week (index 4 = i=0)
-  const currentValue = selected ? `${selected.start}|${selected.end}` : `${weeks[4].start}|${weeks[4].end}`;
+  const cwIdx = currentWeekIndex();
+  const currentValue = selected ? `${selected.start}|${selected.end}` : `${weeks[cwIdx].start}|${weeks[cwIdx].end}`;
 
   function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const [start, end] = e.target.value.split("|");

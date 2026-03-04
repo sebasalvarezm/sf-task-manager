@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import WeekSelector, { WeekRange, generateWeeks } from "../components/WeekSelector";
+import WeekSelector, { WeekRange, generateWeeks, currentWeekIndex } from "../components/WeekSelector";
 import CallLoggerTable, {
   MeetingRow,
   CallEntry,
@@ -39,7 +39,7 @@ function CallsPageContent() {
   const [msConnected, setMsConnected] = useState<boolean | null>(null);
 
   const [selectedWeek, setSelectedWeek] = useState<WeekRange | null>(
-    () => generateWeeks()[4] // default to current week
+    () => generateWeeks()[currentWeekIndex()] // default to current week
   );
   const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [entries, setEntries] = useState<Map<string, CallEntry>>(new Map());
@@ -420,8 +420,8 @@ function CallsPageContent() {
             {!analyzing && hasAnalyzed && (
               <>
                 <div className="text-sm text-gray-400 mb-3">
-                  {meetings.length - dismissedIds.size} external meeting
-                  {meetings.length - dismissedIds.size !== 1 ? "s" : ""} found
+                  {meetings.length} external meeting
+                  {meetings.length !== 1 ? "s" : ""} found
                   {dismissedIds.size > 0 && (
                     <span className="ml-2 text-gray-300">
                       ({dismissedIds.size} dismissed)

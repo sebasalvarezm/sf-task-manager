@@ -12,6 +12,17 @@ const EXCLUDED_DOMAINS = [
   "creativeinfo.net",
 ];
 
+// Extract email addresses from HTML or plain-text body content
+const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+
+function extractEmailsFromBody(bodyText: string): string[] {
+  if (!bodyText) return [];
+  const matches = bodyText.match(EMAIL_REGEX);
+  if (!matches) return [];
+  // Deduplicate and lowercase
+  return [...new Set(matches.map((e) => e.toLowerCase()))];
+}
+
 export type MeetingMatch = {
   eventId: string;
   subject: string;
@@ -72,7 +83,23 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Skip meetings with no external attendees
+      // Extract just the date portion from the start datetime
+      const meetingDate = event.start.split("T")[0];
+      const startTime = event.start.split("T")[1]?.substring(0, 5) ?? "";
+
+      // If no external attendees found, try extracting emails from the body
+      // (migration sometimes strips attendees but keeps them in body text)
+      if (domainSet.size === 0 && event.bodyText) {
+        const bodyEmails = extractEmailsFromBody(event.bodyText);
+        for (const email of bodyEmails) {
+          const domain = email.split("@")[1];
+          if (domain && !EXCLUDED_DOMAINS.includes(domain.toLowerCase())) {
+            domainSet.add(domain.toLowerCase());
+          }
+        }
+      }
+
+      // Skip meetings with no external attendees (truly internal)
       if (domainSet.size === 0) continue;
 
       const externalDomains = Array.from(domainSet);
@@ -94,10 +121,6 @@ export async function GET(request: NextRequest) {
           // If one domain lookup fails, continue with the others
         }
       }
-
-      // Extract just the date portion from the start datetime
-      const meetingDate = event.start.split("T")[0];
-      const startTime = event.start.split("T")[1]?.substring(0, 5) ?? "";
 
       meetings.push({
         eventId: event.id,

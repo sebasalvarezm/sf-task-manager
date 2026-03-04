@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { SalesforceTask } from "@/lib/salesforce";
-import WeekSelector, { WeekRange, generateWeeks } from "../components/WeekSelector";
+import WeekSelector, { WeekRange, generateWeeks, currentWeekIndex } from "../components/WeekSelector";
 import TaskTable, { TaskAction, PortfolioMatch } from "../components/TaskTable";
 import ConnectSalesforce from "../components/ConnectSalesforce";
 
@@ -99,7 +99,7 @@ function TasksPageContent() {
       setAllTasks(tasks);
 
       // Default to the current week if not already set
-      setSelectedWeek((prev) => prev ?? generateWeeks()[4]);
+      setSelectedWeek((prev) => prev ?? generateWeeks()[currentWeekIndex()]);
     } catch (err) {
       setTasksError(err instanceof Error ? err.message : "Unexpected error");
     } finally {

@@ -101,6 +101,7 @@ export type CalendarEvent = {
   end: string;
   organizer: { name: string; email: string } | null;
   attendees: Array<{ name: string; email: string }>;
+  bodyText: string; // plain-text body (used to recover attendee emails)
 };
 
 export async function fetchCalendarEvents(
@@ -117,7 +118,7 @@ export async function fetchCalendarEvents(
   const params = new URLSearchParams({
     startDateTime,
     endDateTime,
-    $select: "id,subject,start,end,organizer,attendees",
+    $select: "id,subject,start,end,organizer,attendees,body",
     $orderby: "start/dateTime",
     $top: "100",
   });
@@ -149,6 +150,7 @@ export async function fetchCalendarEvents(
       attendees?: Array<{
         emailAddress?: { name?: string; address?: string };
       }>;
+      body?: { contentType?: string; content?: string };
     }): CalendarEvent => ({
       id: e.id,
       subject: e.subject ?? "(No subject)",
@@ -164,6 +166,7 @@ export async function fetchCalendarEvents(
         name: a.emailAddress?.name ?? "",
         email: (a.emailAddress?.address ?? "").toLowerCase(),
       })),
+      bodyText: e.body?.content ?? "",
     })
   );
 }
