@@ -136,7 +136,7 @@ export async function completeAndReschedule(
       },
       body: JSON.stringify({
         Subject: subject,
-        Status: "Not Started",
+        Status: "Open",
         Priority: "Normal",
         ActivityDate: newDate,
         WhatId: accountId,

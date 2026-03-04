@@ -193,7 +193,7 @@ export async function createFollowUpTask(params: {
       body: JSON.stringify({
         Subject: params.subject,
         Subject_Type__c: params.subjectType,
-        Status: "Not Started",
+        Status: "Open",
         Priority: "Normal",
         ActivityDate: followUpDate,
         WhatId: params.accountId,
