@@ -421,9 +421,13 @@ export default function CallLoggerTable({
                 >
                   {/* Manual match selected — show linked account */}
                   {isManualMatch ? (
-                    <span className="font-medium text-navy text-sm">
+                    <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-gray-400" : "text-navy"}`}>
                       {manualMatches.get(meeting.eventId)!.accountName}
-                      <span className="block text-xs text-green-500 mt-0.5">Manually linked</span>
+                      {meeting.alreadyLogged ? (
+                        <span className="block text-xs text-amber-500 font-medium mt-0.5">Likely already logged</span>
+                      ) : (
+                        <span className="block text-xs text-green-500 mt-0.5">Manually linked</span>
+                      )}
                     </span>
                   ) : meeting.allMatches.length > 1 ? (
                     <select

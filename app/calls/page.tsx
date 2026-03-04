@@ -148,6 +148,26 @@ function CallsPageContent() {
       next.set(eventId, match);
       return next;
     });
+
+    // Check if this account already has a logged C1/RCC for the selected week
+    if (selectedWeek) {
+      fetch(
+        `/api/salesforce/check-logged?accountId=${match.accountId}&start=${selectedWeek.start}&end=${selectedWeek.end}`
+      )
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.alreadyLogged) {
+            setMeetings((prev) =>
+              prev.map((m) =>
+                m.eventId === eventId ? { ...m, alreadyLogged: true } : m
+              )
+            );
+          }
+        })
+        .catch(() => {
+          // Non-critical — just won't show the flag
+        });
+    }
   }
 
   // ── Submit — create Salesforce tasks ──────────────────────────────────────
