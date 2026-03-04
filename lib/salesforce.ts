@@ -113,6 +113,7 @@ export async function completeAndReschedule(
       body: JSON.stringify({
         Status: "Completed",
         ActivityDate: format(new Date(), "yyyy-MM-dd"),
+        Subject_Type__c: "RCE1",
       }),
     }
   );
@@ -140,6 +141,7 @@ export async function completeAndReschedule(
         ActivityDate: newDate,
         WhatId: accountId,
         OwnerId: credentials.salesforce_user_id,
+        Subject_Type__c: "RCE1",
       }),
     }
   );

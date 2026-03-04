@@ -1,265 +1,35 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import { SalesforceTask } from "@/lib/salesforce";
-import WeekSelector, { WeekRange, generateWeeks } from "./components/WeekSelector";
-import TaskTable, { TaskAction, PortfolioMatch } from "./components/TaskTable";
-import ConnectSalesforce from "./components/ConnectSalesforce";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
-type ApplyResult = {
-  successCount: number;
-  failCount: number;
-  results: Array<{
-    taskId: string;
-    accountName: string | null;
-    actionType: string;
-    success: boolean;
-    error?: string;
-  }>;
-};
-
-// Wrapping in Suspense is required by Next.js when useSearchParams is used
-export default function HomePage() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-navy" />}>
-      <HomePageContent />
-    </Suspense>
-  );
-}
-
-function HomePageContent() {
+export default function LandingPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  const [sfConnected, setSfConnected] = useState<boolean | null>(null);
+  const [msConnected, setMsConnected] = useState<boolean | null>(null);
 
-  // ── State ───────────────────────────────────────────────────────────────────
-  const [connected, setConnected] = useState<boolean | null>(null); // null = loading
-  const [allTasks, setAllTasks] = useState<SalesforceTask[]>([]);
-  const [tasksLoading, setTasksLoading] = useState(false);
-  const [tasksError, setTasksError] = useState<string | null>(null);
-
-  const [selectedWeek, setSelectedWeek] = useState<WeekRange | null>(null);
-  const [actions, setActions] = useState<Map<string, TaskAction>>(new Map());
-
-  const [portfolioMatches, setPortfolioMatches] = useState<Map<string, PortfolioMatch>>(new Map());
-  // Tracks in-flight portfolio requests — immune to stale closures, no re-renders
-  const fetchingAccounts = useRef<Set<string>>(new Set());
-
-  const [applying, setApplying] = useState(false);
-  const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
-  const [confirmDeleteCount, setConfirmDeleteCount] = useState<number | null>(null);
-  const [pendingActions, setPendingActions] = useState<TaskAction[]>([]);
-
-  // ── On mount: check Salesforce connection + handle OAuth redirect params ────
   useEffect(() => {
-    const sfConnected = searchParams.get("sf_connected");
-    const sfError = searchParams.get("sf_error");
-
-    if (sfConnected || sfError) {
-      // Clean the URL after OAuth redirect
-      router.replace("/");
-    }
-
-    checkConnection();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    checkConnections();
   }, []);
 
-  async function checkConnection() {
+  async function checkConnections() {
     try {
-      const res = await fetch("/api/salesforce/status");
-      if (res.ok) {
-        const data = await res.json();
-        setConnected(data.connected);
-        if (data.connected) loadTasks();
+      const [sfRes, msRes] = await Promise.all([
+        fetch("/api/salesforce/status"),
+        fetch("/api/microsoft/status"),
+      ]);
+      if (sfRes.ok) {
+        const sfData = await sfRes.json();
+        setSfConnected(sfData.connected);
+      }
+      if (msRes.ok) {
+        const msData = await msRes.json();
+        setMsConnected(msData.connected);
       }
     } catch {
-      setConnected(false);
+      setSfConnected(false);
+      setMsConnected(false);
     }
-  }
-
-  // ── Load all open tasks from Salesforce ─────────────────────────────────────
-  const loadTasks = useCallback(async () => {
-    setTasksLoading(true);
-    setTasksError(null);
-    // Fresh start: clear in-flight tracking and all cached match results
-    fetchingAccounts.current = new Set();
-    setPortfolioMatches(new Map());
-    try {
-      const res = await fetch("/api/salesforce/tasks");
-      if (!res.ok) {
-        const err = await res.json();
-        if (err.error === "NOT_CONNECTED") {
-          setConnected(false);
-          return;
-        }
-        throw new Error(err.error ?? "Failed to load tasks");
-      }
-      const data = await res.json();
-      const tasks: SalesforceTask[] = data.tasks ?? [];
-      setAllTasks(tasks);
-
-      // Default to the current week if not already set
-      setSelectedWeek((prev) => prev ?? generateWeeks()[4]);
-    } catch (err) {
-      setTasksError(err instanceof Error ? err.message : "Unexpected error");
-    } finally {
-      setTasksLoading(false);
-    }
-  }, []);
-
-  // ── Portfolio matching — runs when selected week changes ────────────────────
-  function runPortfolioMatching(tasks: SalesforceTask[]) {
-    // Collect accounts that have no result yet AND no request already in flight.
-    // We use a ref (not state) for the in-flight check so it's always current —
-    // reading portfolioMatches from the closure can be stale, causing duplicate fetches.
-    const seen = new Set<string>();
-    const toMatch: { accountId: string; accountName: string; accountWebsite: string | null }[] = [];
-    for (const task of tasks) {
-      if (task.AccountId && task.AccountName && !seen.has(task.AccountId)) {
-        seen.add(task.AccountId);
-        const existing = portfolioMatches.get(task.AccountId);
-        const inFlight = fetchingAccounts.current.has(task.AccountId);
-        // Only queue if no result in state AND no request already in flight
-        if (!existing && !inFlight) {
-          fetchingAccounts.current.add(task.AccountId); // mark synchronously before fetch
-          toMatch.push({ accountId: task.AccountId, accountName: task.AccountName, accountWebsite: task.AccountWebsite ?? null });
-        }
-      }
-    }
-    if (toMatch.length === 0) return;
-
-    // Mark queued accounts as loading (shows spinner in UI)
-    setPortfolioMatches((prev) => {
-      const next = new Map(prev);
-      for (const { accountId } of toMatch) {
-        next.set(accountId, { matched: false, group: null, loading: true });
-      }
-      return next;
-    });
-
-    // Fire requests staggered 250ms apart to avoid hitting API rate limits
-    toMatch.forEach(({ accountId, accountName, accountWebsite }, i) => {
-      setTimeout(() => {
-        fetch("/api/portfolio/match", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accountName, accountWebsite }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            fetchingAccounts.current.delete(accountId);
-            setPortfolioMatches((prev) => {
-              const next = new Map(prev);
-              next.set(accountId, {
-                matched: data.matched ?? false,
-                group: data.group ?? null,
-                unavailable: data.unavailable ?? false,
-              });
-              return next;
-            });
-          })
-          .catch(() => {
-            fetchingAccounts.current.delete(accountId);
-            setPortfolioMatches((prev) => {
-              const next = new Map(prev);
-              next.set(accountId, { matched: false, group: null, unavailable: true });
-              return next;
-            });
-          });
-      }, i * 250);
-    });
-  }
-
-  // ── Filter tasks to the selected week ───────────────────────────────────────
-  const weekTasks = selectedWeek
-    ? allTasks.filter((t) => {
-        if (!t.ActivityDate) return false;
-        return t.ActivityDate >= selectedWeek.start && t.ActivityDate <= selectedWeek.end;
-      })
-    : [];
-
-  // ── Run portfolio matching whenever the visible week changes ────────────────
-  useEffect(() => {
-    if (weekTasks.length > 0) {
-      runPortfolioMatching(weekTasks);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekTasks]);
-
-  // ── Action management ────────────────────────────────────────────────────────
-  function handleActionChange(taskId: string, action: TaskAction) {
-    setActions((prev) => {
-      const next = new Map(prev);
-      if (action.actionType === "none") {
-        next.delete(taskId);
-      } else {
-        next.set(taskId, action);
-      }
-      return next;
-    });
-  }
-
-  // ── Apply button — gather actions, confirm if deletions, then execute ───────
-  function handleApplyClick() {
-    const actionsToExecute = Array.from(actions.values()).filter(
-      (a) => a.actionType !== "none"
-    );
-
-    if (actionsToExecute.length === 0) return;
-
-    const deleteCount = actionsToExecute.filter(
-      (a) => a.actionType === "hard_delete"
-    ).length;
-
-    setPendingActions(actionsToExecute);
-
-    if (deleteCount > 0) {
-      setConfirmDeleteCount(deleteCount);
-    } else {
-      executeActions(actionsToExecute);
-    }
-  }
-
-  async function executeActions(actionsToExecute: TaskAction[]) {
-    setConfirmDeleteCount(null);
-    setApplying(true);
-    setApplyResult(null);
-
-    try {
-      const res = await fetch("/api/salesforce/actions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actions: actionsToExecute }),
-      });
-
-      const data = await res.json();
-      setApplyResult(data);
-
-      // Clear all actions and refresh tasks
-      setActions(new Map());
-      await loadTasks();
-    } catch (err) {
-      setApplyResult({
-        successCount: 0,
-        failCount: actionsToExecute.length,
-        results: actionsToExecute.map((a) => ({
-          taskId: a.taskId,
-          accountName: a.accountName,
-          actionType: a.actionType,
-          success: false,
-          error: "Network error",
-        })),
-      });
-    } finally {
-      setApplying(false);
-    }
-  }
-
-  async function handleDisconnect() {
-    await fetch("/api/salesforce/status", { method: "DELETE" });
-    setConnected(false);
-    setAllTasks([]);
-    setPortfolioMatches(new Map());
   }
 
   async function handleLogout() {
@@ -267,11 +37,6 @@ function HomePageContent() {
     router.push("/login");
   }
 
-  const activeActionCount = Array.from(actions.values()).filter(
-    (a) => a.actionType !== "none"
-  ).length;
-
-  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen flex flex-col">
       {/* ── Header ─────────────────────────────────────────────────────── */}
@@ -286,205 +51,138 @@ function HomePageContent() {
             className="h-8 w-auto rounded"
           />
           <span className="text-sm font-normal text-gray-300">
-            Task Manager
+            Valstone Platform
           </span>
         </div>
 
-        <div className="flex items-center gap-4">
-          <ConnectSalesforce
-            connected={connected === true}
-            onDisconnect={handleDisconnect}
-          />
-          <button
-            onClick={handleLogout}
-            className="text-gray-300 hover:text-white text-sm"
-          >
-            Sign out
-          </button>
-        </div>
+        <button
+          onClick={handleLogout}
+          className="text-gray-300 hover:text-white text-sm"
+        >
+          Sign out
+        </button>
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
-      <main className={`flex-1 px-8 py-8 max-w-screen-xl mx-auto w-full${activeActionCount > 0 ? " pb-24" : ""}`}>
+      <main className="flex-1 flex items-center justify-center px-8 py-16">
+        <div className="max-w-3xl w-full">
+          <h1 className="text-2xl font-semibold text-navy text-center mb-2">
+            What would you like to do?
+          </h1>
+          <p className="text-sm text-gray-400 text-center mb-10">
+            Choose a tool to get started
+          </p>
 
-        {/* Connection prompt */}
-        {connected === false && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center mb-8">
-            <p className="text-amber-800 font-medium mb-3">
-              Salesforce is not connected yet.
-            </p>
-            <p className="text-amber-600 text-sm mb-4">
-              Click "Connect Salesforce" in the top-right corner to get started.
-            </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* ── Task Manager Card ────────────────────────────────────── */}
             <a
-              href="/api/salesforce/connect"
-              className="inline-block bg-brand-orange hover:bg-brand-orange-hover text-white text-sm font-semibold px-6 py-2 rounded-lg transition-colors"
+              href="/tasks"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-brand-orange transition-all p-8 text-center"
             >
-              Connect Salesforce
+              <div className="text-4xl mb-4">
+                <svg
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-brand-orange transition-colors"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Task Manager
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Manage your open Salesforce tasks — view by week, delete,
+                reschedule, or delay in bulk.
+              </p>
+
+              {/* Connection status */}
+              {sfConnected === true ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Salesforce connected
+                </span>
+              ) : sfConnected === false ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                  Salesforce not connected
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                  Checking...
+                </span>
+              )}
+            </a>
+
+            {/* ── Call Logger Card ─────────────────────────────────────── */}
+            <a
+              href="/calls"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-blue-400 transition-all p-8 text-center"
+            >
+              <div className="text-4xl mb-4">
+                <svg
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-blue-500 transition-colors"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Call Logger
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Log calls from your Outlook calendar to Salesforce — match
+                meetings to accounts automatically.
+              </p>
+
+              {/* Connection statuses */}
+              <div className="flex flex-col items-center gap-1.5">
+                {sfConnected === true ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Salesforce connected
+                  </span>
+                ) : sfConnected === false ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                    Salesforce not connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                    Checking...
+                  </span>
+                )}
+
+                {msConnected === true ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Outlook connected
+                  </span>
+                ) : msConnected === false ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-3 py-1">
+                    Outlook not connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                    Checking...
+                  </span>
+                )}
+              </div>
             </a>
           </div>
-        )}
-
-        {/* Loading spinner */}
-        {connected === null && (
-          <div className="flex justify-center items-center py-24">
-            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-orange"></div>
-          </div>
-        )}
-
-        {/* Main UI — only shown when connected */}
-        {connected === true && (
-          <>
-            {/* Controls bar */}
-            <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-              <div>
-                <h2 className="text-xl font-semibold text-navy">
-                  Open Tasks
-                </h2>
-                <p className="text-sm text-gray-400 mt-0.5">
-                  {weekTasks.length} task{weekTasks.length !== 1 ? "s" : ""} for selected week
-                  {allTasks.length > 0 && (
-                    <span> · {allTasks.length} total open</span>
-                  )}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-4">
-                <WeekSelector
-                  selected={selectedWeek}
-                  onChange={(week) => {
-                    setSelectedWeek(week);
-                    setActions(new Map());
-                    setApplyResult(null);
-                    // Fresh start for the new week: clear in-flight tracking and cached results
-                    fetchingAccounts.current = new Set();
-                    setPortfolioMatches(new Map());
-                  }}
-                />
-                <button
-                  onClick={loadTasks}
-                  disabled={tasksLoading}
-                  className="text-sm text-gray-400 hover:text-navy disabled:opacity-50"
-                  title="Refresh"
-                >
-                  ↻
-                </button>
-              </div>
-            </div>
-
-            {/* Error */}
-            {tasksError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-sm text-red-700">
-                Failed to load tasks: {tasksError}
-              </div>
-            )}
-
-            {/* Tasks loading */}
-            {tasksLoading ? (
-              <div className="flex justify-center py-16">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-orange"></div>
-              </div>
-            ) : (
-              <TaskTable
-                tasks={weekTasks}
-                actions={actions}
-                portfolioMatches={portfolioMatches}
-                onActionChange={handleActionChange}
-              />
-            )}
-
-            {/* Apply result banner */}
-            {applyResult && (
-              <div
-                className={`mt-4 rounded-lg p-4 text-sm ${
-                  applyResult.failCount === 0
-                    ? "bg-green-50 border border-green-200 text-green-700"
-                    : "bg-amber-50 border border-amber-200 text-amber-700"
-                }`}
-              >
-                {applyResult.successCount > 0 && (
-                  <span>
-                    ✓ {applyResult.successCount} action
-                    {applyResult.successCount !== 1 ? "s" : ""} applied
-                    successfully.{" "}
-                  </span>
-                )}
-                {applyResult.failCount > 0 && (
-                  <span>
-                    ✗ {applyResult.failCount} action
-                    {applyResult.failCount !== 1 ? "s" : ""} failed —{" "}
-                    {applyResult.results
-                      .filter((r) => !r.success)
-                      .map((r) => `${r.accountName}: ${r.error}`)
-                      .join("; ")}
-                  </span>
-                )}
-                <button
-                  className="ml-4 underline text-xs opacity-70 hover:opacity-100"
-                  onClick={() => setApplyResult(null)}
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
-
-            {/* Apply actions bar */}
-            {activeActionCount > 0 && (
-              <div className="fixed bottom-0 left-0 right-0 bg-navy shadow-2xl px-8 py-4 flex items-center justify-between">
-                <span className="text-white text-sm">
-                  <strong>{activeActionCount}</strong> action
-                  {activeActionCount !== 1 ? "s" : ""} queued
-                </span>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setActions(new Map())}
-                    className="text-gray-300 hover:text-white text-sm px-4 py-2"
-                  >
-                    Clear all
-                  </button>
-                  <button
-                    onClick={handleApplyClick}
-                    disabled={applying}
-                    className="bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg transition-colors text-sm"
-                  >
-                    {applying ? "Applying…" : `Apply ${activeActionCount} action${activeActionCount !== 1 ? "s" : ""}`}
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </main>
-
-      {/* ── Delete Confirmation Modal ─────────────────────────────────── */}
-      {confirmDeleteCount !== null && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
-            <div className="text-4xl mb-4 text-center">⚠️</div>
-            <h2 className="text-lg font-semibold text-navy text-center mb-2">
-              Confirm permanent deletion
-            </h2>
-            <p className="text-sm text-gray-500 text-center mb-6">
-              You are about to <strong>permanently delete {confirmDeleteCount} task{confirmDeleteCount !== 1 ? "s" : ""}</strong> from Salesforce.
-              This action <strong>cannot be undone</strong>.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setConfirmDeleteCount(null)}
-                className="flex-1 border border-gray-200 rounded-lg py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => executeActions(pendingActions)}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-lg py-2.5 text-sm font-semibold"
-              >
-                Yes, delete permanently
-              </button>
-            </div>
-          </div>
         </div>
-      )}
+      </main>
     </div>
   );
 }

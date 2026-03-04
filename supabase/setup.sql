@@ -36,3 +36,15 @@ CREATE TABLE IF NOT EXISTS task_actions_log (
 -- Index to make date-range queries on the log faster
 CREATE INDEX IF NOT EXISTS idx_task_actions_log_executed_at
   ON task_actions_log (executed_at DESC);
+
+-- ============================================================
+-- Table 3: Microsoft OAuth Tokens (for Outlook Calendar)
+-- ============================================================
+-- Stores the Microsoft connection so the Call Logger can read your calendar.
+CREATE TABLE IF NOT EXISTS ms_credentials (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  token_issued_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);

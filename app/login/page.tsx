@@ -41,7 +41,7 @@ export default function LoginPage() {
         </div>
 
         <h1 className="text-xl font-semibold text-navy text-center mb-1">
-          Task Manager
+          Valstone Platform
         </h1>
         <p className="text-sm text-gray-400 text-center mb-8">
           Enter your access password to continue
