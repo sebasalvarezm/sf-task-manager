@@ -65,7 +65,7 @@ export default function LandingPage() {
 
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex items-center justify-center px-8 py-16">
-        <div className="max-w-5xl w-full">
+        <div className="max-w-7xl w-full">
           <h1 className="text-2xl font-semibold text-navy text-center mb-2">
             What would you like to do?
           </h1>
@@ -73,7 +73,7 @@ export default function LandingPage() {
             Choose a tool to get started
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
             {/* ── Task Manager Card ────────────────────────────────────── */}
             <a
               href="/tasks"
@@ -224,6 +224,38 @@ export default function LandingPage() {
                   Checking...
                 </span>
               )}
+            </a>
+            {/* ── Sourcing Tool Card ──────────────────────────────────── */}
+            <a
+              href="/sourcing"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-violet-400 transition-all p-8 text-center"
+            >
+              <div className="text-4xl mb-4">
+                <svg
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-violet-500 transition-colors"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Sourcing Tool
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Paste a company URL to research their products, match to a
+                portfolio group, and generate personalized outreach.
+              </p>
+              <span className="inline-flex items-center gap-1.5 text-xs text-violet-600 bg-violet-50 border border-violet-200 rounded-full px-3 py-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                M&amp;A Research
+              </span>
             </a>
           </div>
         </div>
