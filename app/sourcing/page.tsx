@@ -41,7 +41,7 @@ export default function SourcingPage() {
 
       {/* ── Sourcing Tool iframe ─────────────────────────────────────────── */}
       <iframe
-        src={process.env.NEXT_PUBLIC_SOURCING_TOOL_URL ? `${process.env.NEXT_PUBLIC_SOURCING_TOOL_URL}?embed=true` : ""}
+        src={process.env.NEXT_PUBLIC_SOURCING_TOOL_URL ? `${process.env.NEXT_PUBLIC_SOURCING_TOOL_URL}?embed=true&embed_options=dark_theme&embed_options=hide_footer&embed_options=hide_padding` : ""}
         className="flex-1 w-full border-0"
         title="Sourcing Tool"
         allow="clipboard-write"
