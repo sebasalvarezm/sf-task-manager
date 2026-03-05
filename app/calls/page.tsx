@@ -2,7 +2,13 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import WeekSelector, { WeekRange, generateWeeks, currentWeekIndex } from "../components/WeekSelector";
+import WeekSelector, {
+  WeekRange,
+  generateWeeks,
+  currentWeekIndex,
+  getCompletedWeeks,
+  markWeekCompleted,
+} from "../components/WeekSelector";
 import CallLoggerTable, {
   MeetingRow,
   CallEntry,
@@ -54,6 +60,10 @@ function CallsPageContent() {
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
 
+  const [completedWeeks, setCompletedWeeks] = useState<Set<string>>(
+    () => getCompletedWeeks()
+  );
+
   // ── On mount: check connections + handle OAuth redirect ─────────────────────
   useEffect(() => {
     const msOk = searchParams.get("ms_connected");
@@ -84,6 +94,22 @@ function CallsPageContent() {
       setMsConnected(false);
     }
   }
+
+  // ── Auto-mark week as completed when all meetings are handled ─────────────
+  useEffect(() => {
+    if (
+      hasAnalyzed &&
+      meetings.length > 0 &&
+      selectedWeek &&
+      meetings.every((m) => dismissedIds.has(m.eventId))
+    ) {
+      const key = `${selectedWeek.start}|${selectedWeek.end}`;
+      if (!completedWeeks.has(key)) {
+        markWeekCompleted(selectedWeek.start, selectedWeek.end);
+        setCompletedWeeks(getCompletedWeeks());
+      }
+    }
+  }, [meetings, dismissedIds, hasAnalyzed, selectedWeek, completedWeeks]);
 
   // ── Analyze week — fetch calendar + match to Salesforce ────────────────────
   async function handleAnalyze() {
@@ -401,6 +427,7 @@ function CallsPageContent() {
               <div className="flex items-center gap-4">
                 <WeekSelector
                   selected={selectedWeek}
+                  completedWeeks={completedWeeks}
                   onChange={(week) => {
                     setSelectedWeek(week);
                     setMeetings([]);

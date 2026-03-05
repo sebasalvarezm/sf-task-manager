@@ -43,12 +43,35 @@ export function currentWeekIndex(): number {
   return differenceInWeeks(currentMonday, firstMonday);
 }
 
+// ── Completed weeks (localStorage) ────────────────────────────────────────────
+
+const COMPLETED_KEY = "call_logger_completed_weeks";
+
+export function getCompletedWeeks(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(COMPLETED_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+export function markWeekCompleted(start: string, end: string) {
+  const completed = getCompletedWeeks();
+  completed.add(`${start}|${end}`);
+  localStorage.setItem(COMPLETED_KEY, JSON.stringify([...completed]));
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 type Props = {
   selected: WeekRange | null;
   onChange: (week: WeekRange) => void;
+  completedWeeks?: Set<string>; // set of "start|end" keys
 };
 
-export default function WeekSelector({ selected, onChange }: Props) {
+export default function WeekSelector({ selected, onChange, completedWeeks }: Props) {
   const weeks = generateWeeks();
 
   const cwIdx = currentWeekIndex();
@@ -70,11 +93,15 @@ export default function WeekSelector({ selected, onChange }: Props) {
         onChange={handleChange}
         className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-orange min-w-[260px]"
       >
-        {weeks.map((w) => (
-          <option key={w.start} value={`${w.start}|${w.end}`}>
-            {w.label}
-          </option>
-        ))}
+        {weeks.map((w) => {
+          const key = `${w.start}|${w.end}`;
+          const isDone = completedWeeks?.has(key);
+          return (
+            <option key={w.start} value={key}>
+              {w.label}{isDone ? " (Completed)" : ""}
+            </option>
+          );
+        })}
       </select>
     </div>
   );
