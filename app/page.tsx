@@ -65,7 +65,7 @@ export default function LandingPage() {
 
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex items-center justify-center px-8 py-16">
-        <div className="max-w-3xl w-full">
+        <div className="max-w-5xl w-full">
           <h1 className="text-2xl font-semibold text-navy text-center mb-2">
             What would you like to do?
           </h1>
@@ -73,7 +73,7 @@ export default function LandingPage() {
             Choose a tool to get started
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* ── Task Manager Card ────────────────────────────────────── */}
             <a
               href="/tasks"
@@ -179,6 +179,51 @@ export default function LandingPage() {
                   </span>
                 )}
               </div>
+            </a>
+
+            {/* ── Account Creator Card ────────────────────────────────── */}
+            <a
+              href="/accounts"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-green-400 transition-all p-8 text-center"
+            >
+              <div className="text-4xl mb-4">
+                <svg
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-green-500 transition-colors"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Account Creator
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Paste a company URL to auto-fill and create a new Salesforce
+                account in seconds.
+              </p>
+
+              {/* Connection status */}
+              {sfConnected === true ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Salesforce connected
+                </span>
+              ) : sfConnected === false ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                  Salesforce not connected
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                  Checking...
+                </span>
+              )}
             </a>
           </div>
         </div>
