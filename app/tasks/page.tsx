@@ -7,6 +7,33 @@ import WeekSelector, { WeekRange, generateWeeks, currentWeekIndex } from "../com
 import TaskTable, { TaskAction, PortfolioMatch } from "../components/TaskTable";
 import ConnectSalesforce from "../components/ConnectSalesforce";
 
+// ── Portfolio match localStorage cache ───────────────────────────────────────
+const PORTFOLIO_CACHE_KEY = "portfolio_matches_v7";
+
+function getPortfolioCache(): Map<string, PortfolioMatch> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = localStorage.getItem(PORTFOLIO_CACHE_KEY);
+    if (!raw) return new Map();
+    const obj = JSON.parse(raw) as Record<string, PortfolioMatch>;
+    return new Map(Object.entries(obj));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveToPortfolioCache(accountId: string, match: PortfolioMatch) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem(PORTFOLIO_CACHE_KEY);
+    const obj: Record<string, PortfolioMatch> = raw ? JSON.parse(raw) : {};
+    obj[accountId] = { matched: match.matched, group: match.group };
+    localStorage.setItem(PORTFOLIO_CACHE_KEY, JSON.stringify(obj));
+  } catch {
+    // localStorage full or unavailable — non-critical
+  }
+}
+
 type ApplyResult = {
   successCount: number;
   failCount: number;
@@ -41,7 +68,7 @@ function TasksPageContent() {
   const [selectedWeek, setSelectedWeek] = useState<WeekRange | null>(null);
   const [actions, setActions] = useState<Map<string, TaskAction>>(new Map());
 
-  const [portfolioMatches, setPortfolioMatches] = useState<Map<string, PortfolioMatch>>(new Map());
+  const [portfolioMatches, setPortfolioMatches] = useState<Map<string, PortfolioMatch>>(() => getPortfolioCache());
   // Tracks in-flight portfolio requests — immune to stale closures, no re-renders
   const fetchingAccounts = useRef<Set<string>>(new Set());
 
@@ -81,9 +108,9 @@ function TasksPageContent() {
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
     setTasksError(null);
-    // Fresh start: clear in-flight tracking and all cached match results
+    // Reset in-flight tracking but keep localStorage-backed portfolio cache
     fetchingAccounts.current = new Set();
-    setPortfolioMatches(new Map());
+    setPortfolioMatches(getPortfolioCache());
     try {
       const res = await fetch("/api/salesforce/tasks");
       if (!res.ok) {
@@ -142,15 +169,20 @@ function TasksPageContent() {
           .then((res) => res.json())
           .then((data) => {
             fetchingAccounts.current.delete(accountId);
+            const result = {
+              matched: data.matched ?? false,
+              group: data.group ?? null,
+              unavailable: data.unavailable ?? false,
+            };
             setPortfolioMatches((prev) => {
               const next = new Map(prev);
-              next.set(accountId, {
-                matched: data.matched ?? false,
-                group: data.group ?? null,
-                unavailable: data.unavailable ?? false,
-              });
+              next.set(accountId, result);
               return next;
             });
+            // Persist to localStorage (skip errors/unavailable — let those retry)
+            if (!result.unavailable) {
+              saveToPortfolioCache(accountId, result);
+            }
           })
           .catch(() => {
             fetchingAccounts.current.delete(accountId);
@@ -253,7 +285,7 @@ function TasksPageContent() {
     await fetch("/api/salesforce/status", { method: "DELETE" });
     setConnected(false);
     setAllTasks([]);
-    setPortfolioMatches(new Map());
+    setPortfolioMatches(getPortfolioCache());
   }
 
   async function handleLogout() {
@@ -353,7 +385,7 @@ function TasksPageContent() {
                     setActions(new Map());
                     setApplyResult(null);
                     fetchingAccounts.current = new Set();
-                    setPortfolioMatches(new Map());
+                    // Keep cached matches — only new accounts will trigger API calls
                   }}
                 />
                 <button
