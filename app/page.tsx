@@ -73,7 +73,7 @@ export default function LandingPage() {
             Choose a tool to get started
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
             {/* ── Task Manager Card ────────────────────────────────────── */}
             <a
               href="/tasks"
@@ -145,6 +145,68 @@ export default function LandingPage() {
               <p className="text-sm text-gray-500 mb-4">
                 Log calls from your Outlook calendar to Salesforce — match
                 meetings to accounts automatically.
+              </p>
+
+              {/* Connection statuses */}
+              <div className="flex flex-col items-center gap-1.5">
+                {sfConnected === true ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Salesforce connected
+                  </span>
+                ) : sfConnected === false ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                    Salesforce not connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                    Checking...
+                  </span>
+                )}
+
+                {msConnected === true ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Outlook connected
+                  </span>
+                ) : msConnected === false ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-3 py-1">
+                    Outlook not connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                    Checking...
+                  </span>
+                )}
+              </div>
+            </a>
+
+            {/* ── Call Prep Card ──────────────────────────────────────── */}
+            <a
+              href="/prep"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-teal-400 transition-all p-8 text-center"
+            >
+              <div className="text-4xl mb-4">
+                <svg
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-teal-500 transition-colors"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Call Prep
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Generate AI-powered one-pager briefings for your upcoming
+                meetings — download as Word docs.
               </p>
 
               {/* Connection statuses */}
