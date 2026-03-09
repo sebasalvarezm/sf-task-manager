@@ -9,6 +9,36 @@ import WeekSelector, {
 } from "../components/WeekSelector";
 import ConnectSalesforce from "../components/ConnectSalesforce";
 
+// ── One-pager localStorage cache ─────────────────────────────────────────────
+const PREP_CACHE_KEY = "call_prep_cache";
+
+function getOnePagerCache(): Record<string, OnePagerContent> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(PREP_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveOnePagerToCache(key: string, onePager: OnePagerContent) {
+  if (typeof window === "undefined") return;
+  try {
+    const cache = getOnePagerCache();
+    cache[key] = onePager;
+    localStorage.setItem(PREP_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // localStorage full or unavailable — non-critical
+  }
+}
+
+function getCacheKey(meeting: MeetingMatch): string | null {
+  if (meeting.match) return meeting.match.accountId;
+  if (meeting.externalDomains.length > 0) return meeting.externalDomains[0];
+  return null;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type MeetingMatch = {
@@ -135,16 +165,21 @@ function PrepPageContent() {
 
       const data = await res.json();
       const raw: MeetingMatch[] = data.meetings ?? [];
+      const cache = getOnePagerCache();
 
-      // Wrap each meeting with prep-specific state
+      // Wrap each meeting with prep-specific state, restoring cached one-pagers
       setMeetings(
-        raw.map((m) => ({
-          ...m,
-          onePager: null,
-          generating: false,
-          generateError: null,
-          downloading: false,
-        }))
+        raw.map((m) => {
+          const key = getCacheKey(m);
+          const cached = key ? cache[key] ?? null : null;
+          return {
+            ...m,
+            onePager: cached,
+            generating: false,
+            generateError: null,
+            downloading: false,
+          };
+        })
       );
       setHasLoaded(true);
     } catch (err) {
@@ -197,14 +232,21 @@ function PrepPageContent() {
       }
 
       const data = await res.json();
+      const onePager: OnePagerContent = data.onePager;
 
       setMeetings((prev) =>
         prev.map((m) =>
           m.eventId === eventId
-            ? { ...m, onePager: data.onePager, generating: false }
+            ? { ...m, onePager, generating: false }
             : m
         )
       );
+
+      // Save to localStorage cache
+      const cacheKey = getCacheKey(meeting);
+      if (cacheKey && onePager) {
+        saveOnePagerToCache(cacheKey, onePager);
+      }
 
       // Auto-expand the row to show preview
       setExpandedId(eventId);
@@ -587,7 +629,7 @@ function MeetingRow({
         </td>
         <td className="px-4 py-3">
           <div className="flex items-center justify-center gap-2">
-            {/* Generate button */}
+            {/* Generate button (shown when no one-pager exists) */}
             {!hasOnePager && !meeting.generating && (
               <button
                 onClick={onGenerate}
@@ -620,9 +662,16 @@ function MeetingRow({
               </div>
             )}
 
-            {/* After generation: View + Download */}
-            {hasOnePager && (
+            {/* After generation: Regenerate + View + Download */}
+            {hasOnePager && !meeting.generating && (
               <>
+                <button
+                  onClick={onGenerate}
+                  className="text-xs text-gray-400 hover:text-brand-orange transition-colors"
+                  title="Regenerate one-pager"
+                >
+                  ↻
+                </button>
                 <button
                   onClick={onToggleExpand}
                   className="text-xs font-medium text-navy hover:text-brand-orange transition-colors px-2 py-1.5 rounded border border-gray-200 hover:border-brand-orange"
