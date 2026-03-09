@@ -412,17 +412,23 @@ export async function getWaybackCandidates(
 
 /**
  * Fetch an archived page from Wayback Machine via Jina Reader.
- * Returns the text content, or null if too short / parked / wrong company.
+ * Returns text content + skip reason if rejected.
  */
 export async function fetchWaybackSnapshot(
   archiveUrl: string,
   domainStem: string
-): Promise<string | null> {
+): Promise<{ text: string | null; skipReason: string | null }> {
   const text = await fetchPageText(archiveUrl, 25000);
-  if (!text || text.length < 300) return null;
-  if (isParkedPage(text)) return null;
-  if (!text.toLowerCase().includes(domainStem.toLowerCase())) return null;
-  return text.slice(0, 8000);
+  if (!text || text.length < 300)
+    return { text: null, skipReason: "too little content" };
+  if (isParkedPage(text))
+    return { text: null, skipReason: "looks like a parked domain page" };
+  if (!text.toLowerCase().includes(domainStem.toLowerCase()))
+    return {
+      text: null,
+      skipReason: "company name not found (likely a prior domain owner)",
+    };
+  return { text: text.slice(0, 8000), skipReason: null };
 }
 
 // ---------------------------------------------------------------------------

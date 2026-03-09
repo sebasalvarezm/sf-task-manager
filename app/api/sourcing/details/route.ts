@@ -38,27 +38,52 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing URL" }, { status: 400 });
   }
 
+  const logs: string[] = [];
+
   try {
-    // Run address extraction and outreach generation in parallel
-    const [address, outreachParagraph] = await Promise.all([
-      extractAddress(anthropic, currentText, url),
-      generateOutreach(anthropic, url, currentText, products, portfolioGroup),
-    ]);
+    // Find address
+    logs.push("Finding company address...");
+    const address = await extractAddress(anthropic, currentText, url);
+
+    if (address) {
+      logs.push(`Address found: ${address}`);
+    } else {
+      logs.push("Company address not found.");
+    }
 
     // Find restaurants (depends on address)
     let restaurants: { name: string; description: string }[] = [];
     if (address) {
+      logs.push(`Searching for business dinner restaurants near ${address}...`);
       restaurants = await findRestaurants(anthropic, address);
+      if (restaurants.length > 0) {
+        logs.push(`Found ${restaurants.length} restaurant recommendation(s).`);
+      } else {
+        logs.push("Could not retrieve restaurant recommendations for this address.");
+      }
+    } else {
+      logs.push("Skipping restaurant search \u2014 no address found.");
     }
+
+    // Generate outreach paragraph
+    const outreachParagraph = await generateOutreach(
+      anthropic,
+      url,
+      currentText,
+      products,
+      portfolioGroup,
+      logs
+    );
 
     return NextResponse.json({
       address,
       restaurants,
       outreachParagraph,
+      logs,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message, logs }, { status: 500 });
   }
 }
 
@@ -67,16 +92,29 @@ async function generateOutreach(
   url: string,
   currentText: string,
   products: string[],
-  portfolioGroup: string | null
+  portfolioGroup: string | null,
+  logs: string[]
 ): Promise<string | null> {
-  if (!portfolioGroup) return null;
+  if (!portfolioGroup) {
+    logs.push("No portfolio group matched \u2014 skipping outreach paragraph.");
+    return null;
+  }
 
+  logs.push("Drafting outreach paragraph...");
   const groups = loadGroupFiles();
   const fileName = findGroupFileName(portfolioGroup, groups);
-  if (!fileName || !(fileName in groups)) return null;
+  if (!fileName || !(fileName in groups)) {
+    logs.push("Could not find group file for outreach template.");
+    return null;
+  }
 
   const baseOutreach = extractOutreachParagraph(groups[fileName]);
-  if (!baseOutreach) return null;
+  if (!baseOutreach) {
+    logs.push("No outreach template found in group file.");
+    return null;
+  }
 
-  return personalizeOutreach(client, baseOutreach, url, currentText, products);
+  const result = await personalizeOutreach(client, baseOutreach, url, currentText, products);
+  logs.push("Outreach paragraph complete.");
+  return result;
 }

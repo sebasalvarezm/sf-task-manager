@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 
 // ---------------------------------------------------------------------------
@@ -14,6 +14,7 @@ type ScrapeResult = {
   products: string[];
   foundingYear: number | null;
   portfolioMatch: PortfolioMatch;
+  logs?: string[];
 };
 
 type HistoryResult = {
@@ -23,12 +24,14 @@ type HistoryResult = {
   discontinued: string | null;
   discontinuedNote: string | null;
   oldProducts: string[];
+  logs?: string[];
 };
 
 type DetailsResult = {
   address: string | null;
   restaurants: { name: string; description: string }[];
   outreachParagraph: string | null;
+  logs?: string[];
 };
 
 type CompanyResult = {
@@ -39,6 +42,7 @@ type CompanyResult = {
   scrape: ScrapeResult | null;
   history: HistoryResult | null;
   details: DetailsResult | null;
+  logs: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -51,6 +55,7 @@ type CachedResult = {
   scrape: ScrapeResult;
   history: HistoryResult | null;
   details: DetailsResult | null;
+  logs: string[];
   cachedAt: number;
 };
 
@@ -71,10 +76,11 @@ function saveToCache(domain: string, result: CompanyResult) {
     cache[domain] = {
       scrape: {
         ...result.scrape,
-        currentText: result.scrape.currentText.slice(0, 500), // don't store full text in cache
+        currentText: result.scrape.currentText.slice(0, 500),
       },
       history: result.history,
       details: result.details,
+      logs: result.logs,
       cachedAt: Date.now(),
     };
     localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
@@ -86,6 +92,119 @@ function saveToCache(domain: string, result: CompanyResult) {
 function getCachedResult(domain: string): CachedResult | null {
   const cache = getCache();
   return cache[domain] || null;
+}
+
+// ---------------------------------------------------------------------------
+// Step Progress Component
+// ---------------------------------------------------------------------------
+
+const STEPS = [
+  { key: "scraping", label: "Scraping website & extracting products" },
+  { key: "history", label: "Searching Wayback Machine for history" },
+  { key: "details", label: "Finding address & generating outreach" },
+];
+
+function StepProgress({ status }: { status: string }) {
+  const stepOrder = ["scraping", "history", "details", "done"];
+  const currentIdx = stepOrder.indexOf(status);
+
+  return (
+    <div className="flex flex-col gap-2 bg-white rounded-xl border border-gray-200 shadow-sm p-4 mb-5">
+      {STEPS.map((step, i) => {
+        const isDone = currentIdx > i || status === "done";
+        const isActive = status === step.key;
+
+        return (
+          <div key={step.key} className="flex items-center gap-3">
+            {isDone ? (
+              <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center shrink-0">
+                <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+            ) : isActive ? (
+              <div className="w-6 h-6 rounded-full border-2 border-[#E84C0E] border-t-transparent animate-spin shrink-0" />
+            ) : (
+              <div className="w-6 h-6 rounded-full border-2 border-gray-200 shrink-0" />
+            )}
+            <span
+              className={`text-sm ${
+                isDone
+                  ? "text-green-700 font-medium"
+                  : isActive
+                  ? "text-[#1B2A4A] font-semibold"
+                  : "text-gray-400"
+              }`}
+            >
+              {step.label}
+              {isActive && (
+                <span className="ml-1 text-[#E84C0E] animate-pulse">...</span>
+              )}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Log Panel Component
+// ---------------------------------------------------------------------------
+
+function LogPanel({
+  logs,
+  isRunning,
+}: {
+  logs: string[];
+  isRunning: boolean;
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  if (logs.length === 0) return null;
+
+  return (
+    <div className="mb-5">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 text-xs font-medium text-gray-500 hover:text-[#1B2A4A] uppercase tracking-wide mb-2 transition-colors"
+      >
+        <svg
+          className={`w-3.5 h-3.5 transition-transform ${expanded ? "rotate-90" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        {isRunning ? "Analysis Log" : "View Analysis Log"}
+        <span className="text-gray-400 normal-case tracking-normal">
+          ({logs.length} steps)
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="bg-[#141f38] rounded-xl p-4 border border-[#253561] overflow-auto max-h-64">
+          {logs.map((log, i) => (
+            <div key={i} className="flex items-start gap-2 mb-1.5 last:mb-0">
+              <span className="text-[#E84C0E] text-xs mt-0.5 shrink-0 font-mono">
+                {">"}
+              </span>
+              <span className="text-gray-300 text-xs font-mono leading-relaxed">
+                {log}
+              </span>
+            </div>
+          ))}
+          {isRunning && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[#E84C0E] text-xs font-mono">{">"}</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#E84C0E] animate-pulse" />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -101,11 +220,6 @@ export default function SourcingPage() {
   const [activeTab, setActiveTab] = useState(0);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
-  // Restore cached results on mount
-  useEffect(() => {
-    // nothing to restore on mount — results load when user runs analysis
-  }, []);
-
   function handleUrlChange(index: number, value: string) {
     const updated = [...urls];
     updated[index] = value;
@@ -120,9 +234,7 @@ export default function SourcingPage() {
 
   function getDomain(url: string): string {
     try {
-      const parsed = new URL(
-        url.startsWith("http") ? url : `https://${url}`
-      );
+      const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
       return parsed.hostname.replace("www.", "");
     } catch {
       return url;
@@ -134,6 +246,20 @@ export default function SourcingPage() {
       setResults((prev) => {
         const copy = [...prev];
         copy[index] = { ...copy[index], ...updates };
+        return copy;
+      });
+    },
+    []
+  );
+
+  const appendLogs = useCallback(
+    (index: number, newLogs: string[]) => {
+      setResults((prev) => {
+        const copy = [...prev];
+        copy[index] = {
+          ...copy[index],
+          logs: [...copy[index].logs, ...newLogs],
+        };
         return copy;
       });
     },
@@ -154,6 +280,7 @@ export default function SourcingPage() {
         body: JSON.stringify({ url: normalized }),
       });
       const data = await res.json();
+      if (data.logs) appendLogs(index, data.logs);
       if (!res.ok) {
         updateResult(index, {
           status: "error",
@@ -176,7 +303,6 @@ export default function SourcingPage() {
       latestScrape = prev[index].scrape;
       return prev;
     });
-    // Small delay to ensure state is updated
     await new Promise((r) => setTimeout(r, 50));
     setResults((prev) => {
       latestScrape = prev[index].scrape;
@@ -201,6 +327,7 @@ export default function SourcingPage() {
         }),
       });
       const data = await res.json();
+      if (data.logs) appendLogs(index, data.logs);
       if (res.ok) {
         updateResult(index, { history: data });
       }
@@ -222,6 +349,7 @@ export default function SourcingPage() {
         }),
       });
       const data = await res.json();
+      if (data.logs) appendLogs(index, data.logs);
       if (res.ok) {
         updateResult(index, { details: data });
       }
@@ -238,7 +366,6 @@ export default function SourcingPage() {
   }
 
   async function handleRun() {
-    // Collect non-empty unique URLs
     const validUrls = urls
       .map((u) => u.trim())
       .filter((u) => u.length > 0)
@@ -250,7 +377,6 @@ export default function SourcingPage() {
     setIsRunning(true);
     setActiveTab(0);
 
-    // Initialize results
     const entries: CompanyResult[] = unique.map((url) => ({
       url,
       domain: getDomain(url),
@@ -259,9 +385,10 @@ export default function SourcingPage() {
       scrape: null,
       history: null,
       details: null,
+      logs: [],
     }));
 
-    // Check cache for each entry
+    // Check cache
     for (const entry of entries) {
       const cached = getCachedResult(entry.domain);
       if (cached) {
@@ -269,14 +396,14 @@ export default function SourcingPage() {
         entry.scrape = cached.scrape;
         entry.history = cached.history;
         entry.details = cached.details;
+        entry.logs = cached.logs || [];
       }
     }
 
     setResults(entries);
 
-    // Run pipeline for non-cached entries sequentially
     for (let i = 0; i < entries.length; i++) {
-      if (entries[i].status === "done") continue; // skip cached
+      if (entries[i].status === "done") continue;
       setActiveTab(i);
       await runPipeline(entries[i], i);
     }
@@ -288,19 +415,17 @@ export default function SourcingPage() {
     setIsRunning(true);
     setActiveTab(index);
 
-    // Reset this entry
     updateResult(index, {
       status: "idle",
       error: null,
       scrape: null,
       history: null,
       details: null,
+      logs: [],
     });
 
-    // Small delay for state to update
     await new Promise((r) => setTimeout(r, 50));
 
-    // Get the fresh entry
     let entry: CompanyResult | null = null;
     setResults((prev) => {
       entry = prev[index];
@@ -330,24 +455,15 @@ export default function SourcingPage() {
     router.push("/login");
   }
 
-  // Get the current step label for progress display
-  function getStepLabel(status: string): string {
-    switch (status) {
-      case "scraping":
-        return "Scraping website & extracting products...";
-      case "history":
-        return "Searching Wayback Machine for historical data...";
-      case "details":
-        return "Finding address & generating outreach...";
-      default:
-        return "";
-    }
-  }
-
   const currentResults = results[activeTab] || null;
+  const isCurrentRunning =
+    currentResults != null &&
+    currentResults.status !== "done" &&
+    currentResults.status !== "error" &&
+    currentResults.status !== "idle";
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
+    <div className="min-h-screen flex flex-col bg-[#f0f2f5]">
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header
         className="flex items-center justify-between px-8 py-4 shadow-lg shrink-0"
@@ -376,18 +492,25 @@ export default function SourcingPage() {
 
       {/* ── Main ───────────────────────────────────────────────────────── */}
       <main className="flex-1 px-8 py-8 max-w-7xl mx-auto w-full">
-        <h1 className="text-2xl font-semibold text-navy mb-1">Sourcing Tool</h1>
+        <div className="flex items-center gap-3 mb-1">
+          <h1 className="text-2xl font-semibold text-[#1B2A4A]">
+            Sourcing Tool
+          </h1>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-white bg-gradient-to-r from-[#E84C0E] to-[#c93d09] px-2 py-0.5 rounded-full">
+            Scout
+          </span>
+        </div>
         <p className="text-sm text-gray-400 mb-6">
           Research companies, match to portfolio groups, and generate
           personalized outreach
         </p>
 
         {/* ── URL Inputs ─────────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-md p-6 mb-6">
           <div className="space-y-3">
             {Array.from({ length: urlCount }).map((_, i) => (
               <div key={i}>
-                <label className="block text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
+                <label className="block text-xs font-semibold text-[#1B2A4A] uppercase tracking-wide mb-1.5">
                   {urlCount === 1 ? "Company URL" : `Company URL ${i + 1}`}
                 </label>
                 <input
@@ -396,7 +519,7 @@ export default function SourcingPage() {
                   onChange={(e) => handleUrlChange(i, e.target.value)}
                   placeholder="https://www.example.com"
                   disabled={isRunning}
-                  className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-violet-400 disabled:bg-gray-50 disabled:text-gray-400"
+                  className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 focus:border-[#E84C0E] disabled:bg-gray-50 disabled:text-gray-400 transition-all"
                 />
               </div>
             ))}
@@ -407,7 +530,7 @@ export default function SourcingPage() {
               <button
                 onClick={addUrlField}
                 disabled={isRunning}
-                className="text-sm text-gray-500 hover:text-violet-600 border border-dashed border-gray-300 hover:border-violet-400 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                className="text-sm text-gray-500 hover:text-[#1B2A4A] border border-dashed border-gray-300 hover:border-[#1B2A4A] px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
               >
                 + Add another URL
               </button>
@@ -416,9 +539,16 @@ export default function SourcingPage() {
             <button
               onClick={handleRun}
               disabled={isRunning || urls.every((u) => !u.trim())}
-              className="ml-auto px-6 py-2.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold rounded-full shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="ml-auto px-7 py-2.5 bg-gradient-to-r from-[#E84C0E] to-[#c93d09] hover:from-[#c93d09] hover:to-[#a83308] text-white text-sm font-semibold rounded-full shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md"
             >
-              {isRunning ? "Running..." : "Run Scout"}
+              {isRunning ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Running...
+                </span>
+              ) : (
+                "Run Scout"
+              )}
             </button>
           </div>
         </div>
@@ -426,43 +556,46 @@ export default function SourcingPage() {
         {/* ── Results ────────────────────────────────────────────────── */}
         {results.length > 0 && (
           <div>
-            {/* Results header + clear button */}
+            {/* Results header */}
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-navy">Results</h2>
+              <h2 className="text-lg font-semibold text-[#1B2A4A] flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#E84C0E]" />
+                Results
+              </h2>
               {!isRunning && (
                 <button
                   onClick={clearResults}
-                  className="text-sm text-gray-400 hover:text-red-500 border border-dashed border-gray-300 hover:border-red-300 px-3 py-1 rounded-lg transition-colors"
+                  className="text-xs text-gray-400 hover:text-red-500 border border-gray-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition-colors"
                 >
                   Clear Results
                 </button>
               )}
             </div>
 
-            {/* Tabs (for multiple companies) */}
+            {/* Tabs */}
             {results.length > 1 && (
-              <div className="flex gap-1 mb-4 bg-gray-100 rounded-xl p-1">
+              <div className="flex gap-0.5 mb-4 bg-gray-100 rounded-xl p-1 shadow-inner">
                 {results.map((r, i) => (
                   <button
                     key={i}
                     onClick={() => setActiveTab(i)}
-                    className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+                    className={`px-4 py-2 text-sm rounded-lg transition-all ${
                       activeTab === i
-                        ? "bg-white text-navy font-medium shadow-sm"
-                        : "text-gray-500 hover:text-gray-700"
+                        ? "bg-[#1B2A4A] text-white font-medium shadow-md"
+                        : "text-gray-500 hover:text-[#1B2A4A] hover:bg-white"
                     }`}
                   >
                     {r.domain}
                     {r.status === "done" && (
-                      <span className="ml-1.5 text-green-500">&#10003;</span>
+                      <span className="ml-1.5 text-green-400">&#10003;</span>
                     )}
                     {r.status === "error" && (
-                      <span className="ml-1.5 text-red-500">&#10007;</span>
+                      <span className="ml-1.5 text-red-400">&#10007;</span>
                     )}
                     {r.status !== "done" &&
                       r.status !== "error" &&
                       r.status !== "idle" && (
-                        <span className="ml-1.5 animate-pulse text-violet-500">
+                        <span className="ml-1.5 animate-pulse text-[#E84C0E]">
                           &#9679;
                         </span>
                       )}
@@ -474,35 +607,37 @@ export default function SourcingPage() {
             {/* Current company results */}
             {currentResults && (
               <div>
-                {/* Progress indicator */}
-                {currentResults.status !== "done" &&
-                  currentResults.status !== "error" &&
-                  currentResults.status !== "idle" && (
-                    <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 mb-4 flex items-center gap-3">
-                      <div className="w-5 h-5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
-                      <span className="text-sm text-violet-700 font-medium">
-                        {getStepLabel(currentResults.status)}
-                      </span>
-                    </div>
-                  )}
+                {/* Step Progress Tracker */}
+                {isCurrentRunning && (
+                  <StepProgress status={currentResults.status} />
+                )}
 
                 {/* Error */}
                 {currentResults.status === "error" && (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-5">
                     <p className="text-sm text-red-700">
                       <strong>Error:</strong> {currentResults.error}
                     </p>
                   </div>
                 )}
 
-                {/* Cached indicator + re-analyze button */}
+                {/* Log Panel */}
+                <LogPanel
+                  logs={currentResults.logs}
+                  isRunning={isCurrentRunning}
+                />
+
+                {/* Re-analyze button */}
                 {currentResults.status === "done" && !isRunning && (
                   <div className="flex items-center gap-2 mb-4">
                     <button
                       onClick={() => handleReanalyze(activeTab)}
-                      className="text-xs text-gray-400 hover:text-violet-600 border border-dashed border-gray-300 hover:border-violet-400 px-2.5 py-1 rounded-lg transition-colors"
+                      className="text-xs text-gray-400 hover:text-[#E84C0E] border border-gray-200 hover:border-[#E84C0E] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
                     >
-                      &#8635; Re-analyze
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Re-analyze
                     </button>
                   </div>
                 )}
@@ -511,12 +646,13 @@ export default function SourcingPage() {
                 {currentResults.scrape && (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                     {/* Column 1: Portfolio Group */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-                      <h3 className="text-xs font-semibold text-violet-600 uppercase tracking-wide mb-3 pb-2 border-b border-gray-100">
+                    <div className="bg-white rounded-2xl border border-gray-200 border-t-2 border-t-[#E84C0E] shadow-md hover:shadow-lg transition-all p-6">
+                      <h3 className="text-xs font-semibold text-[#1B2A4A] uppercase tracking-wide mb-3 pb-2 border-b border-gray-100 flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#E84C0E]" />
                         Portfolio Group
                       </h3>
                       {currentResults.scrape.portfolioMatch.matched ? (
-                        <p className="text-xl font-bold text-navy">
+                        <p className="text-xl font-bold text-[#1B2A4A]">
                           {currentResults.scrape.portfolioMatch.group}
                         </p>
                       ) : (
@@ -540,7 +676,7 @@ export default function SourcingPage() {
                               .map((p, i) => (
                                 <span
                                   key={i}
-                                  className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full"
+                                  className="text-xs bg-blue-50 text-[#1B2A4A] border border-blue-100 px-2 py-0.5 rounded-full"
                                 >
                                   {p}
                                 </span>
@@ -557,15 +693,18 @@ export default function SourcingPage() {
                     </div>
 
                     {/* Column 2: Discontinued Product */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-                      <h3 className="text-xs font-semibold text-violet-600 uppercase tracking-wide mb-3 pb-2 border-b border-gray-100">
+                    <div className="bg-white rounded-2xl border border-gray-200 border-t-2 border-t-[#1B2A4A] shadow-md hover:shadow-lg transition-all p-6">
+                      <h3 className="text-xs font-semibold text-[#1B2A4A] uppercase tracking-wide mb-3 pb-2 border-b border-gray-100 flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#1B2A4A]" />
                         Discontinued Product
                       </h3>
 
                       {currentResults.scrape.foundingYear && (
                         <p className="text-xs text-gray-400 mb-2">
                           Est. founded:{" "}
-                          {currentResults.scrape.foundingYear}
+                          <span className="font-semibold text-[#1B2A4A]">
+                            {currentResults.scrape.foundingYear}
+                          </span>
                           {currentResults.scrape.foundingYear > 2016 && (
                             <span className="ml-2 text-amber-600 font-medium">
                               — verify age before reaching out
@@ -583,7 +722,7 @@ export default function SourcingPage() {
                       {currentResults.history ? (
                         currentResults.history.discontinued ? (
                           <div>
-                            <p className="text-lg font-semibold text-navy">
+                            <p className="text-lg font-semibold text-[#1B2A4A]">
                               {currentResults.history.discontinued}
                             </p>
                             {currentResults.history.discontinuedNote && (
@@ -596,7 +735,7 @@ export default function SourcingPage() {
                                 href={currentResults.history.archiveUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-block mt-2 text-xs text-violet-600 hover:text-violet-800 underline"
+                                className="inline-block mt-2 text-xs text-[#E84C0E] hover:text-[#c93d09] font-medium underline underline-offset-2"
                               >
                                 View archived page &rarr;
                               </a>
@@ -623,8 +762,9 @@ export default function SourcingPage() {
                     </div>
 
                     {/* Column 3: Outreach Paragraph */}
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-                      <h3 className="text-xs font-semibold text-violet-600 uppercase tracking-wide mb-3 pb-2 border-b border-gray-100">
+                    <div className="bg-white rounded-2xl border border-gray-200 border-t-2 border-t-[#E84C0E] shadow-md hover:shadow-lg transition-all p-6">
+                      <h3 className="text-xs font-semibold text-[#1B2A4A] uppercase tracking-wide mb-3 pb-2 border-b border-gray-100 flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#E84C0E]" />
                         Outreach Paragraph
                       </h3>
 
@@ -646,7 +786,11 @@ export default function SourcingPage() {
                                 activeTab
                               )
                             }
-                            className="mt-3 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-full shadow-sm hover:shadow-md transition-all"
+                            className={`mt-4 px-5 py-2 text-xs font-semibold rounded-full shadow-sm hover:shadow-md transition-all ${
+                              copiedIdx === activeTab
+                                ? "bg-green-500 text-white"
+                                : "bg-gradient-to-r from-[#E84C0E] to-[#c93d09] hover:from-[#c93d09] hover:to-[#a83308] text-white"
+                            }`}
                           >
                             {copiedIdx === activeTab
                               ? "Copied!"
@@ -667,26 +811,25 @@ export default function SourcingPage() {
                 {/* Restaurant Recommendations */}
                 {currentResults.details && currentResults.details.address && (
                   <div className="mb-6">
-                    <div className="flex items-center gap-2 mb-3">
-                      <h3 className="text-xs font-semibold text-violet-600 uppercase tracking-wide">
-                        Nearby Restaurants
-                      </h3>
-                      <span className="text-sm text-gray-500">
+                    <h3 className="text-xs font-semibold text-[#1B2A4A] uppercase tracking-wide mb-3 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#E84C0E]" />
+                      Nearby Restaurants
+                      <span className="text-gray-400 normal-case tracking-normal font-normal">
                         — {currentResults.details.address}
                       </span>
-                    </div>
+                    </h3>
 
                     {currentResults.details.restaurants.length > 0 ? (
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         {currentResults.details.restaurants.map((r, i) => (
                           <div
                             key={i}
-                            className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5"
+                            className="bg-white rounded-2xl border border-gray-200 shadow-md hover:shadow-lg transition-all p-5"
                           >
-                            <p className="text-xs font-semibold text-violet-600 uppercase tracking-wide mb-2">
+                            <p className="text-xs font-semibold text-[#E84C0E] uppercase tracking-wide mb-2">
                               Business Dinner
                             </p>
-                            <p className="font-semibold text-navy mb-1">
+                            <p className="font-semibold text-[#1B2A4A] mb-1">
                               {r.name}
                             </p>
                             <p className="text-sm text-gray-500">
