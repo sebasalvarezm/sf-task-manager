@@ -198,22 +198,8 @@ export async function extractProducts(
 ): Promise<string[]> {
   if (!text) return [];
 
-  const isArchived = label.toLowerCase().includes("archived");
-
-  const prompt = isArchived
-    ? `Extract named products and services from this ${label} website text.
-PRIORITY 1: Proprietary or branded product names — items with a specific name the company gave them (e.g. 'ProSuite', 'DataBridge 2.0', 'FieldMotion Go').
-PRIORITY 2: Specific service lines with a distinct name (e.g. 'Managed Print Service', '24/7 Emergency Support Programme').
-PRIORITY 3 (fallback only, if nothing else found): A unique company tagline or notable capability.
-
-Do NOT include: generic categories ('consulting', 'software development', 'support'), company name variants, or vague descriptions.
-
-Return a JSON array of strings only. No commentary.
-If you find nothing specific, return an empty array: []
-
-Text:
-${text.slice(0, 6000)}`
-    : `Extract every distinct product name and service name from this ${label} website text.
+  const prompt = `Extract every distinct product name and service name from this ${label} website text.
+Include branded products, named service lines, software platforms, and specific offerings.
 Return a JSON array of strings only. No commentary, no explanation.
 If you find nothing, return an empty array: []
 
@@ -431,6 +417,41 @@ export async function fetchWaybackSnapshot(
   return { text: text.slice(0, 8000), skipReason: null };
 }
 
+/**
+ * Search Wayback Machine CDX for archived interior pages matching a keyword prefix.
+ * E.g., keyword "product" finds /products, /products.html, /products/index.php, etc.
+ * Returns up to `limit` candidates.
+ */
+export async function getInteriorCandidates(
+  domain: string,
+  keyword: string,
+  fromDate: string,
+  toDate: string,
+  limit = 3
+): Promise<WaybackCandidate[]> {
+  try {
+    const cdxUrl =
+      `http://web.archive.org/cdx/search/cdx` +
+      `?url=${domain}/${keyword}*&matchType=prefix&output=json` +
+      `&from=${fromDate}&to=${toDate}` +
+      `&limit=${limit}&filter=statuscode:200` +
+      `&collapse=timestamp:4` +
+      `&fl=timestamp,original`;
+
+    const res = await fetch(cdxUrl, { signal: AbortSignal.timeout(15000) });
+    const data = await res.json();
+
+    if (data.length < 2) return [];
+
+    return data.slice(1).map((row: string[]) => ({
+      url: `https://web.archive.org/web/${row[0]}/${row[1]}`,
+      timestamp: row[0],
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Product Comparison
 // ---------------------------------------------------------------------------
@@ -452,7 +473,7 @@ export async function findDiscontinued(
     messages: [
       {
         role: "user",
-        content: `Below are two lists of products/services from the same company at different points in time.
+        content: `You are helping with M&A research. Below are two lists of products/services from the same company at different points in time.
 
 OLD SITE (${periodLabel}):
 ${JSON.stringify(oldProducts, null, 2)}
@@ -460,7 +481,12 @@ ${JSON.stringify(oldProducts, null, 2)}
 CURRENT SITE:
 ${JSON.stringify(currentProducts, null, 2)}
 
-Identify ONE product or service that was present on the old site but is clearly absent from the current site. Pick the most specific and interesting one — not a generic category.
+Identify ONE product or service from the OLD list that no longer appears on the current site. It may have been discontinued, renamed, merged into another product, or simply dropped.
+
+Pick the most specific and interesting one — a named product or distinct service, not a generic category.
+
+IMPORTANT: Even if you are not 100% certain it was discontinued (maybe it was renamed), still return your best candidate. A lead is valuable for M&A research even if it needs verification. Only return "None" if the two lists are essentially identical.
+
 Return only the product/service name. No explanation.`,
       },
     ],

@@ -3,12 +3,27 @@ import { isAuthenticated } from "@/lib/auth";
 import { getAnthropicClient } from "@/lib/anthropic";
 import {
   getWaybackCandidates,
+  getInteriorCandidates,
   fetchWaybackSnapshot,
   extractProducts,
   findDiscontinued,
 } from "@/lib/scout";
 
 export const maxDuration = 55;
+
+/** Deduplicate a string array case-insensitively, preserving first occurrence. */
+function dedup(items: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    const key = item.trim().toLowerCase();
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      result.push(item.trim());
+    }
+  }
+  return result;
+}
 
 export async function POST(request: NextRequest) {
   if (!(await isAuthenticated())) {
@@ -43,12 +58,12 @@ export async function POST(request: NextRequest) {
 
     if (foundingYear && foundingYear >= 2010) {
       wbFrom = `${foundingYear}0101`;
-      wbTo = `${foundingYear + 2}1231`;
-      wbLabel = `${foundingYear}\u2013${foundingYear + 2}`;
+      wbTo = `${foundingYear + 5}1231`;
+      wbLabel = `${foundingYear}\u2013${foundingYear + 5}`;
     } else if (foundingYear) {
-      wbFrom = "20060101";
-      wbTo = "20101231";
-      wbLabel = "2006\u20132010";
+      wbFrom = "20050101";
+      wbTo = "20151231";
+      wbLabel = "2005\u20132015";
     } else {
       wbFrom = "20060101";
       wbTo = "20201231";
@@ -80,13 +95,17 @@ export async function POST(request: NextRequest) {
       .replace("www.", "")
       .split(".")[0]
       .toLowerCase();
+    const domainOnly = parsed.hostname.replace("www.", "");
 
-    // Try each candidate until we find a valid one
+    // Check up to 3 valid homepage snapshots and combine products from all
     let archiveUrl: string | null = null;
     let archiveTimestamp: string | null = null;
     let oldText: string | null = null;
+    const allOldProducts: string[] = [];
+    let validCount = 0;
 
     for (const candidate of candidates) {
+      if (validCount >= 3) break;
       const year = candidate.timestamp.slice(0, 4);
       const result = await fetchWaybackSnapshot(candidate.url, domainStem);
 
@@ -96,11 +115,69 @@ export async function POST(request: NextRequest) {
       }
 
       if (result.text) {
-        archiveUrl = candidate.url;
-        archiveTimestamp = candidate.timestamp;
-        oldText = result.text;
+        // Use the first valid snapshot as the canonical archive URL
+        if (!archiveUrl) {
+          archiveUrl = candidate.url;
+          archiveTimestamp = candidate.timestamp;
+          oldText = result.text;
+        }
+
         logs.push(`Valid snapshot found from ${year}.`);
-        break;
+
+        // Extract products from this snapshot
+        const products = await extractProducts(
+          anthropic,
+          result.text,
+          `archived (${year})`
+        );
+        if (products.length > 0) {
+          allOldProducts.push(...products);
+          const preview = products.slice(0, 5).join(", ");
+          const suffix = products.length > 5 ? "..." : "";
+          logs.push(`Found ${products.length} product(s) in ${year} snapshot: ${preview}${suffix}`);
+        }
+
+        validCount++;
+      }
+    }
+
+    // Probe archived interior pages (e.g. /products, /solutions, /services)
+    // This finds product-rich pages that homepages often don't show
+    const interiorKeywords = ["product", "solution", "service", "platform", "software"];
+    let interiorChecked = 0;
+
+    for (const keyword of interiorKeywords) {
+      if (interiorChecked >= 3) break;
+
+      const interiorCands = await getInteriorCandidates(
+        domainOnly,
+        keyword,
+        wbFrom,
+        wbTo,
+        1
+      );
+
+      for (const ic of interiorCands) {
+        if (interiorChecked >= 3) break;
+        const icYear = ic.timestamp.slice(0, 4);
+
+        const icResult = await fetchWaybackSnapshot(ic.url, domainStem);
+        if (icResult.skipReason || !icResult.text) continue;
+
+        logs.push(`Interior page snapshot (/${keyword}*, ${icYear}).`);
+        const icProducts = await extractProducts(
+          anthropic,
+          icResult.text,
+          `archived (${icYear}) interior`
+        );
+        if (icProducts.length > 0) {
+          allOldProducts.push(...icProducts);
+          const preview = icProducts.slice(0, 5).join(", ");
+          const suffix = icProducts.length > 5 ? "..." : "";
+          logs.push(`Found ${icProducts.length} product(s) on /${keyword}*: ${preview}${suffix}`);
+        }
+        interiorChecked++;
+        break; // One snapshot per keyword is enough
       }
     }
 
@@ -118,22 +195,16 @@ export async function POST(request: NextRequest) {
     }
 
     const archiveYear = archiveTimestamp!.slice(0, 4);
-    logs.push(`Extracted ${oldText.length.toLocaleString()} characters from the archived page.`);
 
-    // Extract products from the archived version
-    logs.push("Extracting archived products and services...");
-    const oldProducts = await extractProducts(
-      anthropic,
-      oldText,
-      `archived (${archiveYear})`
-    );
+    // Deduplicate the combined pool of old products (case-insensitive)
+    const oldProducts = dedup(allOldProducts);
 
     if (oldProducts.length > 0) {
       const preview = oldProducts.slice(0, 5).join(", ");
       const suffix = oldProducts.length > 5 ? "..." : "";
-      logs.push(`Found ${oldProducts.length} archived product(s): ${preview}${suffix}`);
+      logs.push(`Total unique archived products: ${oldProducts.length} \u2014 ${preview}${suffix}`);
     } else {
-      logs.push("No named products/services found in the archived page.");
+      logs.push("No products/services found across all archived snapshots.");
     }
 
     // Compare product lines to find discontinued items
