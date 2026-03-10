@@ -123,6 +123,21 @@ async function fetchRawText(
     });
     if (!res.ok) return null;
     let html = await res.text();
+    // Remove Wayback Machine toolbar (injected into every archived page)
+    // Marked by HTML comments or specific div IDs
+    html = html.replace(
+      /<!--\s*BEGIN WAYBACK TOOLBAR INSERT\s*-->[\s\S]*?<!--\s*END WAYBACK TOOLBAR INSERT\s*-->/gi,
+      ""
+    );
+    html = html.replace(
+      /<div[^>]*id=["']wm-ipp(?:-[a-z]*)?["'][\s\S]*?<\/div>\s*<\/div>\s*<\/div>/gi,
+      ""
+    );
+    // Also remove the Wayback Machine's injected FILE comment block
+    html = html.replace(
+      /<!--\s*playback timance\s*-->[\s\S]*?<!--\s*End Wayback Rewrite JS Include\s*-->/gi,
+      ""
+    );
     // Remove script, style, nav, footer, header, aside blocks
     html = html.replace(
       /<(script|style|nav|footer|header|aside|noscript)[^>]*>[\s\S]*?<\/\1>/gi,
@@ -245,8 +260,14 @@ export async function extractProducts(
 ): Promise<string[]> {
   if (!text) return [];
 
+  const isArchived = label.toLowerCase().includes("archived");
+
+  const archiveHint = isArchived
+    ? `\nIMPORTANT: This text is from a web archive (Wayback Machine). Ignore any text related to 'Wayback Machine', 'archive.org', 'Internet Archive', web archive navigation, timestamps, or website metadata. Focus ONLY on the company's actual products and services.\n`
+    : "";
+
   const prompt = `Extract every distinct product name and service name from this ${label} website text.
-Include branded products, named service lines, software platforms, and specific offerings.
+Include branded products, named service lines, software platforms, and specific offerings.${archiveHint}
 Return a JSON array of strings only. No commentary, no explanation.
 If you find nothing, return an empty array: []
 
@@ -533,13 +554,16 @@ ${JSON.stringify(oldProducts, null, 2)}
 CURRENT SITE:
 ${JSON.stringify(currentProducts, null, 2)}
 
-Identify ONE product or service from the OLD list that no longer appears on the current site. It may have been discontinued, renamed, merged into another product, or simply dropped.
+Find ONE product or service from the OLD list that does NOT have a clear match on the current site. Consider all of these scenarios:
+- The exact name is no longer present
+- The product was likely renamed to something different
+- A service line was merged into another offering
+- An old branded name was replaced with a generic description
+- A product category or capability was dropped entirely
 
-Pick the most specific and interesting one — a named product or distinct service, not a generic category.
+You MUST return a result unless the two lists are virtually identical (same items, same names). Pick the most specific and interesting one — a named product or distinct service line, not a generic category like "consulting" or "support."
 
-IMPORTANT: Even if you are not 100% certain it was discontinued (maybe it was renamed), still return your best candidate. A lead is valuable for M&A research even if it needs verification. Only return "None" if the two lists are essentially identical.
-
-Return only the product/service name. No explanation.`,
+Return only the product/service name from the OLD list. No explanation.`,
       },
     ],
   });
