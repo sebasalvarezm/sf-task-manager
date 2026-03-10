@@ -278,6 +278,7 @@ export default function SourcingPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: normalized }),
+        signal: AbortSignal.timeout(60000),
       });
       const data = await res.json();
       if (data.logs) appendLogs(index, data.logs);
@@ -325,6 +326,7 @@ export default function SourcingPage() {
           foundingYear: (latestScrape as ScrapeResult).foundingYear,
           currentProducts: (latestScrape as ScrapeResult).products,
         }),
+        signal: AbortSignal.timeout(60000),
       });
       const data = await res.json();
       if (data.logs) appendLogs(index, data.logs);
@@ -347,6 +349,7 @@ export default function SourcingPage() {
           products: (latestScrape as ScrapeResult).products,
           portfolioGroup: (latestScrape as ScrapeResult).portfolioMatch.group,
         }),
+        signal: AbortSignal.timeout(60000),
       });
       const data = await res.json();
       if (data.logs) appendLogs(index, data.logs);

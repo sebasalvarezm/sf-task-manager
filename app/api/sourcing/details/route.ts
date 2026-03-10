@@ -41,9 +41,16 @@ export async function POST(request: NextRequest) {
   const logs: string[] = [];
 
   try {
-    // Find address
+    // Run address extraction and outreach generation IN PARALLEL
+    // (they don't depend on each other — saves ~15-20 seconds)
     logs.push("Finding company address...");
-    const address = await extractAddress(anthropic, currentText, url);
+
+    const outreachLogs: string[] = [];
+
+    const [address, outreachParagraph] = await Promise.all([
+      extractAddress(anthropic, currentText, url),
+      generateOutreach(anthropic, url, currentText, products, portfolioGroup, outreachLogs),
+    ]);
 
     if (address) {
       logs.push(`Address found: ${address}`);
@@ -51,7 +58,10 @@ export async function POST(request: NextRequest) {
       logs.push("Company address not found.");
     }
 
-    // Find restaurants (depends on address)
+    // Append outreach logs (collected in parallel)
+    logs.push(...outreachLogs);
+
+    // Find restaurants (depends on address — must run after)
     let restaurants: { name: string; description: string }[] = [];
     if (address) {
       logs.push(`Searching for business dinner restaurants near ${address}...`);
@@ -64,16 +74,6 @@ export async function POST(request: NextRequest) {
     } else {
       logs.push("Skipping restaurant search \u2014 no address found.");
     }
-
-    // Generate outreach paragraph
-    const outreachParagraph = await generateOutreach(
-      anthropic,
-      url,
-      currentText,
-      products,
-      portfolioGroup,
-      logs
-    );
 
     return NextResponse.json({
       address,

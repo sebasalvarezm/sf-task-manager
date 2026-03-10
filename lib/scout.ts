@@ -163,7 +163,7 @@ export function isParkedPage(text: string): boolean {
  * Wrapper around Claude messages.create() with automatic retry on transient errors.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callClaude(client: Anthropic, maxRetries = 3, opts: any): Promise<any> {
+async function callClaude(client: Anthropic, maxRetries = 2, opts: any): Promise<any> {
   const RETRYABLE = [500, 503, 529];
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -174,7 +174,7 @@ async function callClaude(client: Anthropic, maxRetries = 3, opts: any): Promise
         RETRYABLE.includes(err.status) &&
         attempt < maxRetries
       ) {
-        const wait = 5000 * 2 ** attempt;
+        const wait = 2000 * 2 ** attempt;
         await new Promise((r) => setTimeout(r, wait));
         continue;
       }
@@ -220,7 +220,7 @@ If you find nothing, return an empty array: []
 Text:
 ${text.slice(0, 6000)}`;
 
-  const resp = await callClaude(client, 3, {
+  const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
     max_tokens: 800,
     messages: [{ role: "user", content: prompt }],
@@ -264,7 +264,7 @@ export async function detectFoundingYear(
   client: Anthropic,
   text: string
 ): Promise<number | null> {
-  const resp = await callClaude(client, 3, {
+  const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
     max_tokens: 50,
     messages: [
@@ -446,7 +446,7 @@ export async function findDiscontinued(
 ): Promise<string | null> {
   if (oldProducts.length === 0 || currentProducts.length === 0) return null;
 
-  const resp = await callClaude(client, 3, {
+  const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
     max_tokens: 150,
     messages: [
@@ -735,7 +735,7 @@ export async function matchGroup(
     .map(([name, content]) => `FILE: ${name}\n${content.slice(0, 700)}`)
     .join("\n\n");
 
-  const resp = await callClaude(client, 3, {
+  const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
     max_tokens: 100,
     messages: [
@@ -830,7 +830,7 @@ export async function personalizeOutreach(
       ? `\nThe company's specific named products include: ${products.slice(0, 6).join(", ")}. If possible, mention one of these by name rather than describing the company generically.\n`
       : "";
 
-  const resp = await callClaude(client, 3, {
+  const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
     max_tokens: 500,
     messages: [
