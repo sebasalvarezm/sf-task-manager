@@ -83,6 +83,7 @@ export type DetailsResult = {
 /**
  * Fetch a single page's text content via Jina AI Reader.
  * Jina renders the page like a browser and returns clean readable text.
+ * Best for live/modern websites. Do NOT use for Wayback Machine URLs.
  */
 async function fetchPageText(
   url: string,
@@ -96,6 +97,52 @@ async function fetchPageText(
     });
     const text = await res.text();
     return text.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch a page's text by direct HTTP request + HTML tag stripping.
+ * Used for Wayback Machine archived pages where Jina Reader doesn't work.
+ * Mirrors the Python version's requests.get() + BeautifulSoup approach.
+ */
+async function fetchRawText(
+  url: string,
+  timeoutMs = 20000,
+  maxChars = 8000
+): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    let html = await res.text();
+    // Remove script, style, nav, footer, header, aside blocks
+    html = html.replace(
+      /<(script|style|nav|footer|header|aside|noscript)[^>]*>[\s\S]*?<\/\1>/gi,
+      " "
+    );
+    // Remove all remaining HTML tags
+    html = html.replace(/<[^>]+>/g, " ");
+    // Decode common HTML entities
+    html = html
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#?\w+;/g, " ");
+    // Collapse whitespace and strip non-printable characters
+    const text = html
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[^\x20-\x7E\xA0-\xFF]/g, "");
+    return text.slice(0, maxChars) || null;
   } catch {
     return null;
   }
@@ -397,24 +444,29 @@ export async function getWaybackCandidates(
 }
 
 /**
- * Fetch an archived page from Wayback Machine via Jina Reader.
+ * Fetch an archived page from Wayback Machine via direct HTTP request.
+ * Uses fetchRawText (not Jina Reader — Jina can't handle Wayback URLs).
  * Returns text content + skip reason if rejected.
  */
 export async function fetchWaybackSnapshot(
   archiveUrl: string,
   domainStem: string
 ): Promise<{ text: string | null; skipReason: string | null }> {
-  const text = await fetchPageText(archiveUrl, 25000);
+  const text = await fetchRawText(archiveUrl, 20000, 8000);
   if (!text || text.length < 300)
     return { text: null, skipReason: "too little content" };
   if (isParkedPage(text))
     return { text: null, skipReason: "looks like a parked domain page" };
-  if (!text.toLowerCase().includes(domainStem.toLowerCase()))
+  // Check for domain stem — also try without spaces/hyphens (matches Python version)
+  const textLower = text.toLowerCase();
+  const stemLower = domainStem.toLowerCase();
+  const textNoSpace = textLower.replace(/[\s\-_]/g, "");
+  if (!textLower.includes(stemLower) && !textNoSpace.includes(stemLower))
     return {
       text: null,
       skipReason: "company name not found (likely a prior domain owner)",
     };
-  return { text: text.slice(0, 8000), skipReason: null };
+  return { text, skipReason: null };
 }
 
 /**
