@@ -520,6 +520,12 @@ export default function SourcingPage() {
                   type="text"
                   value={urls[i] || ""}
                   onChange={(e) => handleUrlChange(i, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !isRunning && urls.some((u) => u.trim())) {
+                      e.preventDefault();
+                      handleRun();
+                    }
+                  }}
                   placeholder="https://www.example.com"
                   disabled={isRunning}
                   className="w-full px-4 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 focus:border-[#E84C0E] disabled:bg-gray-50 disabled:text-gray-400 transition-all"
