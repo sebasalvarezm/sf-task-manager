@@ -108,6 +108,26 @@ function PrepPageContent() {
   // Expanded row (to show one-pager preview)
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Manual Salesforce account search (for unmatched meetings)
+  const [manualMatches, setManualMatches] = useState<
+    Map<string, { accountId: string; accountName: string; accountUrl: string }>
+  >(new Map());
+  const [searchInputs, setSearchInputs] = useState<Map<string, string>>(
+    new Map()
+  );
+  const [searchResults, setSearchResults] = useState<
+    Map<
+      string,
+      Array<{
+        accountId: string;
+        accountName: string;
+        accountUrl: string;
+        website: string | null;
+      }>
+    >
+  >(new Map());
+  const [searchLoading, setSearchLoading] = useState<Set<string>>(new Set());
+
   // ── On mount: check connections ────────────────────────────────────────────
   useEffect(() => {
     const msOk = searchParams.get("ms_connected");
@@ -206,10 +226,11 @@ function PrepPageContent() {
     try {
       const payload: Record<string, string> = {};
 
-      // Use Salesforce account data if matched
-      if (meeting.match) {
-        payload.accountId = meeting.match.accountId;
-        payload.accountName = meeting.match.accountName;
+      // Use Salesforce account data if matched (auto or manual)
+      const sfMatch = meeting.match ?? manualMatches.get(meeting.eventId);
+      if (sfMatch) {
+        payload.accountId = sfMatch.accountId;
+        payload.accountName = sfMatch.accountName;
       }
 
       // Use website or domain for scraping + research
@@ -322,6 +343,48 @@ function PrepPageContent() {
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
+  }
+
+  // ── Manual Salesforce account search ──────────────────────────────────────
+  async function handleAccountSearch(eventId: string) {
+    const query = searchInputs.get(eventId)?.trim();
+    if (!query || query.length < 2) return;
+
+    setSearchLoading((prev) => new Set(prev).add(eventId));
+    try {
+      const res = await fetch(
+        `/api/salesforce/search-accounts?q=${encodeURIComponent(query)}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(
+          (prev) => new Map(prev).set(eventId, data.accounts ?? [])
+        );
+      }
+    } finally {
+      setSearchLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(eventId);
+        return next;
+      });
+    }
+  }
+
+  function handleSelectSearchResult(
+    eventId: string,
+    account: { accountId: string; accountName: string; accountUrl: string }
+  ) {
+    setManualMatches((prev) => new Map(prev).set(eventId, account));
+    setSearchResults((prev) => {
+      const next = new Map(prev);
+      next.delete(eventId);
+      return next;
+    });
+    setSearchInputs((prev) => {
+      const next = new Map(prev);
+      next.delete(eventId);
+      return next;
+    });
   }
 
   const msReady = msConnected === true;
@@ -527,6 +590,17 @@ function PrepPageContent() {
                             }
                             onGenerate={() => handleGenerate(meeting.eventId)}
                             onDownload={() => handleDownload(meeting.eventId)}
+                            manualMatch={manualMatches.get(meeting.eventId) ?? null}
+                            searchInput={searchInputs.get(meeting.eventId) ?? ""}
+                            searchResult={searchResults.get(meeting.eventId) ?? null}
+                            isSearchLoading={searchLoading.has(meeting.eventId)}
+                            onSearchInputChange={(val) =>
+                              setSearchInputs((prev) => new Map(prev).set(meeting.eventId, val))
+                            }
+                            onSearch={() => handleAccountSearch(meeting.eventId)}
+                            onSelectResult={(account) =>
+                              handleSelectSearchResult(meeting.eventId, account)
+                            }
                           />
                         ))}
                       </tbody>
@@ -579,6 +653,13 @@ function MeetingRow({
   onToggleExpand,
   onGenerate,
   onDownload,
+  manualMatch,
+  searchInput,
+  searchResult,
+  isSearchLoading,
+  onSearchInputChange,
+  onSearch,
+  onSelectResult,
 }: {
   meeting: PrepMeeting;
   index: number;
@@ -586,10 +667,18 @@ function MeetingRow({
   onToggleExpand: () => void;
   onGenerate: () => void;
   onDownload: () => void;
+  manualMatch: { accountId: string; accountName: string; accountUrl: string } | null;
+  searchInput: string;
+  searchResult: Array<{ accountId: string; accountName: string; accountUrl: string; website: string | null }> | null;
+  isSearchLoading: boolean;
+  onSearchInputChange: (val: string) => void;
+  onSearch: () => void;
+  onSelectResult: (account: { accountId: string; accountName: string; accountUrl: string }) => void;
 }) {
   const hasOnePager = meeting.onePager !== null;
+  const effectiveMatch = meeting.match ?? manualMatch;
   const accountName =
-    meeting.match?.accountName || meeting.externalDomains[0] || "Unknown";
+    effectiveMatch?.accountName || meeting.externalDomains[0] || "Unknown";
 
   return (
     <>
@@ -608,15 +697,73 @@ function MeetingRow({
         </td>
         <td className="px-4 py-3 text-gray-600">{meeting.meetingDate}</td>
         <td className="px-4 py-3">
-          <span className="font-medium text-navy">{accountName}</span>
-          {!meeting.match && meeting.externalDomains.length > 0 && (
-            <span className="ml-2 text-xs text-gray-400">(no SF match)</span>
+          {meeting.match ? (
+            /* Auto-matched account */
+            <span className="font-medium text-navy">{meeting.match.accountName}</span>
+          ) : manualMatch ? (
+            /* Manually linked account */
+            <div>
+              <span className="font-medium text-navy">{manualMatch.accountName}</span>
+              <span className="ml-2 inline-flex items-center gap-1 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                Manually linked
+              </span>
+            </div>
+          ) : (
+            /* No match — show search UI */
+            <div className="space-y-1">
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={searchInput}
+                  placeholder={meeting.externalDomains.length > 0 ? meeting.externalDomains[0].split(".")[0] : "Search account..."}
+                  onChange={(e) => onSearchInputChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      onSearch();
+                    }
+                  }}
+                  className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                />
+                <button
+                  onClick={onSearch}
+                  disabled={isSearchLoading}
+                  className="shrink-0 bg-navy hover:bg-navy/80 disabled:opacity-50 text-white text-xs font-medium px-2 py-1 rounded transition-colors"
+                >
+                  {isSearchLoading ? "..." : "Search"}
+                </button>
+              </div>
+              {meeting.externalDomains.length > 0 && !searchInput && (
+                <span className="text-xs text-gray-300">
+                  {meeting.externalDomains.join(", ")}
+                </span>
+              )}
+              {/* Search results dropdown */}
+              {searchResult && (
+                <div className="border border-gray-200 rounded bg-white shadow-lg max-h-32 overflow-y-auto">
+                  {searchResult.length === 0 ? (
+                    <div className="px-2 py-1.5 text-xs text-gray-400 italic">No accounts found</div>
+                  ) : (
+                    searchResult.map((account) => (
+                      <button
+                        key={account.accountId}
+                        onClick={() => onSelectResult(account)}
+                        className="w-full text-left px-2 py-1.5 text-sm hover:bg-blue-50 hover:text-blue-700 border-b border-gray-100 last:border-0 transition-colors"
+                      >
+                        {account.accountName}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </td>
         <td className="px-4 py-3">
-          {meeting.match ? (
+          {effectiveMatch ? (
             <a
-              href={meeting.match.accountUrl}
+              href={effectiveMatch.accountUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-600 hover:text-blue-800 text-xs font-medium"

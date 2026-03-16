@@ -6,6 +6,7 @@ import {
   getInteriorCandidates,
   fetchWaybackSnapshot,
   extractProducts,
+  extractNewsProducts,
   findDiscontinued,
 } from "@/lib/scout";
 
@@ -178,6 +179,48 @@ export async function POST(request: NextRequest) {
         }
         interiorChecked++;
         break; // One snapshot per keyword is enough
+      }
+    }
+
+    // Fallback: probe archived news/press/blog pages if not enough products found
+    if (allOldProducts.length < 3 && archiveUrl) {
+      logs.push("Not enough products found \u2014 checking news/press pages...");
+      const newsKeywords = ["news", "press", "blog", "media", "announcements"];
+      let newsChecked = 0;
+
+      for (const keyword of newsKeywords) {
+        if (newsChecked >= 2) break;
+
+        const newsCands = await getInteriorCandidates(
+          domainOnly,
+          keyword,
+          wbFrom,
+          wbTo,
+          1
+        );
+
+        for (const nc of newsCands) {
+          if (newsChecked >= 2) break;
+          const ncYear = nc.timestamp.slice(0, 4);
+
+          const ncResult = await fetchWaybackSnapshot(nc.url, domainStem);
+          if (ncResult.skipReason || !ncResult.text) continue;
+
+          logs.push(`News page snapshot (/${keyword}*, ${ncYear}).`);
+          const ncProducts = await extractNewsProducts(
+            anthropic,
+            ncResult.text,
+            ncYear
+          );
+          if (ncProducts.length > 0) {
+            allOldProducts.push(...ncProducts);
+            const preview = ncProducts.slice(0, 5).join(", ");
+            const suffix = ncProducts.length > 5 ? "..." : "";
+            logs.push(`Found ${ncProducts.length} product(s) in news/press: ${preview}${suffix}`);
+          }
+          newsChecked++;
+          break; // One snapshot per keyword is enough
+        }
       }
     }
 

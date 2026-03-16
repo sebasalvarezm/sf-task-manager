@@ -290,6 +290,50 @@ ${text.slice(0, 6000)}`;
   return [];
 }
 
+/**
+ * Extract product names from news/press release pages.
+ * Uses a prompt tailored to press releases and product launch announcements
+ * rather than product listing pages.
+ */
+export async function extractNewsProducts(
+  client: Anthropic,
+  text: string,
+  year: string
+): Promise<string[]> {
+  if (!text) return [];
+
+  const prompt = `This text is from an archived news/press/blog page (circa ${year}) of a company website.
+IMPORTANT: Ignore any text related to 'Wayback Machine', 'archive.org', 'Internet Archive', web archive navigation, or website metadata.
+
+Extract the names of any products, services, software platforms, or technologies that are mentioned as being launched, released, announced, or acquired. Look for patterns like:
+- "We are pleased to announce [Product Name]"
+- "Company has released [Product Name]"
+- "Introducing [Product Name]"
+- "New [Product Name] now available"
+- "[Product Name] launch" or "[Product Name] release"
+
+Return a JSON array of product/service names only. No commentary, no explanation.
+If you find nothing, return an empty array: []
+
+Text:
+${text.slice(0, 6000)}`;
+
+  const resp = await callClaude(client, 2, {
+    model: "claude-sonnet-4-6",
+    max_tokens: 800,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const raw = resp.content[0].text.trim();
+  try {
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (match) return JSON.parse(match[0]);
+  } catch {
+    // Parse failure — return empty
+  }
+  return [];
+}
+
 // ---------------------------------------------------------------------------
 // Founding Year Detection
 // ---------------------------------------------------------------------------
