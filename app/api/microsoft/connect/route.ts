@@ -24,7 +24,7 @@ export async function GET() {
     redirect_uri: callbackUrl,
     response_mode: "query",
     scope: "Calendars.Read Mail.Read Mail.Send User.Read offline_access",
-    prompt: "consent",
+    prompt: "select_account",
   });
 
   const tenantId = process.env.MS_TENANT_ID ?? "common";
