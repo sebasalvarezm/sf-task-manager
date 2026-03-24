@@ -7,6 +7,12 @@ export default function LandingPage() {
   const router = useRouter();
   const [sfConnected, setSfConnected] = useState<boolean | null>(null);
   const [msConnected, setMsConnected] = useState<boolean | null>(null);
+  const [triageStatus, setTriageStatus] = useState<{
+    available: boolean;
+    drafts?: number;
+    reviewed?: number;
+    allReviewed?: boolean;
+  } | null>(null);
 
   useEffect(() => {
     checkConnections();
@@ -14,9 +20,10 @@ export default function LandingPage() {
 
   async function checkConnections() {
     try {
-      const [sfRes, msRes] = await Promise.all([
+      const [sfRes, msRes, triageRes] = await Promise.all([
         fetch("/api/salesforce/status"),
         fetch("/api/microsoft/status"),
+        fetch("/api/triage/status"),
       ]);
       if (sfRes.ok) {
         const sfData = await sfRes.json();
@@ -25,6 +32,10 @@ export default function LandingPage() {
       if (msRes.ok) {
         const msData = await msRes.json();
         setMsConnected(msData.connected);
+      }
+      if (triageRes.ok) {
+        const triageData = await triageRes.json();
+        setTriageStatus(triageData);
       }
     } catch {
       setSfConnected(false);
@@ -73,7 +84,7 @@ export default function LandingPage() {
             Choose a tool to get started
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {/* ── Task Manager Card ────────────────────────────────────── */}
             <a
               href="/tasks"
@@ -318,6 +329,57 @@ export default function LandingPage() {
                 <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
                 M&amp;A Research
               </span>
+            </a>
+
+            {/* ── Email Triage Card ─────────────────────────────────────── */}
+            <a
+              href="/triage"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-brand-orange transition-all p-8 text-center"
+            >
+              <div className="text-4xl mb-4">
+                <svg
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-brand-orange transition-colors"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Email Triage
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Review AI-drafted replies to your morning inbox, categorized
+                by priority.
+              </p>
+
+              {/* Triage status badge */}
+              {triageStatus === null ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                  Checking...
+                </span>
+              ) : triageStatus.available && !triageStatus.allReviewed ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-brand-orange bg-orange-50 border border-orange-200 rounded-full px-3 py-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-orange animate-pulse" />
+                  {(triageStatus.drafts ?? 0) - (triageStatus.reviewed ?? 0)}{" "}
+                  drafts ready
+                </span>
+              ) : triageStatus.available && triageStatus.allReviewed ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  All reviewed
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-3 py-1">
+                  No triage today
+                </span>
+              )}
             </a>
           </div>
         </div>

@@ -48,3 +48,46 @@ CREATE TABLE IF NOT EXISTS ms_credentials (
   token_issued_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ============================================================
+-- Table 4: Email Triage (for the Email Triage dashboard)
+-- ============================================================
+-- Stores AI-categorized emails from the morning triage scan.
+-- The Cowork scheduled task writes rows here; the dashboard reads them.
+CREATE TABLE IF NOT EXISTS email_triage (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  triage_date DATE NOT NULL,
+
+  -- Email metadata
+  email_id TEXT,                    -- Outlook message ID (for dedup)
+  sender_name TEXT NOT NULL,
+  sender_email TEXT,
+  subject TEXT NOT NULL,
+  priority TEXT NOT NULL CHECK (priority IN ('p1', 'p2', 'p3')),
+
+  -- Categorization
+  context TEXT,                     -- One-line summary of why it matters
+  flag_note TEXT,                   -- If flagged for personal attention
+  is_flagged BOOLEAN DEFAULT false,
+
+  -- Thread data (JSON array of messages)
+  thread JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+  -- Draft
+  draft TEXT,                       -- The AI-drafted reply (null if no draft)
+
+  -- Review status (set by the dashboard UI)
+  review_status TEXT CHECK (review_status IN ('pending', 'approved', 'edited', 'rejected')),
+  edited_draft TEXT,                -- If user edited the draft, store revised version
+  reviewed_at TIMESTAMPTZ,
+
+  -- Timestamps
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Index for fast daily lookups
+CREATE INDEX IF NOT EXISTS idx_email_triage_date ON email_triage (triage_date DESC);
+
+-- Unique constraint to prevent duplicate emails on the same day
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_triage_dedup
+  ON email_triage (triage_date, email_id) WHERE email_id IS NOT NULL;

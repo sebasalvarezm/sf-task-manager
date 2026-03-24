@@ -9,6 +9,7 @@ export function middleware(request: NextRequest) {
     "/login",
     "/api/auth/",
     "/api/salesforce/callback",
+    "/api/triage",
   ];
 
   const isPublic = publicPaths.some((p) => pathname.startsWith(p));

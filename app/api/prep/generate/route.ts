@@ -57,24 +57,46 @@ async function scrapeWebsite(baseUrl: string): Promise<string> {
 
 // ── JSON extraction helper ───────────────────────────────────────────────────
 
+function tryParse(text: string): OnePagerContent | null {
+  try {
+    const obj = JSON.parse(text);
+    return {
+      companyName: obj.companyName || "Unknown Company",
+      whatTheyDo: obj.whatTheyDo || "",
+      customers: obj.customers || "",
+      companyHistory: obj.companyHistory || "",
+      recentNews: Array.isArray(obj.recentNews) ? obj.recentNews : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 function parseOnePagerJson(raw: string): OnePagerContent | null {
+  // Try 1: Strip markdown fences at start/end and parse directly
   const cleaned = raw
     .replace(/^```(?:json)?\s*\n?/i, "")
     .replace(/\n?```\s*$/i, "")
     .trim();
 
-  try {
-    const parsed = JSON.parse(cleaned);
-    return {
-      companyName: parsed.companyName || "Unknown Company",
-      whatTheyDo: parsed.whatTheyDo || "",
-      customers: parsed.customers || "",
-      companyHistory: parsed.companyHistory || "",
-      recentNews: Array.isArray(parsed.recentNews) ? parsed.recentNews : [],
-    };
-  } catch {
-    return null;
+  let parsed = tryParse(cleaned);
+  if (parsed) return parsed;
+
+  // Try 2: Extract JSON from markdown fences anywhere in the text
+  const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
+  if (fenceMatch) {
+    parsed = tryParse(fenceMatch[1].trim());
+    if (parsed) return parsed;
   }
+
+  // Try 3: Find the first { ... } block that contains companyName
+  const braceMatch = raw.match(/\{[\s\S]*"companyName"[\s\S]*\}/);
+  if (braceMatch) {
+    parsed = tryParse(braceMatch[0]);
+    if (parsed) return parsed;
+  }
+
+  return null;
 }
 
 // ── Route handler ────────────────────────────────────────────────────────────

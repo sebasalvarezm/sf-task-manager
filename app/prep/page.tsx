@@ -241,6 +241,12 @@ function PrepPageContent() {
         payload.domain = meeting.externalDomains[0];
       }
 
+      // Fallback: use the Salesforce account URL (needed for manually linked accounts
+      // where meeting.allMatches is empty and no domain was found above)
+      if (!payload.domain && !payload.website && sfMatch?.accountUrl) {
+        payload.website = sfMatch.accountUrl;
+      }
+
       const res = await fetch("/api/prep/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -23,8 +23,8 @@ export async function GET() {
     response_type: "code",
     redirect_uri: callbackUrl,
     response_mode: "query",
-    scope: "Calendars.Read User.Read offline_access",
-    prompt: "select_account",
+    scope: "Calendars.Read Mail.Send User.Read offline_access",
+    prompt: "consent",
   });
 
   const tenantId = process.env.MS_TENANT_ID ?? "common";

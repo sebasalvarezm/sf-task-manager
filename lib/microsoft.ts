@@ -53,7 +53,7 @@ async function refreshMsAccessToken(
     client_id: clientId,
     client_secret: clientSecret,
     refresh_token: credentials.refresh_token,
-    scope: "Calendars.Read User.Read offline_access",
+    scope: "Calendars.Read Mail.Send User.Read offline_access",
   });
 
   const tenantId = process.env.MS_TENANT_ID ?? "common";
@@ -90,6 +90,50 @@ async function refreshMsAccessToken(
 
   if (error || !data) return null;
   return data as MsCredentials;
+}
+
+// ── Send Email API ───────────────────────────────────────────────────────────
+
+export async function sendEmail(params: {
+  to: string;
+  subject: string;
+  body: string;
+}): Promise<void> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+
+  const response = await fetch(
+    "https://graph.microsoft.com/v1.0/me/sendMail",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: {
+          subject: params.subject,
+          body: {
+            contentType: "Text",
+            content: params.body,
+          },
+          toRecipients: [
+            {
+              emailAddress: {
+                address: params.to,
+              },
+            },
+          ],
+        },
+        saveToSentItems: true,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Failed to send email: ${err}`);
+  }
 }
 
 // ── Calendar API ──────────────────────────────────────────────────────────────
