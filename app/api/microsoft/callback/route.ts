@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     client_id: clientId,
     client_secret: clientSecret,
     redirect_uri: callbackUrl,
-    scope: "Calendars.Read Mail.Send User.Read offline_access",
+    scope: "Calendars.Read Mail.Read Mail.Send User.Read offline_access",
   });
 
   const tenantId = process.env.MS_TENANT_ID ?? "common";

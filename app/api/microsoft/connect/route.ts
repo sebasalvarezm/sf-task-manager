@@ -23,7 +23,7 @@ export async function GET() {
     response_type: "code",
     redirect_uri: callbackUrl,
     response_mode: "query",
-    scope: "Calendars.Read Mail.Send User.Read offline_access",
+    scope: "Calendars.Read Mail.Read Mail.Send User.Read offline_access",
     prompt: "select_account",
   });
 

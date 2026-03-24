@@ -53,7 +53,7 @@ async function refreshMsAccessToken(
     client_id: clientId,
     client_secret: clientSecret,
     refresh_token: credentials.refresh_token,
-    scope: "Calendars.Read Mail.Send User.Read offline_access",
+    scope: "Calendars.Read Mail.Read Mail.Send User.Read offline_access",
   });
 
   const tenantId = process.env.MS_TENANT_ID ?? "common";
@@ -90,6 +90,132 @@ async function refreshMsAccessToken(
 
   if (error || !data) return null;
   return data as MsCredentials;
+}
+
+// ── Fetch Emails API ─────────────────────────────────────────────────────────
+
+export type OutlookEmail = {
+  id: string;
+  subject: string;
+  from: { name: string; email: string };
+  receivedDateTime: string;
+  bodyPreview: string;
+  bodyText: string;
+  conversationId: string;
+  isRead: boolean;
+};
+
+export async function fetchRecentEmails(
+  sinceHours: number = 24
+): Promise<OutlookEmail[]> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+
+  const since = new Date(Date.now() - sinceHours * 60 * 60 * 1000).toISOString();
+
+  const params = new URLSearchParams({
+    $filter: `receivedDateTime ge ${since}`,
+    $select: "id,subject,from,receivedDateTime,bodyPreview,body,conversationId,isRead",
+    $orderby: "receivedDateTime desc",
+    $top: "50",
+  });
+
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+        Prefer: 'outlook.body-content-type="text"',
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Failed to fetch emails: ${err}`);
+  }
+
+  const data = await response.json();
+
+  return (data.value ?? []).map(
+    (e: {
+      id: string;
+      subject: string;
+      from?: { emailAddress?: { name?: string; address?: string } };
+      receivedDateTime: string;
+      bodyPreview: string;
+      body?: { content?: string };
+      conversationId: string;
+      isRead: boolean;
+    }): OutlookEmail => ({
+      id: e.id,
+      subject: e.subject ?? "(No subject)",
+      from: {
+        name: e.from?.emailAddress?.name ?? "",
+        email: (e.from?.emailAddress?.address ?? "").toLowerCase(),
+      },
+      receivedDateTime: e.receivedDateTime,
+      bodyPreview: e.bodyPreview ?? "",
+      bodyText: e.body?.content ?? "",
+      conversationId: e.conversationId,
+      isRead: e.isRead,
+    })
+  );
+}
+
+export async function fetchEmailThread(
+  conversationId: string
+): Promise<OutlookEmail[]> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+
+  const params = new URLSearchParams({
+    $filter: `conversationId eq '${conversationId}'`,
+    $select: "id,subject,from,receivedDateTime,bodyPreview,body,conversationId,isRead",
+    $orderby: "receivedDateTime asc",
+    $top: "10",
+  });
+
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+        Prefer: 'outlook.body-content-type="text"',
+      },
+    }
+  );
+
+  if (!response.ok) return [];
+
+  const data = await response.json();
+
+  return (data.value ?? []).map(
+    (e: {
+      id: string;
+      subject: string;
+      from?: { emailAddress?: { name?: string; address?: string } };
+      receivedDateTime: string;
+      bodyPreview: string;
+      body?: { content?: string };
+      conversationId: string;
+      isRead: boolean;
+    }): OutlookEmail => ({
+      id: e.id,
+      subject: e.subject ?? "(No subject)",
+      from: {
+        name: e.from?.emailAddress?.name ?? "",
+        email: (e.from?.emailAddress?.address ?? "").toLowerCase(),
+      },
+      receivedDateTime: e.receivedDateTime,
+      bodyPreview: e.bodyPreview ?? "",
+      bodyText: e.body?.content ?? "",
+      conversationId: e.conversationId,
+      isRead: e.isRead,
+    })
+  );
 }
 
 // ── Send Email API ───────────────────────────────────────────────────────────

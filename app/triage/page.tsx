@@ -42,6 +42,8 @@ export default function TriagePage() {
   const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [msConnected, setMsConnected] = useState<boolean | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<string | null>(null);
 
   // ── Fetch triage data ──────────────────────────────────────────────────
 
@@ -138,6 +140,26 @@ export default function TriagePage() {
     setSendingId(null);
   }
 
+  async function handleScan() {
+    setScanning(true);
+    setScanResult(null);
+    try {
+      const res = await fetch("/api/triage/scan", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setScanResult(
+          `Triaged ${data.count} emails (P1: ${data.breakdown?.p1 ?? 0}, P2: ${data.breakdown?.p2 ?? 0}, P3: ${data.breakdown?.p3 ?? 0})`
+        );
+        fetchTriage(date);
+      } else {
+        setScanResult(data.error || "Scan failed");
+      }
+    } catch {
+      setScanResult("Scan failed — check your connection");
+    }
+    setScanning(false);
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────
 
   const filtered = emails.filter((e) => e.priority === activeTab);
@@ -210,8 +232,8 @@ export default function TriagePage() {
 
       {/* ── Main ────────────────────────────────────────────────────────── */}
       <main className="flex-1 max-w-5xl mx-auto w-full px-6 py-8">
-        {/* Date navigation */}
-        <div className="flex items-center justify-between mb-6">
+        {/* Date navigation + Scan button */}
+        <div className="flex items-center justify-between mb-4">
           <button
             onClick={() => navigateDate(-1)}
             className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-600"
@@ -230,6 +252,27 @@ export default function TriagePage() {
           >
             Next day →
           </button>
+        </div>
+
+        {/* Scan button */}
+        <div className="flex items-center gap-3 mb-6">
+          <button
+            onClick={handleScan}
+            disabled={scanning}
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-navy text-white hover:bg-navy-dark transition-colors disabled:opacity-50"
+          >
+            {scanning ? "Scanning inbox..." : "Scan Now"}
+          </button>
+          {scanning && (
+            <span className="text-xs text-gray-400">
+              Reading emails, categorizing with AI, drafting replies — this takes ~30 seconds...
+            </span>
+          )}
+          {scanResult && !scanning && (
+            <span className="text-xs text-gray-600 bg-gray-100 rounded-full px-3 py-1">
+              {scanResult}
+            </span>
+          )}
         </div>
 
         {/* Stats bar */}
