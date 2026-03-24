@@ -160,8 +160,15 @@ ${emailSummaries.join("\n==========\n")}`,
     const today = new Date().toISOString().split("T")[0];
     const supabase = getSupabaseAdmin();
 
-    const rows = triageResults.map((result) => {
-      const { email, thread } = emailsWithThreads[result.index];
+    const rows = triageResults.map((result, i) => {
+      // Use the AI's index if valid, otherwise fall back to array position
+      const idx =
+        result.index != null && emailsWithThreads[result.index]
+          ? result.index
+          : i;
+      const entry = emailsWithThreads[idx];
+      if (!entry) return null;
+      const { email, thread } = entry;
       return {
         triage_date: today,
         email_id: email.id,
@@ -182,9 +189,11 @@ ${emailSummaries.join("\n==========\n")}`,
       };
     });
 
+    const validRows = rows.filter(Boolean);
+
     const { data, error } = await supabase
       .from("email_triage")
-      .upsert(rows, { onConflict: "triage_date,email_id" })
+      .upsert(validRows, { onConflict: "triage_date,email_id" })
       .select();
 
     if (error) {
