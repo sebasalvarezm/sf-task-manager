@@ -191,9 +191,15 @@ ${emailSummaries.join("\n==========\n")}`,
 
     const validRows = rows.filter(Boolean);
 
+    // Delete existing triage for today before inserting (handles re-scans)
+    await supabase
+      .from("email_triage")
+      .delete()
+      .eq("triage_date", today);
+
     const { data, error } = await supabase
       .from("email_triage")
-      .upsert(validRows, { onConflict: "triage_date,email_id" })
+      .insert(validRows)
       .select();
 
     if (error) {

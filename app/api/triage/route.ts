@@ -71,9 +71,15 @@ export async function POST(request: NextRequest) {
     review_status: "pending",
   }));
 
+  // Delete existing triage for this date before inserting (handles re-runs)
+  await supabase
+    .from("email_triage")
+    .delete()
+    .eq("triage_date", date);
+
   const { data, error } = await supabase
     .from("email_triage")
-    .upsert(rows, { onConflict: "triage_date,email_id" })
+    .insert(rows)
     .select();
 
   if (error) {
