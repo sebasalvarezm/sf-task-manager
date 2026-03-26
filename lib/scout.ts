@@ -982,7 +982,7 @@ export async function personalizeOutreach(
     messages: [
       {
         role: "user",
-        content: `Here is an outreach paragraph. Add one company-specific reference to the company at ${url} that makes it feel written for them specifically.
+        content: `Here is an outreach paragraph. Add one company-specific reference to the company at ${url} that makes it feel written for them specifically. The sentence should sound like something you'd say out loud to a founder over coffee. Use short clauses, plain language, and avoid stacking multiple concepts into a single noun phrase.
 ${productsHint}
 Rules:
 - Do NOT rewrite the paragraph
