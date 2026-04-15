@@ -142,13 +142,29 @@ function OutreachPageContent() {
     setError(null);
     try {
       const res = await fetch("/api/outreach/queue");
-      if (!res.ok) {
-        const d = await res.json();
-        setError(d.error || "Failed to load queue");
+      const text = await res.text();
+      let data: {
+        error?: string;
+        due_2nd_hit?: QueueItem[];
+        due_restart?: QueueItem[];
+      } = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // Non-JSON response (likely a 500 HTML error page from Vercel)
+        setError(
+          `Server error ${res.status}: ${text.slice(0, 400)}${
+            text.length > 400 ? "…" : ""
+          }`
+        );
         setLoading(false);
         return;
       }
-      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || `Failed to load queue (status ${res.status})`);
+        setLoading(false);
+        return;
+      }
       setQueue({
         due_2nd_hit: data.due_2nd_hit ?? [],
         due_restart: data.due_restart ?? [],

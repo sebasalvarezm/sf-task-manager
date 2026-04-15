@@ -186,7 +186,76 @@ export async function fetchAccountsWithEHistory(): Promise<
   return result;
 }
 
-// ── Fetch all contacts on an account ────────────────────────────────────────
+// ── Fetch contacts for many accounts at once ─────────────────────────────────
+// Much faster than calling fetchContactsForAccount() in a loop.
+
+export async function fetchContactsForAccounts(
+  accountIds: string[]
+): Promise<Map<string, SfContact[]>> {
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("NOT_CONNECTED");
+
+  const byAccount = new Map<string, SfContact[]>();
+  if (accountIds.length === 0) return byAccount;
+
+  // Chunk to avoid hitting SOQL length limits (~20k chars)
+  const CHUNK_SIZE = 200;
+  for (let i = 0; i < accountIds.length; i += CHUNK_SIZE) {
+    const chunk = accountIds.slice(i, i + CHUNK_SIZE);
+    const idsList = chunk.map((id) => `'${id}'`).join(",");
+
+    const query = encodeURIComponent(
+      `SELECT Id, FirstName, LastName, Name, Title, Email, AccountId ` +
+        `FROM Contact WHERE AccountId IN (${idsList})`
+    );
+
+    const response = await fetch(
+      `${credentials.instance_url}/services/data/v62.0/query/?q=${query}`,
+      {
+        headers: {
+          Authorization: `Bearer ${credentials.access_token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`SF fetchContactsForAccounts failed: ${err}`);
+    }
+
+    const data = (await response.json()) as {
+      records?: Array<{
+        Id: string;
+        FirstName: string | null;
+        LastName: string | null;
+        Name: string;
+        Title: string | null;
+        Email: string | null;
+        AccountId: string | null;
+      }>;
+    };
+
+    for (const r of data.records ?? []) {
+      if (!r.AccountId) continue;
+      const list = byAccount.get(r.AccountId) ?? [];
+      list.push({
+        Id: r.Id,
+        FirstName: r.FirstName,
+        LastName: r.LastName,
+        Name: r.Name,
+        Title: r.Title,
+        Email: r.Email,
+        AccountId: r.AccountId,
+      });
+      byAccount.set(r.AccountId, list);
+    }
+  }
+
+  return byAccount;
+}
+
+// ── Fetch all contacts on a single account ──────────────────────────────────
 
 export async function fetchContactsForAccount(
   accountId: string

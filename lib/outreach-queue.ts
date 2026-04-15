@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
   fetchAccountsWithEHistory,
-  fetchContactsForAccount,
+  fetchContactsForAccounts,
   SfAccountWithETasks,
   SfETask,
   SfContact,
@@ -228,19 +228,11 @@ If you can't identify anyone with high confidence, return [].`,
   }
 }
 
-async function recommendContacts(
-  account: SfAccountWithETasks,
+function recommendContactsSync(
+  sfContacts: SfContact[],
   histories: SequenceHistory[],
   bucket: Bucket
-): Promise<RecommendedContact[]> {
-  // Pull SF contacts on the account
-  let sfContacts: SfContact[] = [];
-  try {
-    sfContacts = await fetchContactsForAccount(account.Id);
-  } catch {
-    sfContacts = [];
-  }
-
+): RecommendedContact[] {
   // Filter by leadership title
   const leadership = sfContacts.filter((c) =>
     LEADERSHIP_REGEX.test(c.Title ?? "")
@@ -257,10 +249,8 @@ async function recommendContacts(
       : leadership;
 
   // Rank & map
-  const sfRecs: RecommendedContact[] = eligible
-    .sort(
-      (a, b) => leadershipRank(a.Title) - leadershipRank(b.Title)
-    )
+  return eligible
+    .sort((a, b) => leadershipRank(a.Title) - leadershipRank(b.Title))
     .slice(0, 5)
     .map((c) => ({
       firstName: c.FirstName ?? "",
@@ -270,12 +260,7 @@ async function recommendContacts(
       source: "salesforce" as const,
       sfContactId: c.Id,
     }))
-    .filter((c) => c.email); // skip ones without email
-
-  if (sfRecs.length > 0) return sfRecs;
-
-  // Fallback: AI-research
-  return await researchContactsViaAI(account.Name, account.Website);
+    .filter((c) => c.email);
 }
 
 // ── Main entry: build the queue ──────────────────────────────────────────────
@@ -286,16 +271,38 @@ export async function buildQueue(): Promise<{
 }> {
   const accounts = await fetchAccountsWithEHistory();
 
-  const items: QueueItem[] = [];
+  // First pass: classify each account
+  type Pending = {
+    account: SfAccountWithETasks;
+    histories: SequenceHistory[];
+    bucket: Bucket;
+  };
+  const pending: Pending[] = [];
 
   for (const account of accounts) {
     const histories = groupSequences(account.Tasks);
     const bucket = classify(account, histories);
-
     if (bucket !== "DUE_2ND_HIT" && bucket !== "DUE_RESTART") continue;
+    pending.push({ account, histories, bucket });
+  }
 
-    const recommendedContacts = await recommendContacts(
-      account,
+  // Batch-fetch all contacts for qualifying accounts in ONE SOQL call
+  const qualifyingAccountIds = pending.map((p) => p.account.Id);
+  let contactsByAccount = new Map<string, SfContact[]>();
+  try {
+    contactsByAccount = await fetchContactsForAccounts(qualifyingAccountIds);
+  } catch {
+    // Non-fatal: we'll just have empty recommendations
+    contactsByAccount = new Map();
+  }
+
+  // Second pass: build queue items with recommendations
+  const items: QueueItem[] = [];
+
+  for (const { account, histories, bucket } of pending) {
+    const sfContacts = contactsByAccount.get(account.Id) ?? [];
+    const recommendedContacts = recommendContactsSync(
+      sfContacts,
       histories,
       bucket
     );
@@ -329,4 +336,15 @@ export async function buildQueue(): Promise<{
     due_2nd_hit: items.filter((i) => i.bucket === "DUE_2ND_HIT"),
     due_restart: items.filter((i) => i.bucket === "DUE_RESTART"),
   };
+}
+
+// ── On-demand AI research for a specific account ────────────────────────────
+// Called from a separate endpoint when the user clicks "Research via AI" on a
+// row that has no Salesforce leadership contacts. Not part of the initial load.
+
+export async function researchAccount(
+  accountName: string,
+  website: string | null
+): Promise<RecommendedContact[]> {
+  return researchContactsViaAI(accountName, website);
 }
