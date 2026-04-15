@@ -89,10 +89,17 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
   const histories: SequenceHistory[] = [];
 
   for (const [whoId, groupTasks] of byWho.entries()) {
-    // Count completed E-steps (unique Subject_Type__c values that are completed)
+    // Count completed E-steps. A step "counts" only if it has a real
+    // CompletedDateTime — Outreach sets this when an email actually sends.
+    // Status="Completed" alone isn't enough, because placeholders/scheduled
+    // tasks can be flipped to Completed without ever having been sent.
     const completedTypes = new Set<string>();
     for (const t of groupTasks) {
-      if (t.Status === "Completed" && /^E[1-5]$/.test(t.SubjectType)) {
+      if (
+        t.Status === "Completed" &&
+        /^E[1-5]$/.test(t.SubjectType) &&
+        t.CompletedDateTime
+      ) {
         completedTypes.add(t.SubjectType);
       }
     }
@@ -101,31 +108,30 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
     const status: "complete" | "partial" =
       stepsCompleted >= 5 ? "complete" : "partial";
 
-    // Find first date (earliest dated task in the group — typically the E1)
+    // Find first date — earliest actually-sent email in the group (typically E1)
     const dated = groupTasks
-      .filter((t) => t.CompletedDateTime || t.ActivityDate)
-      .map((t) => ({
-        task: t,
-        date: t.CompletedDateTime ?? t.ActivityDate!,
-      }))
+      .filter((t) => !!t.CompletedDateTime)
+      .map((t) => ({ task: t, date: t.CompletedDateTime! }))
       .sort(
         (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
       );
 
-    // Find the "sequence ended" date: specifically the most recent completed
-    // E5 task's date. Previous implementation used the latest task in the
-    // group regardless of subject type, which produced wrong dates when stray
-    // non-E5 tasks were dated after the actual E5.
+    // "Sequence ended" date: the most recent completed E5's CompletedDateTime.
+    // Uses only CompletedDateTime so scheduled/placeholder E5 tasks never
+    // inflate the date.
     const e5Dates = groupTasks
-      .filter((t) => t.SubjectType === "E5" && t.Status === "Completed")
-      .map((t) => t.CompletedDateTime ?? t.ActivityDate)
-      .filter((d): d is string => !!d)
+      .filter(
+        (t) =>
+          t.SubjectType === "E5" &&
+          t.Status === "Completed" &&
+          !!t.CompletedDateTime
+      )
+      .map((t) => t.CompletedDateTime!)
       .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
 
     const e5EndDate = e5Dates[0] ?? null;
 
     const first = dated[0];
-    const last = dated[dated.length - 1];
     const firstContact = groupTasks.find((t) => t.WhoName || t.WhoEmail);
 
     histories.push({
@@ -133,10 +139,7 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
       contactName: firstContact?.WhoName ?? null,
       contactEmail: firstContact?.WhoEmail ?? null,
       startedAt: first?.date ?? null,
-      // Prefer the E5 completion date. Fall back to the latest group task date
-      // only when no E5 is completed (shouldn't happen for complete sequences,
-      // but covers edge cases).
-      endedAt: e5EndDate ?? last?.date ?? null,
+      endedAt: e5EndDate,
       status,
       stepsCompleted,
     });

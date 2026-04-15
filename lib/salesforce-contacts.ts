@@ -150,17 +150,21 @@ export async function fetchAccountsWithEHistory(): Promise<
     }
   }
 
-  // Keep only accounts whose MOST RECENT completed E5 was in 2026.
-  // Earlier logic used "any E5 in 2026" which let through accounts that had
-  // stray 2026-dated E5 tasks (re-logs, test tasks, etc.) even when the
-  // actual last outreach sequence ended much earlier. Using the most-recent
-  // E5 makes the filter match the user's mental model: "the account's
-  // sequencing activity ended in 2026".
+  // Keep only accounts whose MOST RECENT completed E5 was ACTUALLY SENT
+  // in 2026, based on CompletedDateTime only.
+  //
+  // CompletedDateTime is set by SF automatically when Status flips to
+  // Completed and reliably reflects the actual send timestamp for
+  // Outreach-synced emails. ActivityDate, by contrast, is a plain date
+  // field that can be set to future/scheduled dates (e.g., when Outreach
+  // schedules an email ahead of time) or edited manually. Falling back
+  // to ActivityDate was incorrectly admitting accounts whose real emails
+  // went out in 2025 but had some 2026-dated placeholder/scheduled task.
   const result: SfAccountWithETasks[] = [];
   for (const { account, tasks } of byAccount.values()) {
     const e5Dates = tasks
       .filter((t) => t.Subject_Type__c === "E5" && t.Status === "Completed")
-      .map((t) => t.CompletedDateTime ?? t.ActivityDate)
+      .map((t) => t.CompletedDateTime)
       .filter((d): d is string => !!d)
       .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
 
