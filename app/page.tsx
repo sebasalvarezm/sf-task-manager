@@ -7,12 +7,9 @@ export default function LandingPage() {
   const router = useRouter();
   const [sfConnected, setSfConnected] = useState<boolean | null>(null);
   const [msConnected, setMsConnected] = useState<boolean | null>(null);
-  const [triageStatus, setTriageStatus] = useState<{
-    available: boolean;
-    drafts?: number;
-    reviewed?: number;
-    allReviewed?: boolean;
-  } | null>(null);
+  const [outreachConnected, setOutreachConnected] = useState<boolean | null>(
+    null
+  );
 
   useEffect(() => {
     checkConnections();
@@ -20,10 +17,10 @@ export default function LandingPage() {
 
   async function checkConnections() {
     try {
-      const [sfRes, msRes, triageRes] = await Promise.all([
+      const [sfRes, msRes, orRes] = await Promise.all([
         fetch("/api/salesforce/status"),
         fetch("/api/microsoft/status"),
-        fetch("/api/triage/status"),
+        fetch("/api/outreach/status"),
       ]);
       if (sfRes.ok) {
         const sfData = await sfRes.json();
@@ -33,13 +30,14 @@ export default function LandingPage() {
         const msData = await msRes.json();
         setMsConnected(msData.connected);
       }
-      if (triageRes.ok) {
-        const triageData = await triageRes.json();
-        setTriageStatus(triageData);
+      if (orRes.ok) {
+        const orData = await orRes.json();
+        setOutreachConnected(orData.connected);
       }
     } catch {
       setSfConnected(false);
       setMsConnected(false);
+      setOutreachConnected(false);
     }
   }
 
@@ -84,7 +82,7 @@ export default function LandingPage() {
             Choose a tool to get started
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
             {/* ── Task Manager Card ────────────────────────────────────── */}
             <a
               href="/tasks"
@@ -128,6 +126,69 @@ export default function LandingPage() {
                   Checking...
                 </span>
               )}
+            </a>
+
+            {/* ── Outreach Queue Card ──────────────────────────────────── */}
+            <a
+              href="/outreach"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-brand-orange transition-all p-8 text-center"
+            >
+              <div className="text-4xl mb-4">
+                <svg
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-brand-orange transition-colors"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Outreach Queue
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Surface accounts due for a 2nd back-to-back hit or a
+                post-cooldown restart, and push the next contact to SF +
+                Outreach.
+              </p>
+
+              {/* Connection statuses */}
+              <div className="flex flex-col items-center gap-1.5">
+                {sfConnected === true ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Salesforce connected
+                  </span>
+                ) : sfConnected === false ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                    Salesforce not connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                    Checking...
+                  </span>
+                )}
+
+                {outreachConnected === true ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    Outreach connected
+                  </span>
+                ) : outreachConnected === false ? (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-brand-orange bg-orange-50 border border-orange-200 rounded-full px-3 py-1">
+                    Outreach not connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                    Checking...
+                  </span>
+                )}
+              </div>
             </a>
 
             {/* ── Call Logger Card ─────────────────────────────────────── */}
@@ -331,14 +392,14 @@ export default function LandingPage() {
               </span>
             </a>
 
-            {/* ── Email Triage Card ─────────────────────────────────────── */}
+            {/* ── Email Triage Card (PAUSED) ────────────────────────────── */}
             <a
               href="/triage"
-              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-brand-orange transition-all p-8 text-center"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm transition-all p-8 text-center opacity-60 hover:opacity-80"
             >
               <div className="text-4xl mb-4">
                 <svg
-                  className="w-12 h-12 mx-auto text-navy group-hover:text-brand-orange transition-colors"
+                  className="w-12 h-12 mx-auto text-gray-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -351,35 +412,17 @@ export default function LandingPage() {
                   />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold text-navy mb-2">
+              <h2 className="text-lg font-semibold text-gray-500 mb-2">
                 Email Triage
               </h2>
-              <p className="text-sm text-gray-500 mb-4">
+              <p className="text-sm text-gray-400 mb-4">
                 Review AI-drafted replies to your morning inbox, categorized
                 by priority.
               </p>
 
-              {/* Triage status badge */}
-              {triageStatus === null ? (
-                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
-                  Checking...
-                </span>
-              ) : triageStatus.available && !triageStatus.allReviewed ? (
-                <span className="inline-flex items-center gap-1.5 text-xs text-brand-orange bg-orange-50 border border-orange-200 rounded-full px-3 py-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-brand-orange animate-pulse" />
-                  {(triageStatus.drafts ?? 0) - (triageStatus.reviewed ?? 0)}{" "}
-                  drafts ready
-                </span>
-              ) : triageStatus.available && triageStatus.allReviewed ? (
-                <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                  All reviewed
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-full px-3 py-1">
-                  No triage today
-                </span>
-              )}
+              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 bg-gray-100 border border-gray-200 rounded-full px-3 py-1">
+                Paused
+              </span>
             </a>
           </div>
         </div>

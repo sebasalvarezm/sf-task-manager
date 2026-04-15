@@ -1,0 +1,290 @@
+import { getSupabaseAdmin } from "./supabase";
+
+// Outreach.io access tokens last 2 hours; refresh after 90 minutes.
+const REFRESH_THRESHOLD_MINUTES = 90;
+const OUTREACH_API_BASE = "https://api.outreach.io/api/v2";
+
+export type OutreachCredentials = {
+  id: string;
+  access_token: string;
+  refresh_token: string;
+  token_issued_at: string;
+  updated_at: string;
+};
+
+// ── Token management ─────────────────────────────────────────────────────────
+
+export async function getOutreachValidCredentials(): Promise<OutreachCredentials | null> {
+  const supabase = getSupabaseAdmin();
+
+  const { data, error } = await supabase
+    .from("outreach_credentials")
+    .select("*")
+    .eq("id", "default")
+    .single();
+
+  if (error || !data) return null;
+
+  const credentials = data as OutreachCredentials;
+
+  const issuedAt = new Date(credentials.token_issued_at);
+  const ageMinutes = (Date.now() - issuedAt.getTime()) / 1000 / 60;
+
+  if (ageMinutes > REFRESH_THRESHOLD_MINUTES) {
+    return await refreshOutreachToken(credentials);
+  }
+
+  return credentials;
+}
+
+async function refreshOutreachToken(
+  credentials: OutreachCredentials
+): Promise<OutreachCredentials | null> {
+  const clientId = process.env.OUTREACH_CLIENT_ID;
+  const clientSecret = process.env.OUTREACH_CLIENT_SECRET;
+  const callbackUrl = process.env.OUTREACH_CALLBACK_URL;
+
+  if (!clientId || !clientSecret || !callbackUrl) {
+    throw new Error("Missing OUTREACH_CLIENT_ID, OUTREACH_CLIENT_SECRET, or OUTREACH_CALLBACK_URL");
+  }
+
+  const params = new URLSearchParams({
+    grant_type: "refresh_token",
+    client_id: clientId,
+    client_secret: clientSecret,
+    redirect_uri: callbackUrl,
+    refresh_token: credentials.refresh_token,
+  });
+
+  const response = await fetch("https://api.outreach.io/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+
+  if (!response.ok) {
+    const supabase = getSupabaseAdmin();
+    await supabase.from("outreach_credentials").delete().eq("id", "default");
+    return null;
+  }
+
+  const tokenData = await response.json();
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("outreach_credentials")
+    .update({
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token ?? credentials.refresh_token,
+      token_issued_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", "default")
+    .select()
+    .single();
+
+  if (error || !data) return null;
+  return data as OutreachCredentials;
+}
+
+// ── Helper: authenticated Outreach fetch ─────────────────────────────────────
+
+async function outreachFetch(
+  path: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const credentials = await getOutreachValidCredentials();
+  if (!credentials) throw new Error("OUTREACH_NOT_CONNECTED");
+
+  const url = path.startsWith("http") ? path : `${OUTREACH_API_BASE}${path}`;
+
+  return fetch(url, {
+    ...init,
+    headers: {
+      ...(init.headers ?? {}),
+      Authorization: `Bearer ${credentials.access_token}`,
+      "Content-Type": "application/vnd.api+json",
+    },
+  });
+}
+
+// ── Sequences ────────────────────────────────────────────────────────────────
+
+export type OutreachSequence = {
+  id: string;
+  name: string;
+  tags: string[];
+  enabled: boolean;
+};
+
+export async function listSequences(): Promise<OutreachSequence[]> {
+  const all: OutreachSequence[] = [];
+  let next: string | null = "/sequences?page[size]=100";
+
+  while (next) {
+    const res: Response = await outreachFetch(next);
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Outreach listSequences failed: ${err}`);
+    }
+    const body = (await res.json()) as {
+      data?: Array<{
+        id: string;
+        attributes?: { name?: string; tags?: string[]; enabled?: boolean };
+      }>;
+      links?: { next?: string };
+    };
+
+    for (const row of body.data ?? []) {
+      all.push({
+        id: row.id,
+        name: row.attributes?.name ?? "(unnamed)",
+        tags: row.attributes?.tags ?? [],
+        enabled: row.attributes?.enabled ?? true,
+      });
+    }
+    next = body.links?.next ?? null;
+  }
+
+  return all;
+}
+
+// ── Mailboxes ────────────────────────────────────────────────────────────────
+
+export type OutreachMailbox = {
+  id: string;
+  email: string;
+};
+
+export async function listMailboxes(): Promise<OutreachMailbox[]> {
+  const res = await outreachFetch("/mailboxes?page[size]=100");
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Outreach listMailboxes failed: ${err}`);
+  }
+  const body = (await res.json()) as {
+    data?: Array<{ id: string; attributes?: { email?: string } }>;
+  };
+  return (body.data ?? []).map((row) => ({
+    id: row.id,
+    email: row.attributes?.email ?? "",
+  }));
+}
+
+// ── Prospects ────────────────────────────────────────────────────────────────
+
+export type OutreachProspect = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  title: string;
+};
+
+export async function findProspectByEmail(
+  email: string
+): Promise<OutreachProspect | null> {
+  const res = await outreachFetch(
+    `/prospects?filter[emails]=${encodeURIComponent(email)}&page[size]=1`
+  );
+  if (!res.ok) return null;
+  const body = (await res.json()) as {
+    data?: Array<{
+      id: string;
+      attributes?: {
+        firstName?: string;
+        lastName?: string;
+        emails?: string[];
+        title?: string;
+      };
+    }>;
+  };
+  const row = (body.data ?? [])[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    firstName: row.attributes?.firstName ?? "",
+    lastName: row.attributes?.lastName ?? "",
+    email: (row.attributes?.emails ?? [])[0] ?? email,
+    title: row.attributes?.title ?? "",
+  };
+}
+
+export async function createProspect(params: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  title?: string;
+  company?: string;
+}): Promise<OutreachProspect> {
+  const res = await outreachFetch("/prospects", {
+    method: "POST",
+    body: JSON.stringify({
+      data: {
+        type: "prospect",
+        attributes: {
+          firstName: params.firstName,
+          lastName: params.lastName,
+          emails: [params.email],
+          title: params.title ?? null,
+          company: params.company ?? null,
+        },
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Outreach createProspect failed: ${err}`);
+  }
+
+  const body = (await res.json()) as {
+    data: {
+      id: string;
+      attributes?: {
+        firstName?: string;
+        lastName?: string;
+        emails?: string[];
+        title?: string;
+      };
+    };
+  };
+
+  return {
+    id: body.data.id,
+    firstName: body.data.attributes?.firstName ?? params.firstName,
+    lastName: body.data.attributes?.lastName ?? params.lastName,
+    email: (body.data.attributes?.emails ?? [])[0] ?? params.email,
+    title: body.data.attributes?.title ?? params.title ?? "",
+  };
+}
+
+// ── Sequence enrollment ──────────────────────────────────────────────────────
+
+export async function addProspectToSequence(params: {
+  prospectId: string;
+  sequenceId: string;
+  mailboxId: string;
+}): Promise<{ id: string }> {
+  const res = await outreachFetch("/sequenceStates", {
+    method: "POST",
+    body: JSON.stringify({
+      data: {
+        type: "sequenceState",
+        relationships: {
+          prospect: { data: { type: "prospect", id: params.prospectId } },
+          sequence: { data: { type: "sequence", id: params.sequenceId } },
+          mailbox: { data: { type: "mailbox", id: params.mailboxId } },
+        },
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Outreach addProspectToSequence failed: ${err}`);
+  }
+
+  const body = (await res.json()) as { data: { id: string } };
+  return { id: body.data.id };
+}

@@ -91,3 +91,16 @@ CREATE INDEX IF NOT EXISTS idx_email_triage_date ON email_triage (triage_date DE
 -- Unique constraint to prevent duplicate emails on the same day
 CREATE UNIQUE INDEX IF NOT EXISTS idx_email_triage_dedup
   ON email_triage (triage_date, email_id) WHERE email_id IS NOT NULL;
+
+-- ============================================================
+-- Table 5: Outreach.io OAuth Tokens (for Outreach Queue tool)
+-- ============================================================
+-- Stores the Outreach.io connection so the Outreach Queue can read
+-- sequences and push prospects without re-authenticating each time.
+CREATE TABLE IF NOT EXISTS outreach_credentials (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  token_issued_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);

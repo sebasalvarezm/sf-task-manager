@@ -4,11 +4,13 @@ import { NextRequest, NextResponse } from "next/server";
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Always allow: login page, auth API, Salesforce OAuth callback
+  // Always allow: login page, auth API, OAuth callbacks
   const publicPaths = [
     "/login",
     "/api/auth/",
     "/api/salesforce/callback",
+    "/api/microsoft/callback",
+    "/api/outreach/callback",
     "/api/triage",
   ];
 
