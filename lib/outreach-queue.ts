@@ -101,7 +101,7 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
     const status: "complete" | "partial" =
       stepsCompleted >= 5 ? "complete" : "partial";
 
-    // Find first and last dates
+    // Find first date (earliest dated task in the group — typically the E1)
     const dated = groupTasks
       .filter((t) => t.CompletedDateTime || t.ActivityDate)
       .map((t) => ({
@@ -112,6 +112,18 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
         (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
       );
 
+    // Find the "sequence ended" date: specifically the most recent completed
+    // E5 task's date. Previous implementation used the latest task in the
+    // group regardless of subject type, which produced wrong dates when stray
+    // non-E5 tasks were dated after the actual E5.
+    const e5Dates = groupTasks
+      .filter((t) => t.SubjectType === "E5" && t.Status === "Completed")
+      .map((t) => t.CompletedDateTime ?? t.ActivityDate)
+      .filter((d): d is string => !!d)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+    const e5EndDate = e5Dates[0] ?? null;
+
     const first = dated[0];
     const last = dated[dated.length - 1];
     const firstContact = groupTasks.find((t) => t.WhoName || t.WhoEmail);
@@ -121,7 +133,10 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
       contactName: firstContact?.WhoName ?? null,
       contactEmail: firstContact?.WhoEmail ?? null,
       startedAt: first?.date ?? null,
-      endedAt: last?.date ?? null,
+      // Prefer the E5 completion date. Fall back to the latest group task date
+      // only when no E5 is completed (shouldn't happen for complete sequences,
+      // but covers edge cases).
+      endedAt: e5EndDate ?? last?.date ?? null,
       status,
       stepsCompleted,
     });
