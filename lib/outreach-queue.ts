@@ -6,6 +6,11 @@ import {
   SfETask,
   SfContact,
 } from "./salesforce-contacts";
+import { getValidCredentials } from "./token-manager";
+import {
+  findProspectsByEmails,
+  getLastSequenceStateByProspect,
+} from "./outreach";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +45,11 @@ export type QueueItem = {
   lastContactHit: { name: string | null; email: string | null } | null;
   sequenceHistory: SequenceHistory[];
   recommendedContacts: RecommendedContact[];
+  lastSequenceUsed: {
+    sequenceId: string;
+    sequenceName: string;
+    enrolledAt: string | null;
+  } | null;
 };
 
 // ── Leadership title matcher ─────────────────────────────────────────────────
@@ -268,7 +278,12 @@ function recommendContactsSync(
 export async function buildQueue(): Promise<{
   due_2nd_hit: QueueItem[];
   due_restart: QueueItem[];
+  sfInstanceUrl: string | null;
 }> {
+  // Fetch SF credentials once so we can expose instance_url for account links
+  const sfCreds = await getValidCredentials();
+  const sfInstanceUrl = sfCreds?.instance_url ?? null;
+
   const accounts = await fetchAccountsWithEHistory();
 
   // First pass: classify each account
@@ -329,13 +344,63 @@ export async function buildQueue(): Promise<{
         : null,
       sequenceHistory: histories,
       recommendedContacts,
+      lastSequenceUsed: null,
     });
   }
 
-  return {
-    due_2nd_hit: items.filter((i) => i.bucket === "DUE_2ND_HIT"),
-    due_restart: items.filter((i) => i.bucket === "DUE_RESTART"),
+  // Enrich with "last Outreach sequence used" for each item's last-contact email
+  try {
+    const uniqueEmails = Array.from(
+      new Set(
+        items
+          .map((i) => i.lastContactHit?.email?.toLowerCase())
+          .filter((e): e is string => !!e)
+      )
+    );
+    if (uniqueEmails.length > 0) {
+      const emailToProspectId = await findProspectsByEmails(uniqueEmails);
+      const uniqueProspectIds = Array.from(new Set(emailToProspectId.values()));
+      const prospectToSeq = await getLastSequenceStateByProspect(
+        uniqueProspectIds
+      );
+
+      for (const item of items) {
+        const email = item.lastContactHit?.email?.toLowerCase();
+        if (!email) continue;
+        const prospectId = emailToProspectId.get(email);
+        if (!prospectId) continue;
+        const seq = prospectToSeq.get(prospectId);
+        if (!seq) continue;
+        item.lastSequenceUsed = {
+          sequenceId: seq.sequenceId,
+          sequenceName: seq.sequenceName,
+          enrolledAt: seq.enrolledAt,
+        };
+      }
+    }
+  } catch {
+    // Non-fatal: leave lastSequenceUsed as null on all items
+  }
+
+  // Sort each bucket oldest-first by last E5 end date (null dates last)
+  const sortOldestFirst = (a: QueueItem, b: QueueItem) => {
+    const ad = a.lastSequenceEndDate
+      ? new Date(a.lastSequenceEndDate).getTime()
+      : Infinity;
+    const bd = b.lastSequenceEndDate
+      ? new Date(b.lastSequenceEndDate).getTime()
+      : Infinity;
+    return ad - bd;
   };
+
+  const due_2nd_hit = items
+    .filter((i) => i.bucket === "DUE_2ND_HIT")
+    .sort(sortOldestFirst);
+  const due_restart = items
+    .filter((i) => i.bucket === "DUE_RESTART")
+    .sort(sortOldestFirst);
+
+  return { due_2nd_hit, due_restart, sfInstanceUrl };
 }
 
 // ── On-demand AI research for a specific account ────────────────────────────

@@ -34,6 +34,11 @@ type QueueItem = {
   lastContactHit: { name: string | null; email: string | null } | null;
   sequenceHistory: SequenceHistory[];
   recommendedContacts: RecommendedContact[];
+  lastSequenceUsed: {
+    sequenceId: string;
+    sequenceName: string;
+    enrolledAt: string | null;
+  } | null;
 };
 
 type Sequence = { id: string; name: string; tags: string[] };
@@ -83,6 +88,7 @@ function OutreachPageContent() {
     due_2nd_hit: QueueItem[];
     due_restart: QueueItem[];
   }>({ due_2nd_hit: [], due_restart: [] });
+  const [sfInstanceUrl, setSfInstanceUrl] = useState<string | null>(null);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [sequences, setSequences] = useState<Sequence[]>([]);
@@ -147,6 +153,7 @@ function OutreachPageContent() {
         error?: string;
         due_2nd_hit?: QueueItem[];
         due_restart?: QueueItem[];
+        sfInstanceUrl?: string | null;
       } = {};
       try {
         data = JSON.parse(text);
@@ -169,6 +176,7 @@ function OutreachPageContent() {
         due_2nd_hit: data.due_2nd_hit ?? [],
         due_restart: data.due_restart ?? [],
       });
+      setSfInstanceUrl(data.sfInstanceUrl ?? null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load queue");
     }
@@ -443,7 +451,7 @@ function OutreachPageContent() {
                       >
                         <div className="flex items-center justify-between gap-4">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-3 mb-1">
+                            <div className="flex items-center gap-3 mb-1 flex-wrap">
                               <h3 className="text-base font-semibold text-navy truncate">
                                 {item.accountName}
                               </h3>
@@ -462,6 +470,17 @@ function OutreachPageContent() {
                                   {item.website}
                                 </a>
                               )}
+                              {sfInstanceUrl && (
+                                <a
+                                  href={`${sfInstanceUrl}/${item.accountId}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[10px] text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-full px-2 py-0.5 whitespace-nowrap"
+                                >
+                                  View in Salesforce ↗
+                                </a>
+                              )}
                             </div>
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
                               <span>
@@ -474,6 +493,12 @@ function OutreachPageContent() {
                                 Last hit:{" "}
                                 <span className="text-gray-700">
                                   {item.lastContactHit?.name ?? "—"}
+                                </span>
+                              </span>
+                              <span>
+                                Last sequence:{" "}
+                                <span className="text-gray-700">
+                                  {item.lastSequenceUsed?.sequenceName ?? "—"}
                                 </span>
                               </span>
                               {topPick && (
@@ -516,7 +541,17 @@ function OutreachPageContent() {
                               Sequence history
                             </h4>
                             <div className="space-y-2">
-                              {item.sequenceHistory.map((h, idx) => (
+                              {item.sequenceHistory.map((h, idx) => {
+                                const isLastContact =
+                                  !!h.contactEmail &&
+                                  !!item.lastContactHit?.email &&
+                                  h.contactEmail.toLowerCase() ===
+                                    item.lastContactHit.email.toLowerCase();
+                                const sequenceLabel =
+                                  isLastContact && item.lastSequenceUsed
+                                    ? item.lastSequenceUsed.sequenceName
+                                    : null;
+                                return (
                                 <div
                                   key={idx}
                                   className="flex items-center gap-3 text-sm bg-gray-50 rounded-lg p-3"
@@ -527,6 +562,11 @@ function OutreachPageContent() {
                                   <span className="text-xs text-gray-500">
                                     {h.contactEmail ?? "—"}
                                   </span>
+                                  {sequenceLabel && (
+                                    <span className="text-[10px] text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                                      via {sequenceLabel}
+                                    </span>
+                                  )}
                                   <span className="ml-auto flex items-center gap-1">
                                     {[1, 2, 3, 4, 5].map((n) => (
                                       <span
@@ -546,7 +586,8 @@ function OutreachPageContent() {
                                     {fmtDate(h.endedAt)}
                                   </span>
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
 

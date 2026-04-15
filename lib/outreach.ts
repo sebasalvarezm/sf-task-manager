@@ -259,6 +259,127 @@ export async function createProspect(params: {
   };
 }
 
+// ── Batched prospect lookups (for Outreach Queue enrichment) ────────────────
+
+// Given a list of email addresses, returns a map of lowercase-email → prospectId
+// for whichever emails match an Outreach prospect. Chunked at 50 per request to
+// keep URL length sane. Per-chunk failures are swallowed (empty results).
+export async function findProspectsByEmails(
+  emails: string[]
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (emails.length === 0) return result;
+
+  const normalized = Array.from(
+    new Set(emails.map((e) => e.trim().toLowerCase()).filter((e) => !!e))
+  );
+
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < normalized.length; i += CHUNK_SIZE) {
+    const chunk = normalized.slice(i, i + CHUNK_SIZE);
+    try {
+      const filter = encodeURIComponent(chunk.join(","));
+      const res = await outreachFetch(
+        `/prospects?filter[emails]=${filter}&page[size]=${chunk.length}`
+      );
+      if (!res.ok) continue;
+      const body = (await res.json()) as {
+        data?: Array<{
+          id: string;
+          attributes?: { emails?: string[] };
+        }>;
+      };
+      for (const row of body.data ?? []) {
+        for (const em of row.attributes?.emails ?? []) {
+          if (!em) continue;
+          const key = em.toLowerCase();
+          // If an email matches multiple prospects, keep the first one seen
+          if (!result.has(key)) result.set(key, row.id);
+        }
+      }
+    } catch {
+      // skip this chunk
+    }
+  }
+
+  return result;
+}
+
+export type LastSequenceUsed = {
+  prospectId: string;
+  sequenceId: string;
+  sequenceName: string;
+  enrolledAt: string | null;
+};
+
+// Given a list of prospect IDs, returns a map of prospectId → the most recent
+// sequenceState they were enrolled in (with the sequence name resolved from
+// the include[] block). Chunked at 50 per request. Graceful on per-chunk fail.
+export async function getLastSequenceStateByProspect(
+  prospectIds: string[]
+): Promise<Map<string, LastSequenceUsed>> {
+  const result = new Map<string, LastSequenceUsed>();
+  if (prospectIds.length === 0) return result;
+
+  const unique = Array.from(new Set(prospectIds.filter((id) => !!id)));
+  const CHUNK_SIZE = 50;
+
+  for (let i = 0; i < unique.length; i += CHUNK_SIZE) {
+    const chunk = unique.slice(i, i + CHUNK_SIZE);
+    try {
+      const filter = encodeURIComponent(chunk.join(","));
+      // sort=-createdAt so newest states come first per prospect.
+      // include=sequence so sequence names come back in the same response.
+      const res = await outreachFetch(
+        `/sequenceStates?filter[prospect][id]=${filter}&include=sequence&sort=-createdAt&page[size]=200`
+      );
+      if (!res.ok) continue;
+      const body = (await res.json()) as {
+        data?: Array<{
+          id: string;
+          attributes?: { createdAt?: string };
+          relationships?: {
+            prospect?: { data?: { id?: string } };
+            sequence?: { data?: { id?: string } };
+          };
+        }>;
+        included?: Array<{
+          type: string;
+          id: string;
+          attributes?: { name?: string };
+        }>;
+      };
+
+      // Build sequenceId → name lookup from the `included` array
+      const sequenceNames = new Map<string, string>();
+      for (const inc of body.included ?? []) {
+        if (inc.type === "sequence") {
+          sequenceNames.set(inc.id, inc.attributes?.name ?? "(unnamed)");
+        }
+      }
+
+      // Walk states in order (already sorted newest-first); take the first
+      // occurrence per prospect.
+      for (const row of body.data ?? []) {
+        const prospectId = row.relationships?.prospect?.data?.id;
+        const sequenceId = row.relationships?.sequence?.data?.id;
+        if (!prospectId || !sequenceId) continue;
+        if (result.has(prospectId)) continue; // first seen = newest
+        result.set(prospectId, {
+          prospectId,
+          sequenceId,
+          sequenceName: sequenceNames.get(sequenceId) ?? "(unknown sequence)",
+          enrolledAt: row.attributes?.createdAt ?? null,
+        });
+      }
+    } catch {
+      // skip this chunk
+    }
+  }
+
+  return result;
+}
+
 // ── Sequence enrollment ──────────────────────────────────────────────────────
 
 export async function addProspectToSequence(params: {
