@@ -130,20 +130,12 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
 // ── Classification ───────────────────────────────────────────────────────────
 
 function classify(
-  account: SfAccountWithETasks,
+  _account: SfAccountWithETasks,
   histories: SequenceHistory[]
 ): Bucket {
-  // If they've responded, they're out of the queue
-  if (account.Responded__c === "Yes") return "RESPONDED";
-
-  // Check for any inbound email activity (Type = "Email" with "In" subject prefix,
-  // or any task whose subject starts with "In:"/"Re:" patterns).
-  // Authoritative signal is Responded__c, but we still check task direction.
-  const hasInbound = account.Tasks.some((t) => {
-    const subj = (t.Subject ?? "").toLowerCase();
-    return subj.startsWith("in:") || subj.startsWith("re:");
-  });
-  if (hasInbound) return "RESPONDED";
+  // Note: we intentionally do NOT exclude accounts with Responded__c = 'Yes'
+  // or inbound email tasks. Many accounts responded years ago then ghosted,
+  // and we want to re-sequence those as fresh attempts.
 
   const completedSequences = histories.filter((h) => h.status === "complete");
 

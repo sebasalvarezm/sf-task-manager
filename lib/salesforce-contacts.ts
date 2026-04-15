@@ -35,10 +35,17 @@ export type SfAccountWithETasks = {
 };
 
 // ── Fetch accounts with E1-E5 task history ──────────────────────────────────
-// Returns every account where at least one E5 task has been completed.
+// Returns every account where at least one E5 task has been completed in 2026,
+// AND the account is owned by Sebastian Alvarez, Nate Sabb, or Tyson Hasegawa-Foster.
 // Salesforce doesn't support semi-joins on Task, so we do this in two steps:
-//   1. Query all E1-E5 tasks directly and group by AccountId in JS
-//   2. Keep only accounts that have at least one completed E5
+//   1. Query all E1-E5 tasks directly (with owner filter) and group by AccountId in JS
+//   2. Keep only accounts with at least one E5 completed in 2026
+
+const QUEUE_ACCOUNT_OWNERS = [
+  "Sebastian Alvarez",
+  "Nate Sabb",
+  "Tyson Hasegawa-Foster",
+];
 
 export async function fetchAccountsWithEHistory(): Promise<
   SfAccountWithETasks[]
@@ -46,14 +53,21 @@ export async function fetchAccountsWithEHistory(): Promise<
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
-  // Fetch all E1-E5 tasks with account info in one query
+  // Build the Owner.Name IN (...) clause safely
+  const ownersClause = QUEUE_ACCOUNT_OWNERS
+    .map((n) => `'${n.replace(/'/g, "\\'")}'`)
+    .join(",");
+
+  // Fetch all E1-E5 tasks with account + owner info in one query
   const query = encodeURIComponent(
     `SELECT Id, Subject, Subject_Type__c, ActivityDate, CompletedDateTime, ` +
       `AccountId, Account.Name, Account.Website, Account.Responded__c, ` +
-      `Account.LastActivityDate, WhoId, Who.Name, Who.Email, Status, Type ` +
+      `Account.LastActivityDate, Account.Owner.Name, ` +
+      `WhoId, Who.Name, Who.Email, Status, Type ` +
       `FROM Task ` +
       `WHERE Subject_Type__c IN ('E1','E2','E3','E4','E5') ` +
       `AND AccountId != null ` +
+      `AND Account.Owner.Name IN (${ownersClause}) ` +
       `ORDER BY AccountId, ActivityDate ASC`
   );
 
@@ -136,13 +150,17 @@ export async function fetchAccountsWithEHistory(): Promise<
     }
   }
 
-  // Keep only accounts with at least one completed E5
+  // Keep only accounts with at least one E5 completed in 2026
   const result: SfAccountWithETasks[] = [];
   for (const { account, tasks } of byAccount.values()) {
-    const hasCompletedE5 = tasks.some(
-      (t) => t.Subject_Type__c === "E5" && t.Status === "Completed"
-    );
-    if (!hasCompletedE5) continue;
+    const hasE5In2026 = tasks.some((t) => {
+      if (t.Subject_Type__c !== "E5" || t.Status !== "Completed") return false;
+      const dateStr = t.CompletedDateTime ?? t.ActivityDate;
+      if (!dateStr) return false;
+      const year = new Date(dateStr).getUTCFullYear();
+      return year === 2026;
+    });
+    if (!hasE5In2026) continue;
 
     result.push({
       Id: account.Id,
