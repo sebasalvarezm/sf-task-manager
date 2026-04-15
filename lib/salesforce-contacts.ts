@@ -150,17 +150,25 @@ export async function fetchAccountsWithEHistory(): Promise<
     }
   }
 
-  // Keep only accounts with at least one E5 completed in 2026
+  // Keep only accounts whose MOST RECENT completed E5 was in 2026.
+  // Earlier logic used "any E5 in 2026" which let through accounts that had
+  // stray 2026-dated E5 tasks (re-logs, test tasks, etc.) even when the
+  // actual last outreach sequence ended much earlier. Using the most-recent
+  // E5 makes the filter match the user's mental model: "the account's
+  // sequencing activity ended in 2026".
   const result: SfAccountWithETasks[] = [];
   for (const { account, tasks } of byAccount.values()) {
-    const hasE5In2026 = tasks.some((t) => {
-      if (t.Subject_Type__c !== "E5" || t.Status !== "Completed") return false;
-      const dateStr = t.CompletedDateTime ?? t.ActivityDate;
-      if (!dateStr) return false;
-      const year = new Date(dateStr).getUTCFullYear();
-      return year === 2026;
-    });
-    if (!hasE5In2026) continue;
+    const e5Dates = tasks
+      .filter((t) => t.Subject_Type__c === "E5" && t.Status === "Completed")
+      .map((t) => t.CompletedDateTime ?? t.ActivityDate)
+      .filter((d): d is string => !!d)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+    const mostRecentE5 = e5Dates[0];
+    if (!mostRecentE5) continue;
+
+    const year = new Date(mostRecentE5).getUTCFullYear();
+    if (year !== 2026) continue;
 
     result.push({
       Id: account.Id,
