@@ -36,8 +36,9 @@ export type SfAccountWithETasks = {
 
 // ── Fetch accounts with E1-E5 task history ──────────────────────────────────
 // Returns every account where at least one E5 task has been completed.
-// Includes the full E1-E5 task history so the classification engine can
-// group by contact and determine which accounts are due for follow-up.
+// Salesforce doesn't support semi-joins on Task, so we do this in two steps:
+//   1. Query all E1-E5 tasks directly and group by AccountId in JS
+//   2. Keep only accounts that have at least one completed E5
 
 export async function fetchAccountsWithEHistory(): Promise<
   SfAccountWithETasks[]
@@ -45,20 +46,15 @@ export async function fetchAccountsWithEHistory(): Promise<
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
-  // Inner subquery: all E-tasks on the account
-  // Outer filter: only accounts that have at least one completed E5
+  // Fetch all E1-E5 tasks with account info in one query
   const query = encodeURIComponent(
-    `SELECT Id, Name, Website, Responded__c, LastActivityDate, ` +
-      `(SELECT Id, Subject, Subject_Type__c, ActivityDate, CompletedDateTime, ` +
-      `WhoId, Who.Name, Who.Email, Status, Type ` +
-      `FROM Tasks ` +
+    `SELECT Id, Subject, Subject_Type__c, ActivityDate, CompletedDateTime, ` +
+      `AccountId, Account.Name, Account.Website, Account.Responded__c, ` +
+      `Account.LastActivityDate, WhoId, Who.Name, Who.Email, Status, Type ` +
+      `FROM Task ` +
       `WHERE Subject_Type__c IN ('E1','E2','E3','E4','E5') ` +
-      `ORDER BY ActivityDate ASC) ` +
-      `FROM Account ` +
-      `WHERE Id IN ( ` +
-      `SELECT AccountId FROM Task ` +
-      `WHERE Subject_Type__c = 'E5' AND Status = 'Completed' ` +
-      `)`
+      `AND AccountId != null ` +
+      `ORDER BY AccountId, ActivityDate ASC`
   );
 
   const response = await fetch(
@@ -76,48 +72,100 @@ export async function fetchAccountsWithEHistory(): Promise<
     throw new Error(`SF fetchAccountsWithEHistory failed: ${err}`);
   }
 
-  const data = (await response.json()) as {
-    records?: Array<{
-      Id: string;
-      Name: string;
-      Website: string | null;
-      Responded__c: string | null;
-      LastActivityDate: string | null;
-      Tasks?: {
-        records?: Array<{
-          Id: string;
-          Subject: string;
-          Subject_Type__c: string;
-          ActivityDate: string | null;
-          CompletedDateTime: string | null;
-          WhoId: string | null;
-          Who?: { Name?: string; Email?: string } | null;
-          Status: string;
-          Type: string | null;
-        }>;
-      } | null;
-    }>;
+  // Paginate through all records
+  type TaskRecord = {
+    Id: string;
+    Subject: string;
+    Subject_Type__c: string;
+    ActivityDate: string | null;
+    CompletedDateTime: string | null;
+    AccountId: string;
+    Account?: {
+      Name?: string;
+      Website?: string | null;
+      Responded__c?: string | null;
+      LastActivityDate?: string | null;
+    } | null;
+    WhoId: string | null;
+    Who?: { Name?: string; Email?: string } | null;
+    Status: string;
+    Type: string | null;
   };
 
-  return (data.records ?? []).map((r) => ({
-    Id: r.Id,
-    Name: r.Name,
-    Website: r.Website,
-    Responded__c: r.Responded__c,
-    LastActivityDate: r.LastActivityDate,
-    Tasks: (r.Tasks?.records ?? []).map((t) => ({
-      Id: t.Id,
-      Subject: t.Subject,
-      SubjectType: t.Subject_Type__c,
-      ActivityDate: t.ActivityDate,
-      CompletedDateTime: t.CompletedDateTime,
-      WhoId: t.WhoId,
-      WhoName: t.Who?.Name ?? null,
-      WhoEmail: t.Who?.Email ?? null,
-      Status: t.Status,
-      Type: t.Type,
-    })),
-  }));
+  let body = (await response.json()) as {
+    records?: TaskRecord[];
+    nextRecordsUrl?: string;
+    done?: boolean;
+  };
+  const allTasks: TaskRecord[] = [...(body.records ?? [])];
+
+  while (body.nextRecordsUrl && !body.done) {
+    const nextRes = await fetch(
+      `${credentials.instance_url}${body.nextRecordsUrl}`,
+      {
+        headers: {
+          Authorization: `Bearer ${credentials.access_token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    if (!nextRes.ok) break;
+    body = await nextRes.json();
+    allTasks.push(...(body.records ?? []));
+  }
+
+  // Group tasks by AccountId
+  const byAccount = new Map<string, { account: TaskRecord["Account"] & { Id: string }; tasks: TaskRecord[] }>();
+
+  for (const t of allTasks) {
+    if (!t.AccountId) continue;
+    const existing = byAccount.get(t.AccountId);
+    if (existing) {
+      existing.tasks.push(t);
+    } else {
+      byAccount.set(t.AccountId, {
+        account: {
+          Id: t.AccountId,
+          Name: t.Account?.Name ?? "(Unnamed)",
+          Website: t.Account?.Website ?? null,
+          Responded__c: t.Account?.Responded__c ?? null,
+          LastActivityDate: t.Account?.LastActivityDate ?? null,
+        },
+        tasks: [t],
+      });
+    }
+  }
+
+  // Keep only accounts with at least one completed E5
+  const result: SfAccountWithETasks[] = [];
+  for (const { account, tasks } of byAccount.values()) {
+    const hasCompletedE5 = tasks.some(
+      (t) => t.Subject_Type__c === "E5" && t.Status === "Completed"
+    );
+    if (!hasCompletedE5) continue;
+
+    result.push({
+      Id: account.Id,
+      Name: account.Name ?? "(Unnamed)",
+      Website: account.Website ?? null,
+      Responded__c: account.Responded__c ?? null,
+      LastActivityDate: account.LastActivityDate ?? null,
+      Tasks: tasks.map((t) => ({
+        Id: t.Id,
+        Subject: t.Subject,
+        SubjectType: t.Subject_Type__c,
+        ActivityDate: t.ActivityDate,
+        CompletedDateTime: t.CompletedDateTime,
+        WhoId: t.WhoId,
+        WhoName: t.Who?.Name ?? null,
+        WhoEmail: t.Who?.Email ?? null,
+        Status: t.Status,
+        Type: t.Type,
+      })),
+    });
+  }
+
+  return result;
 }
 
 // ── Fetch all contacts on an account ────────────────────────────────────────
