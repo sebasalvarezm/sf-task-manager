@@ -39,6 +39,7 @@ export type RecommendedContact = {
   source: "salesforce" | "web_research";
   sfContactId?: string;
   unverified?: boolean;
+  previouslyContacted?: boolean;
 };
 
 export type QueueItem = {
@@ -176,9 +177,16 @@ function classify(
   _account: SfAccountWithETasks,
   histories: SequenceHistory[]
 ): Bucket {
-  // Note: we intentionally do NOT exclude accounts with Responded__c = 'Yes'
-  // or inbound email tasks. Many accounts responded years ago then ghosted,
-  // and we want to re-sequence those as fresh attempts.
+  // If any contact has an in-progress sequence (partial, started in 2026),
+  // the account is already being worked — don't show it as due.
+  const hasInProgressSequence = histories.some(
+    (h) =>
+      h.status === "partial" &&
+      h.stepsCompleted > 0 &&
+      h.startedAt &&
+      new Date(h.startedAt).getUTCFullYear() === 2026
+  );
+  if (hasInProgressSequence) return "NOT_DUE";
 
   const completedSequences = histories.filter((h) => h.status === "complete");
 
@@ -276,25 +284,22 @@ function recommendContactsSync(
   histories: SequenceHistory[],
   bucket: Bucket
 ): RecommendedContact[] {
-  // Filter by leadership title
-  const leadership = sfContacts.filter((c) =>
-    LEADERSHIP_REGEX.test(c.Title ?? "")
-  );
+  // Show ALL contacts with an email — don't filter by leadership title.
+  // Rank leadership titles higher so they appear first in the list.
+  const withEmail = sfContacts.filter((c) => !!c.Email);
 
-  // For DUE_2ND_HIT, exclude contacts already hit in prior sequences
   const alreadyHit = new Set(
     histories.map((h) => h.contactId).filter(Boolean) as string[]
   );
 
-  const eligible =
-    bucket === "DUE_2ND_HIT"
-      ? leadership.filter((c) => !alreadyHit.has(c.Id))
-      : leadership;
-
-  // Rank & map
-  return eligible
-    .sort((a, b) => leadershipRank(a.Title) - leadershipRank(b.Title))
-    .slice(0, 5)
+  // Sort: uncontacted before already-contacted, then by leadership rank
+  return withEmail
+    .sort((a, b) => {
+      const aHit = alreadyHit.has(a.Id) ? 1 : 0;
+      const bHit = alreadyHit.has(b.Id) ? 1 : 0;
+      if (aHit !== bHit) return aHit - bHit; // uncontacted first
+      return leadershipRank(a.Title) - leadershipRank(b.Title);
+    })
     .map((c) => ({
       firstName: c.FirstName ?? "",
       lastName: c.LastName ?? "",
@@ -302,8 +307,8 @@ function recommendContactsSync(
       title: c.Title ?? "",
       source: "salesforce" as const,
       sfContactId: c.Id,
-    }))
-    .filter((c) => c.email);
+      previouslyContacted: alreadyHit.has(c.Id),
+    }));
 }
 
 // ── Main entry: build the queue ──────────────────────────────────────────────

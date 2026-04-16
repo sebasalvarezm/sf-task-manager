@@ -28,6 +28,7 @@ type RecommendedContact = {
   source: "salesforce" | "web_research";
   sfContactId?: string;
   unverified?: boolean;
+  previouslyContacted?: boolean;
 };
 
 type QueueItem = {
@@ -630,8 +631,8 @@ function OutreachPageContent() {
                             </h4>
                             {item.recommendedContacts.length === 0 ? (
                               <p className="text-sm text-gray-400 italic">
-                                No leadership contacts found in Salesforce, and
-                                web research returned no results.
+                                No contacts with email addresses found on this
+                                account in Salesforce.
                               </p>
                             ) : (
                               <div className="space-y-2">
@@ -668,6 +669,11 @@ function OutreachPageContent() {
                                         ) : (
                                           <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
                                             ⚠ Unverified — web research
+                                          </span>
+                                        )}
+                                        {c.previouslyContacted && (
+                                          <span className="text-[10px] text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+                                            previously contacted
                                           </span>
                                         )}
                                       </div>
