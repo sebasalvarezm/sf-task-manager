@@ -15,6 +15,7 @@ export type SfContact = {
 export type SfETask = {
   Id: string;
   Subject: string;
+  Description: string | null;
   SubjectType: string; // E1..E5
   ActivityDate: string | null;
   CompletedDateTime: string | null;
@@ -60,7 +61,7 @@ export async function fetchAccountsWithEHistory(): Promise<
 
   // Fetch all E1-E5 tasks with account + owner info in one query
   const query = encodeURIComponent(
-    `SELECT Id, Subject, Subject_Type__c, ActivityDate, CompletedDateTime, ` +
+    `SELECT Id, Subject, Description, Subject_Type__c, ActivityDate, CompletedDateTime, ` +
       `AccountId, Account.Name, Account.Website, Account.Responded__c, ` +
       `Account.LastActivityDate, Account.Owner.Name, ` +
       `WhoId, Who.Name, Who.Email, Status, Type ` +
@@ -90,6 +91,7 @@ export async function fetchAccountsWithEHistory(): Promise<
   type TaskRecord = {
     Id: string;
     Subject: string;
+    Description: string | null;
     Subject_Type__c: string;
     ActivityDate: string | null;
     CompletedDateTime: string | null;
@@ -183,6 +185,7 @@ export async function fetchAccountsWithEHistory(): Promise<
       Tasks: tasks.map((t) => ({
         Id: t.Id,
         Subject: t.Subject,
+        Description: t.Description,
         SubjectType: t.Subject_Type__c,
         ActivityDate: t.ActivityDate,
         CompletedDateTime: t.CompletedDateTime,

@@ -380,6 +380,55 @@ export async function getLastSequenceStateByProspect(
   return result;
 }
 
+// ── Mailing patching (best-effort) ───────────────────────────────────────────
+
+export async function tryPatchMailingSubject(
+  sequenceStateId: string,
+  subject: string
+): Promise<{ patched: boolean; mailingId?: string; reason?: string }> {
+  try {
+    // Find the first mailing for this sequenceState (the E1 step)
+    const findRes = await outreachFetch(
+      `/mailings?filter[sequenceState][id]=${sequenceStateId}&sort=createdAt&page[size]=1`
+    );
+    if (!findRes.ok) {
+      return { patched: false, reason: "Could not query mailings" };
+    }
+    const findBody = (await findRes.json()) as {
+      data?: Array<{ id: string }>;
+    };
+    const mailing = (findBody.data ?? [])[0];
+    if (!mailing) {
+      return {
+        patched: false,
+        reason: "No mailing created yet (paused sequences may not generate mailings until resumed)",
+      };
+    }
+
+    // Patch the subject
+    const patchRes = await outreachFetch(`/mailings/${mailing.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        data: {
+          type: "mailing",
+          id: mailing.id,
+          attributes: { subject },
+        },
+      }),
+    });
+    if (!patchRes.ok) {
+      const err = await patchRes.text();
+      return { patched: false, mailingId: mailing.id, reason: err };
+    }
+    return { patched: true, mailingId: mailing.id };
+  } catch (e: unknown) {
+    return {
+      patched: false,
+      reason: e instanceof Error ? e.message : "Unknown error",
+    };
+  }
+}
+
 // ── Sequence enrollment ──────────────────────────────────────────────────────
 
 export async function addProspectToSequence(params: {
@@ -392,6 +441,9 @@ export async function addProspectToSequence(params: {
     body: JSON.stringify({
       data: {
         type: "sequenceState",
+        attributes: {
+          state: "paused",
+        },
         relationships: {
           prospect: { data: { type: "prospect", id: params.prospectId } },
           sequence: { data: { type: "sequence", id: params.sequenceId } },

@@ -24,6 +24,11 @@ export type SequenceHistory = {
   endedAt: string | null;
   status: "complete" | "partial";
   stepsCompleted: number; // 0-5
+  firstE1: {
+    taskId: string;
+    subject: string;
+    description: string | null;
+  } | null;
 };
 
 export type RecommendedContact = {
@@ -132,6 +137,11 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
     const first = dated[0];
     const firstContact = groupTasks.find((t) => t.WhoName || t.WhoEmail);
 
+    // Capture the E1 task's Subject + Description (for carrying content into 2nd hit)
+    const e1Task = groupTasks.find(
+      (t) => t.SubjectType === "E1" && t.Status === "Completed"
+    );
+
     histories.push({
       contactId: whoId === "__unassigned__" ? null : whoId,
       contactName: firstContact?.WhoName ?? null,
@@ -140,6 +150,13 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
       endedAt: e5EndDate,
       status,
       stepsCompleted,
+      firstE1: e1Task
+        ? {
+            taskId: e1Task.Id,
+            subject: e1Task.Subject,
+            description: e1Task.Description,
+          }
+        : null,
     });
   }
 

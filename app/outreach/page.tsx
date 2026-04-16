@@ -13,6 +13,11 @@ type SequenceHistory = {
   endedAt: string | null;
   status: "complete" | "partial";
   stepsCompleted: number;
+  firstE1: {
+    taskId: string;
+    subject: string;
+    description: string | null;
+  } | null;
 };
 
 type RecommendedContact = {
@@ -45,7 +50,6 @@ type Sequence = { id: string; name: string; tags: string[] };
 type Mailbox = { id: string; email: string };
 
 type PushResult = {
-  sf: { ok: boolean; contactId?: string; created?: boolean; error?: string };
   outreach_prospect: {
     ok: boolean;
     prospectId?: string;
@@ -53,7 +57,24 @@ type PushResult = {
     error?: string;
   };
   sequence_state: { ok: boolean; id?: string; error?: string };
+  mailing_patch: { ok: boolean; patched?: boolean; error?: string };
 };
+
+const CDM_SEQUENCES = [
+  "[E] - Contractor",
+  "[E] - Structure Design/Analysis",
+  "[E] - Safety & Compliance",
+  "[E] - Bulk Materials",
+  "[E] - Mining",
+  "[E] - Waste",
+  "[E] - Equipment",
+  "[E] - Bulk Liquids",
+  "[D-E] - Carveout - Construction & Materials",
+  "[E] - Forest & Lumber",
+];
+
+type GroupName = "CDM" | "Manufacturing" | "Ag" | "Logistics";
+const GROUPS: GroupName[] = ["CDM", "Manufacturing", "Ag", "Logistics"];
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -93,6 +114,7 @@ function OutreachPageContent() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [sequences, setSequences] = useState<Sequence[]>([]);
   const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<GroupName>("CDM");
 
   // Per-account local UI state
   const [selectedContact, setSelectedContact] = useState<
@@ -211,13 +233,21 @@ function OutreachPageContent() {
     const contactIdx = selectedContact[item.accountId] ?? 0;
     const contact = item.recommendedContacts[contactIdx];
     const sequenceId = selectedSequence[item.accountId];
-    const mailboxId =
-      selectedMailbox[item.accountId] ?? mailboxes[0]?.id ?? "";
+    const sebMailbox = mailboxes.find(
+      (m) => m.email === "sebastian@valstonecorp.com"
+    );
+    const mailboxId = sebMailbox?.id ?? mailboxes[0]?.id ?? "";
 
     if (!contact || !sequenceId || !mailboxId) {
-      alert("Pick a contact, sequence, and mailbox first.");
+      alert("Pick a contact and sequence first.");
       return;
     }
+
+    // Find the first complete sequence's E1 subject for auto-fill
+    const firstCompleteSeq = item.sequenceHistory.find(
+      (h) => h.status === "complete"
+    );
+    const firstE1Subject = firstCompleteSeq?.firstE1?.subject ?? null;
 
     setPushingId(item.accountId);
     setPushResult({ ...pushResult, [item.accountId]: null });
@@ -227,7 +257,6 @@ function OutreachPageContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          accountId: item.accountId,
           accountName: item.accountName,
           contact: {
             firstName: contact.firstName,
@@ -237,6 +266,7 @@ function OutreachPageContent() {
           },
           sequenceId,
           mailboxId,
+          firstE1Subject,
         }),
       });
       const data = (await res.json()) as PushResult;
@@ -245,12 +275,12 @@ function OutreachPageContent() {
       setPushResult({
         ...pushResult,
         [item.accountId]: {
-          sf: {
+          outreach_prospect: {
             ok: false,
             error: e instanceof Error ? e.message : "Network error",
           },
-          outreach_prospect: { ok: false, error: "Not attempted" },
           sequence_state: { ok: false, error: "Not attempted" },
+          mailing_patch: { ok: false, error: "Not attempted" },
         },
       });
     }
@@ -652,9 +682,64 @@ function OutreachPageContent() {
                             )}
                           </div>
 
-                          {/* Sequence + mailbox picker */}
+                          {/* First Hit E1 Content (for 2nd-hit reference) */}
+                          {item.bucket === "DUE_2ND_HIT" &&
+                            (() => {
+                              const firstSeq = item.sequenceHistory.find(
+                                (h) => h.status === "complete"
+                              );
+                              return firstSeq?.firstE1 ? (
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                  <h4 className="text-xs font-semibold text-blue-700 uppercase mb-2">
+                                    First Hit E1 Content (for reference)
+                                  </h4>
+                                  <div className="space-y-2">
+                                    <div>
+                                      <span className="text-[10px] text-blue-600 uppercase font-semibold">
+                                        Subject:
+                                      </span>
+                                      <p className="text-sm text-gray-800 bg-white border border-blue-100 rounded px-3 py-1.5 mt-0.5 select-all">
+                                        {firstSeq.firstE1.subject}
+                                      </p>
+                                    </div>
+                                    {firstSeq.firstE1.description && (
+                                      <div>
+                                        <span className="text-[10px] text-blue-600 uppercase font-semibold">
+                                          Body:
+                                        </span>
+                                        <pre className="text-xs text-gray-700 bg-white border border-blue-100 rounded px-3 py-2 mt-0.5 whitespace-pre-wrap max-h-48 overflow-y-auto select-all">
+                                          {firstSeq.firstE1.description}
+                                        </pre>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : null;
+                            })()}
+
+                          {/* Group selector + Sequence picker */}
                           {item.recommendedContacts.length > 0 && (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="space-y-3">
+                              <div>
+                                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
+                                  Group
+                                </label>
+                                <div className="flex gap-2">
+                                  {GROUPS.map((g) => (
+                                    <button
+                                      key={g}
+                                      onClick={() => setSelectedGroup(g)}
+                                      className={`px-3 py-1 text-xs rounded-full font-medium transition-colors ${
+                                        selectedGroup === g
+                                          ? "bg-navy text-white"
+                                          : "bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
+                                      }`}
+                                    >
+                                      {g}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
                               <div>
                                 <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
                                   Outreach sequence
@@ -670,76 +755,73 @@ function OutreachPageContent() {
                                   className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:border-navy focus:outline-none"
                                 >
                                   <option value="">-- Pick a sequence --</option>
-                                  {sequences.map((s) => (
+                                  {(selectedGroup === "CDM"
+                                    ? sequences.filter((s) =>
+                                        CDM_SEQUENCES.includes(s.name)
+                                      )
+                                    : sequences.filter(
+                                        (s) =>
+                                          s.name.startsWith("[E] ") ||
+                                          s.name.startsWith("[D-E] ")
+                                      )
+                                  ).map((s) => (
                                     <option key={s.id} value={s.id}>
                                       {s.name}
                                     </option>
                                   ))}
                                 </select>
                               </div>
-                              <div>
-                                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                                  Send from (mailbox)
-                                </label>
-                                <select
-                                  value={mailboxId}
-                                  onChange={(e) =>
-                                    setSelectedMailbox({
-                                      ...selectedMailbox,
-                                      [item.accountId]: e.target.value,
-                                    })
-                                  }
-                                  className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:border-navy focus:outline-none"
-                                >
-                                  {mailboxes.length === 0 && (
-                                    <option value="">
-                                      -- No mailboxes loaded --
-                                    </option>
-                                  )}
-                                  {mailboxes.map((m) => (
-                                    <option key={m.id} value={m.id}>
-                                      {m.email}
-                                    </option>
-                                  ))}
-                                </select>
+                              <div className="text-xs text-gray-500">
+                                Sending from:{" "}
+                                <span className="font-medium text-gray-700">
+                                  sebastian@valstonecorp.com
+                                </span>
                               </div>
                             </div>
                           )}
 
-                          {/* Push button + result */}
+                          {/* Draft button + result */}
                           {item.recommendedContacts.length > 0 && (
-                            <div className="flex items-center gap-3">
-                              <button
-                                onClick={() => handlePush(item)}
-                                disabled={
-                                  pushingId === item.accountId ||
-                                  !sequenceId ||
-                                  !mailboxId
-                                }
-                                className="px-5 py-2 bg-navy hover:bg-navy-dark disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
-                              >
-                                {pushingId === item.accountId
-                                  ? "Pushing…"
-                                  : "Push to Salesforce + Outreach"}
-                              </button>
-                              {result && (
-                                <div className="flex items-center gap-3 text-xs">
-                                  <ResultPill
-                                    label="SF"
-                                    ok={result.sf.ok}
-                                    msg={result.sf.error}
-                                  />
-                                  <ResultPill
-                                    label="Outreach"
-                                    ok={result.outreach_prospect.ok}
-                                    msg={result.outreach_prospect.error}
-                                  />
-                                  <ResultPill
-                                    label="Sequence"
-                                    ok={result.sequence_state.ok}
-                                    msg={result.sequence_state.error}
-                                  />
-                                </div>
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3">
+                                <button
+                                  onClick={() => handlePush(item)}
+                                  disabled={
+                                    pushingId === item.accountId ||
+                                    !sequenceId
+                                  }
+                                  className="px-5 py-2 bg-navy hover:bg-navy-dark disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+                                >
+                                  {pushingId === item.accountId
+                                    ? "Creating draft…"
+                                    : "Create Draft in Outreach"}
+                                </button>
+                                {result && (
+                                  <div className="flex items-center gap-3 text-xs">
+                                    <ResultPill
+                                      label="Prospect"
+                                      ok={result.outreach_prospect.ok}
+                                      msg={result.outreach_prospect.error}
+                                    />
+                                    <ResultPill
+                                      label="Sequence"
+                                      ok={result.sequence_state.ok}
+                                      msg={result.sequence_state.error}
+                                    />
+                                    <ResultPill
+                                      label="Mailing"
+                                      ok={result.mailing_patch.ok}
+                                      msg={result.mailing_patch.error}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                              {result?.sequence_state.ok && (
+                                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                                  Draft created (paused) in Outreach. Go to
+                                  Outreach to review, edit, and resume when
+                                  ready.
+                                </p>
                               )}
                             </div>
                           )}
