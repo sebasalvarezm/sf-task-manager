@@ -4,7 +4,7 @@ import {
   findProspectByEmail,
   createProspect,
   addProspectToSequence,
-  tryPatchMailingSubject,
+  tryPatchMailing,
 } from "@/lib/outreach";
 
 // POST /api/outreach/push
@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
     sequenceId?: string;
     mailboxId?: string;
     firstE1Subject?: string | null;
+    firstE1Description?: string | null;
   };
 
   if (
@@ -120,13 +121,14 @@ export async function POST(request: NextRequest) {
     };
   }
 
-  // Step 3: Try to patch the first mailing's subject with the first-hit E1 subject
-  if (sequenceStateId && body.firstE1Subject) {
+  // Step 3: Try to patch the mailing's subject + body with the first-hit E1 content
+  if (sequenceStateId && (body.firstE1Subject || body.firstE1Description)) {
     try {
-      const patch = await tryPatchMailingSubject(
+      const patch = await tryPatchMailing({
         sequenceStateId,
-        body.firstE1Subject
-      );
+        subject: body.firstE1Subject ?? undefined,
+        bodyText: body.firstE1Description ?? undefined,
+      });
       result.mailing_patch = {
         ok: patch.patched,
         patched: patch.patched,
@@ -138,8 +140,8 @@ export async function POST(request: NextRequest) {
         error: e instanceof Error ? e.message : "Mailing patch error",
       };
     }
-  } else if (!body.firstE1Subject) {
-    result.mailing_patch = { ok: true, error: "No E1 subject to patch" };
+  } else {
+    result.mailing_patch = { ok: true, error: "No E1 content to patch" };
   }
 
   return NextResponse.json(result);

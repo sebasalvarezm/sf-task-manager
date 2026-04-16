@@ -243,11 +243,12 @@ function OutreachPageContent() {
       return;
     }
 
-    // Find the first complete sequence's E1 subject for auto-fill
+    // Find the first complete sequence's E1 content for auto-fill
     const firstCompleteSeq = item.sequenceHistory.find(
       (h) => h.status === "complete"
     );
     const firstE1Subject = firstCompleteSeq?.firstE1?.subject ?? null;
+    const firstE1Description = firstCompleteSeq?.firstE1?.description ?? null;
 
     setPushingId(item.accountId);
     setPushResult({ ...pushResult, [item.accountId]: null });
@@ -267,6 +268,7 @@ function OutreachPageContent() {
           sequenceId,
           mailboxId,
           firstE1Subject,
+          firstE1Description,
         }),
       });
       const data = (await res.json()) as PushResult;
@@ -793,8 +795,8 @@ function OutreachPageContent() {
                                   className="px-5 py-2 bg-navy hover:bg-navy-dark disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
                                 >
                                   {pushingId === item.accountId
-                                    ? "Creating draft…"
-                                    : "Create Draft in Outreach"}
+                                    ? "Sending to outbox…"
+                                    : "Send to Outreach Outbox"}
                                 </button>
                                 {result && (
                                   <div className="flex items-center gap-3 text-xs">
@@ -818,8 +820,8 @@ function OutreachPageContent() {
                               </div>
                               {result?.sequence_state.ok && (
                                 <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                                  Draft created (paused) in Outreach. Go to
-                                  Outreach to review, edit, and resume when
+                                  Email sent to your Outreach Outbox. Open
+                                  Outreach to review, edit, and send when
                                   ready.
                                 </p>
                               )}

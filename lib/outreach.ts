@@ -382,14 +382,15 @@ export async function getLastSequenceStateByProspect(
 
 // ── Mailing patching (best-effort) ───────────────────────────────────────────
 
-export async function tryPatchMailingSubject(
-  sequenceStateId: string,
-  subject: string
-): Promise<{ patched: boolean; mailingId?: string; reason?: string }> {
+export async function tryPatchMailing(params: {
+  sequenceStateId: string;
+  subject?: string;
+  bodyText?: string;
+}): Promise<{ patched: boolean; mailingId?: string; reason?: string }> {
   try {
     // Find the first mailing for this sequenceState (the E1 step)
     const findRes = await outreachFetch(
-      `/mailings?filter[sequenceState][id]=${sequenceStateId}&sort=createdAt&page[size]=1`
+      `/mailings?filter[sequenceState][id]=${params.sequenceStateId}&sort=createdAt&page[size]=1`
     );
     if (!findRes.ok) {
       return { patched: false, reason: "Could not query mailings" };
@@ -401,18 +402,32 @@ export async function tryPatchMailingSubject(
     if (!mailing) {
       return {
         patched: false,
-        reason: "No mailing created yet (paused sequences may not generate mailings until resumed)",
+        reason: "No mailing found for this enrollment",
       };
     }
 
-    // Patch the subject
+    // Build the attributes to patch
+    const attributes: Record<string, string> = {};
+    if (params.subject) attributes.subject = params.subject;
+    if (params.bodyText) {
+      // Convert plain text (from SF Task.Description) to basic HTML
+      attributes.bodyHtml = params.bodyText
+        .split(/\n\n+/)
+        .map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`)
+        .join("");
+    }
+
+    if (Object.keys(attributes).length === 0) {
+      return { patched: false, mailingId: mailing.id, reason: "Nothing to patch" };
+    }
+
     const patchRes = await outreachFetch(`/mailings/${mailing.id}`, {
       method: "PATCH",
       body: JSON.stringify({
         data: {
           type: "mailing",
           id: mailing.id,
-          attributes: { subject },
+          attributes,
         },
       }),
     });
@@ -441,9 +456,9 @@ export async function addProspectToSequence(params: {
     body: JSON.stringify({
       data: {
         type: "sequenceState",
-        attributes: {
-          state: "paused",
-        },
+        // No state attribute = defaults to "active".
+        // The email goes to the Outreach Email Outbox for manual
+        // review/edit/send — it does NOT auto-send.
         relationships: {
           prospect: { data: { type: "prospect", id: params.prospectId } },
           sequence: { data: { type: "sequence", id: params.sequenceId } },
