@@ -363,6 +363,16 @@ export async function buildQueue(): Promise<{
         return be - ae;
       })[0];
 
+    // Resolve the last-contacted email. Who.Email on SF tasks is often null,
+    // so cross-reference with the Contact records we already fetched.
+    let lastContactEmail = lastCompleted?.contactEmail ?? null;
+    if (!lastContactEmail && lastCompleted?.contactId) {
+      const match = sfContacts.find(
+        (c) => c.Id === lastCompleted.contactId
+      );
+      if (match?.Email) lastContactEmail = match.Email;
+    }
+
     items.push({
       accountId: account.Id,
       accountName: account.Name,
@@ -372,7 +382,7 @@ export async function buildQueue(): Promise<{
       lastContactHit: lastCompleted
         ? {
             name: lastCompleted.contactName,
-            email: lastCompleted.contactEmail,
+            email: lastContactEmail,
           }
         : null,
       sequenceHistory: histories,
