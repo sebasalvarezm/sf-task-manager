@@ -177,18 +177,31 @@ function classify(
   _account: SfAccountWithETasks,
   histories: SequenceHistory[]
 ): Bucket {
-  // If any contact has an in-progress sequence (partial, started in 2026),
-  // the account is already being worked — don't show it as due.
-  const hasInProgressSequence = histories.some(
-    (h) =>
-      h.status === "partial" &&
-      h.stepsCompleted > 0 &&
-      h.startedAt &&
-      new Date(h.startedAt).getUTCFullYear() === 2026
-  );
-  if (hasInProgressSequence) return "NOT_DUE";
-
   const completedSequences = histories.filter((h) => h.status === "complete");
+  const partialSequences = histories.filter(
+    (h) => h.status === "partial" && h.stepsCompleted > 0
+  );
+
+  // Check if any partial sequence started AFTER the most recent completed
+  // sequence ended. If yes, someone is already working the next hit — NOT_DUE.
+  // If no, the partial is stale (started before the last sequence ended,
+  // e.g., an abandoned attempt) and we can safely proceed.
+  if (completedSequences.length > 0 && partialSequences.length > 0) {
+    const lastCompletedEnd = completedSequences
+      .map((h) => h.endedAt)
+      .filter((d): d is string => !!d)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+
+    if (lastCompletedEnd) {
+      const hasNewerPartial = partialSequences.some(
+        (h) =>
+          h.startedAt &&
+          new Date(h.startedAt).getTime() >
+            new Date(lastCompletedEnd).getTime()
+      );
+      if (hasNewerPartial) return "NOT_DUE";
+    }
+  }
 
   if (completedSequences.length === 1) {
     // One full E1-E5 done; due for the 2nd back-to-back hit
