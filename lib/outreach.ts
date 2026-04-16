@@ -388,21 +388,30 @@ export async function tryPatchMailing(params: {
   bodyText?: string;
 }): Promise<{ patched: boolean; mailingId?: string; reason?: string }> {
   try {
-    // Find the first mailing for this sequenceState (the E1 step)
-    const findRes = await outreachFetch(
-      `/mailings?filter[sequenceState][id]=${params.sequenceStateId}&sort=createdAt&page[size]=1`
-    );
-    if (!findRes.ok) {
-      return { patched: false, reason: "Could not query mailings" };
+    // Find the first mailing for this sequenceState (the E1 step).
+    // Outreach may not create the mailing instantly, so retry a few times.
+    let mailing: { id: string } | null = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, 1500)); // wait 1.5s between retries
+      }
+      const findRes = await outreachFetch(
+        `/mailings?filter[sequenceState][id]=${params.sequenceStateId}&sort=createdAt&page[size]=1`
+      );
+      if (!findRes.ok) continue;
+      const findBody = (await findRes.json()) as {
+        data?: Array<{ id: string }>;
+      };
+      const found = (findBody.data ?? [])[0];
+      if (found) {
+        mailing = found;
+        break;
+      }
     }
-    const findBody = (await findRes.json()) as {
-      data?: Array<{ id: string }>;
-    };
-    const mailing = (findBody.data ?? [])[0];
     if (!mailing) {
       return {
         patched: false,
-        reason: "No mailing found for this enrollment",
+        reason: "Mailing not yet created by Outreach after 4 attempts (~6s). Edit manually in Outreach.",
       };
     }
 

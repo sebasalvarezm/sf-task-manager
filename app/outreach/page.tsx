@@ -706,7 +706,7 @@ function OutreachPageContent() {
                                       <span className="text-[10px] text-blue-600 uppercase font-semibold">
                                         Subject:
                                       </span>
-                                      <p className="text-sm text-gray-800 bg-white border border-blue-100 rounded px-3 py-1.5 mt-0.5 select-all">
+                                      <p className="text-sm text-gray-800 bg-white border border-blue-100 rounded px-3 py-1.5 mt-0.5 select-text">
                                         {firstSeq.firstE1.subject}
                                       </p>
                                     </div>
@@ -715,7 +715,7 @@ function OutreachPageContent() {
                                         <span className="text-[10px] text-blue-600 uppercase font-semibold">
                                           Body:
                                         </span>
-                                        <pre className="text-xs text-gray-700 bg-white border border-blue-100 rounded px-3 py-2 mt-0.5 whitespace-pre-wrap max-h-48 overflow-y-auto select-all">
+                                        <pre className="text-xs text-gray-700 bg-white border border-blue-100 rounded px-3 py-2 mt-0.5 whitespace-pre-wrap max-h-48 overflow-y-auto select-text">
                                           {firstSeq.firstE1.description}
                                         </pre>
                                       </div>
