@@ -122,10 +122,10 @@ export async function POST(request: NextRequest) {
   }
 
   // Step 3: Try to patch the mailing's subject + body with the first-hit E1 content
-  if (sequenceStateId && (body.firstE1Subject || body.firstE1Description)) {
+  if (prospectId && (body.firstE1Subject || body.firstE1Description)) {
     try {
       const patch = await tryPatchMailing({
-        sequenceStateId,
+        prospectId,
         subject: body.firstE1Subject ?? undefined,
         bodyText: body.firstE1Description ?? undefined,
       });

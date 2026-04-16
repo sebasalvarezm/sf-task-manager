@@ -383,22 +383,29 @@ export async function getLastSequenceStateByProspect(
 // ── Mailing patching (best-effort) ───────────────────────────────────────────
 
 export async function tryPatchMailing(params: {
-  sequenceStateId: string;
+  prospectId: string;
   subject?: string;
   bodyText?: string;
 }): Promise<{ patched: boolean; mailingId?: string; reason?: string }> {
   try {
-    // Find the first mailing for this sequenceState (the E1 step).
+    // Find the most recent mailing for this prospect (the E1 we just created).
+    // Filter by prospect ID + sort by -createdAt to get the newest mailing.
     // Outreach may not create the mailing instantly, so retry a few times.
     let mailing: { id: string } | null = null;
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       if (attempt > 0) {
-        await new Promise((r) => setTimeout(r, 1500)); // wait 1.5s between retries
+        await new Promise((r) => setTimeout(r, 2000)); // wait 2s between retries
       }
       const findRes = await outreachFetch(
-        `/mailings?filter[sequenceState][id]=${params.sequenceStateId}&sort=createdAt&page[size]=1`
+        `/mailings?filter[prospect][id]=${params.prospectId}&sort=-createdAt&page[size]=1`
       );
-      if (!findRes.ok) continue;
+      if (!findRes.ok) {
+        const errText = await findRes.text();
+        if (attempt === 4) {
+          return { patched: false, reason: `Query failed: ${errText.slice(0, 200)}` };
+        }
+        continue;
+      }
       const findBody = (await findRes.json()) as {
         data?: Array<{ id: string }>;
       };
@@ -411,7 +418,7 @@ export async function tryPatchMailing(params: {
     if (!mailing) {
       return {
         patched: false,
-        reason: "Mailing not yet created by Outreach after 4 attempts (~6s). Edit manually in Outreach.",
+        reason: "Mailing not yet created by Outreach after 5 attempts (~10s). Edit manually in Outreach.",
       };
     }
 
