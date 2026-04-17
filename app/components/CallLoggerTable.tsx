@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import React, { useRef, useState, useCallback } from "react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +36,7 @@ export type CallEntry = {
   commentary: string;
   followUpDays: number | null;
   selectedAccountIdx: number; // index into allMatches
+  notes: string; // Granola meeting notes
 };
 
 // ── Shortcode parser for follow-up column ─────────────────────────────────────
@@ -89,6 +90,9 @@ export default function CallLoggerTable({
   const [typeRawValues, setTypeRawValues] = useState<Map<string, string>>(new Map());
   const [followUpRawValues, setFollowUpRawValues] = useState<Map<string, string>>(new Map());
 
+  // Notes panel state — tracks which rows have the notes text area open
+  const [notesOpen, setNotesOpen] = useState<Set<string>>(new Set());
+
   // Account search state
   const [searchInputs, setSearchInputs] = useState<Map<string, string>>(new Map());
   const [searchResults, setSearchResults] = useState<Map<string, Array<{ accountId: string; accountName: string; accountUrl: string }>>>(new Map());
@@ -104,6 +108,7 @@ export default function CallLoggerTable({
         commentary: "",
         followUpDays: null,
         selectedAccountIdx: 0,
+        notes: "",
       }
     );
   }
@@ -190,6 +195,20 @@ export default function CallLoggerTable({
   function handleAccountSelect(eventId: string, idx: number) {
     const prev = getEntry(eventId);
     onEntryChange(eventId, { ...prev, eventId, selectedAccountIdx: idx });
+  }
+
+  function handleNotesChange(eventId: string, value: string) {
+    const prev = getEntry(eventId);
+    onEntryChange(eventId, { ...prev, eventId, notes: value });
+  }
+
+  function toggleNotes(eventId: string) {
+    setNotesOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
   }
 
   // ── Account search handler ────────────────────────────────────────────────
@@ -381,8 +400,8 @@ export default function CallLoggerTable({
                 : "bg-gray-50/50";
 
             return (
+              <React.Fragment key={meeting.eventId}>
               <tr
-                key={meeting.eventId}
                 className={rowBg}
               >
                 {/* Row number + dismiss button */}
@@ -400,16 +419,37 @@ export default function CallLoggerTable({
                   </button>
                 </td>
 
-                {/* Meeting Title — col 1 */}
+                {/* Meeting Title + Notes button — col 1 */}
                 <td
                   tabIndex={0}
                   onClick={() => setActiveCell({ row: rowIdx, col: 1 })}
                   onFocus={() => setActiveCell({ row: rowIdx, col: 1 })}
                   className={`${cellBase} cursor-default ${isCellActive(rowIdx, 1) ? cellActive : ""}`}
                 >
-                  <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-gray-400" : "text-navy"}`}>
-                    {meeting.subject}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-gray-400" : "text-navy"}`}>
+                      {meeting.subject}
+                    </span>
+                    {hasMatch && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleNotes(meeting.eventId);
+                        }}
+                        className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                          notesOpen.has(meeting.eventId)
+                            ? "bg-brand-orange text-white"
+                            : entry.notes
+                              ? "bg-orange-100 text-brand-orange border border-orange-300"
+                              : "bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                        }`}
+                        title={notesOpen.has(meeting.eventId) ? "Hide notes" : entry.notes ? "Edit notes" : "Add Granola notes"}
+                        tabIndex={-1}
+                      >
+                        {entry.notes ? "✎ Notes" : "+ Notes"}
+                      </button>
+                    )}
+                  </div>
                 </td>
 
                 {/* Account Name — col 2 */}
@@ -659,7 +699,36 @@ export default function CallLoggerTable({
                     {renderFollowUpBadge(entry.followUpDays)}
                   </div>
                 </td>
+
               </tr>
+              {/* Expandable notes row */}
+              {notesOpen.has(meeting.eventId) && hasMatch && (
+                <tr className={rowBg}>
+                  <td />
+                  <td colSpan={7} className="pb-3 pt-0 px-2">
+                    <div className="border border-orange-200 rounded-lg bg-orange-50/50 p-3">
+                      <label className="text-xs font-medium text-gray-500 mb-1.5 block">
+                        Granola Meeting Notes — will be saved as &quot;{entry.callType || "C1/RCC"} Notes&quot; in Salesforce
+                      </label>
+                      <textarea
+                        value={entry.notes}
+                        onChange={(e) => handleNotesChange(meeting.eventId, e.target.value)}
+                        placeholder="Paste your Granola meeting notes here..."
+                        rows={6}
+                        className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white resize-y"
+                      />
+                      {entry.notes && (
+                        <div className="flex justify-end mt-1.5">
+                          <span className="text-xs text-gray-400">
+                            {entry.notes.length} characters
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
             );
           })}
         </tbody>

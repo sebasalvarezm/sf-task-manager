@@ -210,3 +210,70 @@ export async function createFollowUpTask(params: {
   const result = await response.json();
   return result.id;
 }
+
+// ── Create a ContentNote linked to an Account ─────────────────────────────────
+
+export async function createAccountNote(params: {
+  accountId: string;
+  title: string; // e.g. "C1 Notes" or "RCC Notes"
+  content: string; // plain text content (Granola meeting notes)
+}): Promise<string> {
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("NOT_CONNECTED");
+
+  // Step 1: Create the ContentNote
+  // Salesforce ContentNote expects the Content field as base64-encoded HTML
+  const htmlContent = params.content
+    .split("\n")
+    .map((line) => `<p>${line || "&nbsp;"}</p>`)
+    .join("");
+  const base64Content = Buffer.from(htmlContent).toString("base64");
+
+  const noteResponse = await fetch(
+    `${credentials.instance_url}/services/data/v62.0/sobjects/ContentNote`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        Title: params.title,
+        Content: base64Content,
+      }),
+    }
+  );
+
+  if (!noteResponse.ok) {
+    const err = await noteResponse.text();
+    throw new Error(`Failed to create note: ${err}`);
+  }
+
+  const noteResult = await noteResponse.json();
+  const contentDocumentId = noteResult.id;
+
+  // Step 2: Link the note to the Account via ContentDocumentLink
+  const linkResponse = await fetch(
+    `${credentials.instance_url}/services/data/v62.0/sobjects/ContentDocumentLink`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ContentDocumentId: contentDocumentId,
+        LinkedEntityId: params.accountId,
+        ShareType: "V", // Viewer access
+        Visibility: "AllUsers",
+      }),
+    }
+  );
+
+  if (!linkResponse.ok) {
+    const err = await linkResponse.text();
+    throw new Error(`Failed to link note to account: ${err}`);
+  }
+
+  return contentDocumentId;
+}

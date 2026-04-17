@@ -3,6 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import {
   createCompletedCallTask,
   createFollowUpTask,
+  createAccountNote,
 } from "@/lib/salesforce-calls";
 
 export type CallLogEntry = {
@@ -12,6 +13,7 @@ export type CallLogEntry = {
   commentary: string;
   meetingDate: string; // ISO date
   followUpDays: number | null; // e.g. 14 for RCE14, null for no follow-up
+  notes: string; // Granola meeting notes (optional, can be empty)
 };
 
 export type CallLogResult = {
@@ -20,6 +22,7 @@ export type CallLogResult = {
   success: boolean;
   error?: string;
   followUpCreated: boolean;
+  noteCreated: boolean;
 };
 
 export async function POST(request: NextRequest) {
@@ -74,11 +77,23 @@ export async function POST(request: NextRequest) {
         followUpCreated = true;
       }
 
+      // Step 3: Create Salesforce note if Granola notes were provided
+      let noteCreated = false;
+      if (entry.notes && entry.notes.trim()) {
+        await createAccountNote({
+          accountId: entry.accountId,
+          title: `${entry.callType} Notes`,
+          content: entry.notes.trim(),
+        });
+        noteCreated = true;
+      }
+
       results.push({
         accountName: entry.accountName,
         callType: entry.callType,
         success: true,
         followUpCreated,
+        noteCreated,
       });
       successCount++;
     } catch (err) {
@@ -89,6 +104,7 @@ export async function POST(request: NextRequest) {
         success: false,
         error: message,
         followUpCreated: false,
+        noteCreated: false,
       });
       failCount++;
     }

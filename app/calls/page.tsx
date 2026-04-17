@@ -25,6 +25,7 @@ type SubmitResult = {
     success: boolean;
     error?: string;
     followUpCreated: boolean;
+    noteCreated: boolean;
   }>;
 };
 
@@ -207,6 +208,7 @@ function CallsPageContent() {
       commentary: string;
       meetingDate: string;
       followUpDays: number | null;
+      notes: string;
     }> = [];
 
     for (const meeting of meetings) {
@@ -230,6 +232,7 @@ function CallsPageContent() {
         commentary: entry.commentary,
         meetingDate: meeting.meetingDate,
         followUpDays: entry.followUpDays,
+        notes: entry.notes ?? "",
       });
     }
 
@@ -272,6 +275,7 @@ function CallsPageContent() {
           success: false,
           error: "Network error",
           followUpCreated: false,
+          noteCreated: false,
         })),
       });
     } finally {
@@ -512,20 +516,25 @@ function CallsPageContent() {
                     {submitResult.successCount} call
                     {submitResult.successCount !== 1 ? "s" : ""} logged
                     successfully to Salesforce.{" "}
-                    {submitResult.results.filter((r) => r.followUpCreated)
-                      .length > 0 && (
+                    {(submitResult.results.filter((r) => r.followUpCreated).length > 0 ||
+                      submitResult.results.filter((r) => r.noteCreated).length > 0) && (
                       <span>
                         (
-                        {
-                          submitResult.results.filter((r) => r.followUpCreated)
-                            .length
-                        }{" "}
-                        follow-up task
-                        {submitResult.results.filter((r) => r.followUpCreated)
-                          .length !== 1
-                          ? "s"
-                          : ""}{" "}
-                        created)
+                        {submitResult.results.filter((r) => r.followUpCreated).length > 0 && (
+                          <span>
+                            {submitResult.results.filter((r) => r.followUpCreated).length}{" "}
+                            follow-up task{submitResult.results.filter((r) => r.followUpCreated).length !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                        {submitResult.results.filter((r) => r.followUpCreated).length > 0 &&
+                          submitResult.results.filter((r) => r.noteCreated).length > 0 && ", "}
+                        {submitResult.results.filter((r) => r.noteCreated).length > 0 && (
+                          <span>
+                            {submitResult.results.filter((r) => r.noteCreated).length}{" "}
+                            note{submitResult.results.filter((r) => r.noteCreated).length !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                        {" "}created)
                       </span>
                     )}
                   </span>
