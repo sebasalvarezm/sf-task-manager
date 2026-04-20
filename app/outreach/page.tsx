@@ -355,9 +355,20 @@ function OutreachPageContent() {
               </span>
             )}
             {outreachConnected ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                Outreach connected
+              <span className="inline-flex items-center gap-1.5 text-xs">
+                <span className="inline-flex items-center gap-1.5 text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Outreach connected
+                </span>
+                <button
+                  onClick={async () => {
+                    await fetch("/api/outreach/status", { method: "DELETE" });
+                    setOutreachConnected(false);
+                  }}
+                  className="text-gray-400 hover:text-red-500 underline text-[10px]"
+                >
+                  Disconnect
+                </button>
               </span>
             ) : (
               <a
