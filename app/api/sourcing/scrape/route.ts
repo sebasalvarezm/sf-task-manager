@@ -112,7 +112,8 @@ export async function POST(request: NextRequest) {
     const portfolioMatch = await matchGroup(anthropic, currentText, groups);
 
     if (portfolioMatch.matched) {
-      logs.push(`Best match: ${portfolioMatch.group}`);
+      const conf = portfolioMatch.confidence != null ? ` (${portfolioMatch.confidence}% confidence)` : "";
+      logs.push(`Best match: ${portfolioMatch.group}${conf}`);
     } else {
       logs.push("No portfolio group is a strong fit for this company.");
     }

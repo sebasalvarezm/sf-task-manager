@@ -872,9 +872,9 @@ export async function matchGroup(
   client: Anthropic,
   currentText: string,
   groups: Record<string, string>
-): Promise<{ matched: boolean; group: string | null }> {
+): Promise<{ matched: boolean; group: string | null; confidence: number | null }> {
   if (Object.keys(groups).length === 0) {
-    return { matched: false, group: null };
+    return { matched: false, group: null, confidence: null };
   }
 
   const summaries = Object.entries(groups)
@@ -895,24 +895,40 @@ ${currentText.slice(0, 8000)}
 GROUP FILES:
 ${summaries}
 
-If the company is a clear fit for one of the groups, return only the exact filename (e.g. mining.md).
-If none of the groups are a reasonable fit, return exactly: NO_MATCH
-No explanation.`,
+Return a JSON object (no markdown) with this format:
+{"file":"mining.md","confidence":85}
+
+- "file" is the exact filename of the best-matching group, or "NO_MATCH" if none fit.
+- "confidence" is a number from 0-100 representing how confident you are in the match.
+  90+ = very clear fit, 70-89 = reasonable fit, 50-69 = borderline, <50 = weak.`,
       },
     ],
   });
 
-  const raw = resp.content[0].text.trim().replace(/['"]/g, "");
+  const raw = resp.content[0].text.trim();
 
-  if (raw.toUpperCase() === "NO_MATCH") {
-    return { matched: false, group: null };
+  // Parse JSON response
+  try {
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+    const parsed = JSON.parse(cleaned) as { file: string; confidence: number };
+
+    if (!parsed.file || parsed.file.toUpperCase() === "NO_MATCH") {
+      return { matched: false, group: null, confidence: parsed.confidence ?? null };
+    }
+
+    const resolvedFile = resolveMatchedFile(parsed.file, groups);
+    const groupName = displayName(resolvedFile);
+    return { matched: true, group: groupName, confidence: parsed.confidence ?? null };
+  } catch {
+    // Fallback: try to parse as plain text (backward compat)
+    const text = raw.replace(/['"]/g, "");
+    if (text.toUpperCase() === "NO_MATCH") {
+      return { matched: false, group: null, confidence: null };
+    }
+    const resolvedFile = resolveMatchedFile(text, groups);
+    const groupName = displayName(resolvedFile);
+    return { matched: true, group: groupName, confidence: null };
   }
-
-  // Resolve the matched filename
-  const resolvedFile = resolveMatchedFile(raw, groups);
-  const groupName = displayName(resolvedFile);
-
-  return { matched: true, group: groupName };
 }
 
 function resolveMatchedFile(

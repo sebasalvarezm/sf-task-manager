@@ -10,6 +10,10 @@ export default function LandingPage() {
   const [outreachConnected, setOutreachConnected] = useState<boolean | null>(
     null
   );
+  const [dashSummary, setDashSummary] = useState<{
+    overdueTasks: number | null;
+    dueOutreach: number | null;
+  } | null>(null);
 
   useEffect(() => {
     checkConnections();
@@ -38,6 +42,17 @@ export default function LandingPage() {
       setSfConnected(false);
       setMsConnected(false);
       setOutreachConnected(false);
+    }
+
+    // Load dashboard summary (non-blocking)
+    try {
+      const sumRes = await fetch("/api/dashboard/summary");
+      if (sumRes.ok) {
+        const sumData = await sumRes.json();
+        setDashSummary(sumData);
+      }
+    } catch {
+      // Non-fatal
     }
   }
 
@@ -75,6 +90,42 @@ export default function LandingPage() {
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="flex-1 flex items-center justify-center px-8 py-16">
         <div className="max-w-7xl w-full">
+          {/* Morning dashboard summary */}
+          {dashSummary && (
+            <div className="flex flex-wrap justify-center gap-4 mb-8">
+              {dashSummary.overdueTasks != null && dashSummary.overdueTasks > 0 && (
+                <a
+                  href="/tasks"
+                  className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-full px-4 py-2 hover:bg-red-100 transition-colors"
+                >
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-sm font-medium text-red-700">
+                    {dashSummary.overdueTasks} overdue task{dashSummary.overdueTasks !== 1 ? "s" : ""}
+                  </span>
+                </a>
+              )}
+              {dashSummary.dueOutreach != null && dashSummary.dueOutreach > 0 && (
+                <a
+                  href="/outreach"
+                  className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-full px-4 py-2 hover:bg-orange-100 transition-colors"
+                >
+                  <span className="w-2 h-2 rounded-full bg-brand-orange" />
+                  <span className="text-sm font-medium text-amber-700">
+                    {dashSummary.dueOutreach} account{dashSummary.dueOutreach !== 1 ? "s" : ""} due for outreach
+                  </span>
+                </a>
+              )}
+              {dashSummary.overdueTasks === 0 && dashSummary.dueOutreach === 0 && (
+                <span className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-full px-4 py-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  <span className="text-sm font-medium text-green-700">
+                    All clear — nothing overdue
+                  </span>
+                </span>
+              )}
+            </div>
+          )}
+
           <h1 className="text-2xl font-semibold text-navy text-center mb-2">
             What would you like to do?
           </h1>

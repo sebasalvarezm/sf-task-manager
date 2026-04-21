@@ -75,16 +75,65 @@ export async function POST(request: NextRequest) {
       logs.push("Skipping restaurant search \u2014 no address found.");
     }
 
+    // Identify competitors (runs in parallel with restaurants, doesn't depend on address)
+    logs.push("Identifying key competitors...");
+    let competitors: { name: string; differentiator: string }[] = [];
+    try {
+      competitors = await identifyCompetitors(anthropic, currentText, products);
+      if (competitors.length > 0) {
+        logs.push(`Found ${competitors.length} competitor(s): ${competitors.map((c) => c.name).join(", ")}`);
+      } else {
+        logs.push("Could not identify specific competitors.");
+      }
+    } catch {
+      logs.push("Competitor analysis failed — continuing.");
+    }
+
     return NextResponse.json({
       address,
       restaurants,
       outreachParagraph,
+      competitors,
       logs,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: message, logs }, { status: 500 });
   }
+}
+
+async function identifyCompetitors(
+  client: Anthropic,
+  currentText: string,
+  products: string[]
+): Promise<{ name: string; differentiator: string }[]> {
+  const productList = products.length > 0 ? products.join(", ") : "unknown";
+
+  const resp = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 500,
+    messages: [
+      {
+        role: "user",
+        content: `Based on this company's website content, identify 2-3 key competitors or similar companies in their space.
+
+COMPANY WEBSITE (excerpt):
+${currentText.slice(0, 4000)}
+
+PRODUCTS/SERVICES: ${productList}
+
+Return a JSON array only (no markdown, no explanation):
+[{"name":"Competitor Name","differentiator":"One sentence on how they differ or compete"}]
+
+If you can't identify competitors with reasonable confidence, return [].`,
+      },
+    ],
+  });
+
+  const text = resp.content[0].type === "text" ? resp.content[0].text : "";
+  const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const parsed = JSON.parse(cleaned) as { name: string; differentiator: string }[];
+  return (parsed ?? []).slice(0, 3);
 }
 
 async function generateOutreach(

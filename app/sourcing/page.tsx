@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 // Types
 // ---------------------------------------------------------------------------
 
-type PortfolioMatch = { matched: boolean; group: string | null };
+type PortfolioMatch = { matched: boolean; group: string | null; confidence: number | null };
 
 type ScrapeResult = {
   currentText: string;
@@ -31,6 +31,7 @@ type DetailsResult = {
   address: string | null;
   restaurants: { name: string; description: string }[];
   outreachParagraph: string | null;
+  competitors: { name: string; differentiator: string }[];
   logs?: string[];
 };
 
@@ -100,8 +101,7 @@ function getCachedResult(domain: string): CachedResult | null {
 
 const STEPS = [
   { key: "scraping", label: "Scraping website & extracting products" },
-  { key: "history", label: "Searching Wayback Machine for history" },
-  { key: "details", label: "Finding address & generating outreach" },
+  { key: "history", label: "History + address + outreach (in parallel)" },
 ];
 
 function StepProgress({ status }: { status: string }) {
@@ -315,50 +315,57 @@ export default function SourcingPage() {
       return;
     }
 
-    // --- Step 2: History ---
+    // --- Steps 2 + 3: History + Details IN PARALLEL ---
+    // Both depend on scrape but not each other. Running in parallel
+    // saves ~15-20 seconds vs. sequential.
     updateResult(index, { status: "history" });
-    try {
-      const res = await fetch("/api/sourcing/history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: normalized,
-          foundingYear: (latestScrape as ScrapeResult).foundingYear,
-          currentProducts: (latestScrape as ScrapeResult).products,
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
-      const data = await res.json();
-      if (data.logs) appendLogs(index, data.logs);
-      if (res.ok) {
-        updateResult(index, { history: data });
-      }
-    } catch {
-      // Non-critical — continue without history
-    }
 
-    // --- Step 3: Details ---
-    updateResult(index, { status: "details" });
-    try {
-      const res = await fetch("/api/sourcing/details", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: normalized,
-          currentText: (latestScrape as ScrapeResult).currentText,
-          products: (latestScrape as ScrapeResult).products,
-          portfolioGroup: (latestScrape as ScrapeResult).portfolioMatch.group,
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
-      const data = await res.json();
-      if (data.logs) appendLogs(index, data.logs);
-      if (res.ok) {
-        updateResult(index, { details: data });
+    const historyPromise = (async () => {
+      try {
+        const res = await fetch("/api/sourcing/history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: normalized,
+            foundingYear: (latestScrape as ScrapeResult).foundingYear,
+            currentProducts: (latestScrape as ScrapeResult).products,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const data = await res.json();
+        if (data.logs) appendLogs(index, data.logs);
+        if (res.ok) {
+          updateResult(index, { history: data });
+        }
+      } catch {
+        // Non-critical — continue without history
       }
-    } catch {
-      // Non-critical — continue without details
-    }
+    })();
+
+    const detailsPromise = (async () => {
+      try {
+        const res = await fetch("/api/sourcing/details", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: normalized,
+            currentText: (latestScrape as ScrapeResult).currentText,
+            products: (latestScrape as ScrapeResult).products,
+            portfolioGroup: (latestScrape as ScrapeResult).portfolioMatch.group,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const data = await res.json();
+        if (data.logs) appendLogs(index, data.logs);
+        if (res.ok) {
+          updateResult(index, { details: data });
+        }
+      } catch {
+        // Non-critical — continue without details
+      }
+    })();
+
+    await Promise.all([historyPromise, detailsPromise]);
 
     // Mark as done and cache
     updateResult(index, { status: "done" });
@@ -661,9 +668,24 @@ export default function SourcingPage() {
                         Portfolio Group
                       </h3>
                       {currentResults.scrape.portfolioMatch.matched ? (
-                        <p className="text-xl font-bold text-[#1B2A4A]">
-                          {currentResults.scrape.portfolioMatch.group}
-                        </p>
+                        <div className="flex items-baseline gap-3">
+                          <p className="text-xl font-bold text-[#1B2A4A]">
+                            {currentResults.scrape.portfolioMatch.group}
+                          </p>
+                          {currentResults.scrape.portfolioMatch.confidence != null && (
+                            <span
+                              className={`text-sm font-semibold px-2 py-0.5 rounded-full ${
+                                currentResults.scrape.portfolioMatch.confidence >= 90
+                                  ? "bg-green-50 text-green-700 border border-green-200"
+                                  : currentResults.scrape.portfolioMatch.confidence >= 70
+                                  ? "bg-blue-50 text-blue-700 border border-blue-200"
+                                  : "bg-amber-50 text-amber-700 border border-amber-200"
+                              }`}
+                            >
+                              {currentResults.scrape.portfolioMatch.confidence}% match
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                           <p className="text-sm text-amber-700">
@@ -813,6 +835,31 @@ export default function SourcingPage() {
                             : "No outreach paragraph — no portfolio group match."}
                         </p>
                       ) : null}
+                    </div>
+                  </div>
+                )}
+
+                {/* Competitor Landscape */}
+                {currentResults.details?.competitors && currentResults.details.competitors.length > 0 && (
+                  <div className="mb-6">
+                    <h3 className="text-xs font-semibold text-[#1B2A4A] uppercase tracking-wide mb-3 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#E84C0E]" />
+                      Competitor Landscape
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {currentResults.details.competitors.map((c, i) => (
+                        <div
+                          key={i}
+                          className="bg-white rounded-2xl border border-gray-200 shadow-md p-5"
+                        >
+                          <h4 className="text-base font-bold text-[#1B2A4A] mb-1">
+                            {c.name}
+                          </h4>
+                          <p className="text-sm text-gray-600 leading-relaxed">
+                            {c.differentiator}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
