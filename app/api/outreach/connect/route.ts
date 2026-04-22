@@ -23,7 +23,7 @@ export async function GET() {
     response_type: "code",
     redirect_uri: callbackUrl,
     scope:
-      "accounts.all prospects.all sequences.read sequenceStates.all mailboxes.read users.read",
+      "accounts.all prospects.all sequences.read sequenceStates.all mailboxes.read mailings.all users.read",
   });
 
   const authUrl = `https://api.outreach.io/oauth/authorize?${params.toString()}`;
