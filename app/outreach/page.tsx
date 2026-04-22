@@ -35,6 +35,7 @@ type QueueItem = {
   accountId: string;
   accountName: string;
   website: string | null;
+  employees: number | null;
   bucket: "DUE_2ND_HIT" | "DUE_RESTART";
   lastSequenceEndDate: string | null;
   lastContactHit: { name: string | null; email: string | null } | null;
@@ -131,6 +132,9 @@ function OutreachPageContent() {
   const [pushResult, setPushResult] = useState<
     Record<string, PushResult | null>
   >({});
+  const [contactsOpen, setContactsOpen] = useState<Record<string, boolean>>(
+    {}
+  );
 
   // ── Clean redirect params ──────────────────────────────────────────────
 
@@ -495,10 +499,26 @@ function OutreachPageContent() {
                       >
                         <div className="flex items-center justify-between gap-4">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-3 mb-1 flex-wrap">
+                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                               <h3 className="text-base font-semibold text-navy truncate">
                                 {item.accountName}
                               </h3>
+                              {item.employees != null && (
+                                <span className="text-[10px] text-gray-500 bg-gray-100 border border-gray-200 rounded-full px-2 py-0.5">
+                                  {item.employees} employees
+                                </span>
+                              )}
+                              {sfInstanceUrl && (
+                                <a
+                                  href={`${sfInstanceUrl}/${item.accountId}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[10px] text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-full px-2 py-0.5 whitespace-nowrap"
+                                >
+                                  Salesforce ↗
+                                </a>
+                              )}
                               {item.website && (
                                 <a
                                   href={
@@ -509,52 +529,50 @@ function OutreachPageContent() {
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
-                                  className="text-xs text-gray-400 hover:text-navy truncate"
+                                  className="text-[10px] text-gray-400 hover:text-navy truncate"
                                 >
-                                  {item.website}
-                                </a>
-                              )}
-                              {sfInstanceUrl && (
-                                <a
-                                  href={`${sfInstanceUrl}/${item.accountId}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="text-[10px] text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-full px-2 py-0.5 whitespace-nowrap"
-                                >
-                                  View in Salesforce ↗
+                                  {item.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
                                 </a>
                               )}
                             </div>
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
                               <span>
-                                Last seq ended:{" "}
-                                <span className="text-gray-700">
+                                Ended:{" "}
+                                <span className="text-gray-700 font-medium">
                                   {fmtDate(item.lastSequenceEndDate)}
                                 </span>
                               </span>
+                              <span className="text-gray-300">|</span>
                               <span>
                                 Last hit:{" "}
                                 <span className="text-gray-700">
                                   {item.lastContactHit?.name ?? "—"}
                                 </span>
                               </span>
-                              <span>
-                                Last sequence:{" "}
-                                <span className="text-gray-700">
-                                  {item.lastSequenceUsed?.sequenceName ?? "—"}
-                                </span>
-                              </span>
-                              {topPick && (
-                                <span>
-                                  Suggested next:{" "}
-                                  <span className="text-navy font-medium">
-                                    {topPick.firstName} {topPick.lastName}
-                                  </span>{" "}
-                                  <span className="text-gray-400">
-                                    ({topPick.title})
+                              {item.lastSequenceUsed && (
+                                <>
+                                  <span className="text-gray-300">|</span>
+                                  <span>
+                                    Seq:{" "}
+                                    <span className="text-gray-700">
+                                      {item.lastSequenceUsed.sequenceName}
+                                    </span>
                                   </span>
-                                </span>
+                                </>
+                              )}
+                              {topPick && (
+                                <>
+                                  <span className="text-gray-300">|</span>
+                                  <span>
+                                    Next:{" "}
+                                    <span className="text-navy font-medium">
+                                      {topPick.firstName} {topPick.lastName}
+                                    </span>{" "}
+                                    <span className="text-gray-400">
+                                      ({topPick.title})
+                                    </span>
+                                  </span>
+                                </>
                               )}
                             </div>
                           </div>
@@ -635,17 +653,35 @@ function OutreachPageContent() {
                             </div>
                           </div>
 
-                          {/* Contact recommendations */}
+                          {/* Contact recommendations (collapsible) */}
                           <div>
-                            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">
-                              Recommended next contact
-                            </h4>
+                            <button
+                              onClick={() =>
+                                setContactsOpen({
+                                  ...contactsOpen,
+                                  [item.accountId]: !contactsOpen[item.accountId],
+                                })
+                              }
+                              className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase mb-2 hover:text-navy transition-colors"
+                            >
+                              <svg
+                                className={`w-3 h-3 transition-transform ${
+                                  contactsOpen[item.accountId] ? "rotate-90" : ""
+                                }`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                              Select contact ({item.recommendedContacts.length} available)
+                            </button>
                             {item.recommendedContacts.length === 0 ? (
                               <p className="text-sm text-gray-400 italic">
                                 No contacts with email addresses found on this
                                 account in Salesforce.
                               </p>
-                            ) : (
+                            ) : !contactsOpen[item.accountId] ? null : (
                               <div className="space-y-2">
                                 {item.recommendedContacts.map((c, idx) => (
                                   <label
@@ -700,41 +736,6 @@ function OutreachPageContent() {
                               </div>
                             )}
                           </div>
-
-                          {/* First Hit E1 Content (for 2nd-hit reference) */}
-                          {item.bucket === "DUE_2ND_HIT" &&
-                            (() => {
-                              const firstSeq = item.sequenceHistory.find(
-                                (h) => h.status === "complete"
-                              );
-                              return firstSeq?.firstE1 ? (
-                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                                  <h4 className="text-xs font-semibold text-blue-700 uppercase mb-2">
-                                    First Hit E1 Content (for reference)
-                                  </h4>
-                                  <div className="space-y-2">
-                                    <div>
-                                      <span className="text-[10px] text-blue-600 uppercase font-semibold">
-                                        Subject:
-                                      </span>
-                                      <p className="text-sm text-gray-800 bg-white border border-blue-100 rounded px-3 py-1.5 mt-0.5 select-text">
-                                        {firstSeq.firstE1.subject}
-                                      </p>
-                                    </div>
-                                    {firstSeq.firstE1.description && (
-                                      <div>
-                                        <span className="text-[10px] text-blue-600 uppercase font-semibold">
-                                          Body:
-                                        </span>
-                                        <pre className="text-xs text-gray-700 bg-white border border-blue-100 rounded px-3 py-2 mt-0.5 whitespace-pre-wrap max-h-48 overflow-y-auto select-text">
-                                          {firstSeq.firstE1.description}
-                                        </pre>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              ) : null;
-                            })()}
 
                           {/* Group selector + Sequence picker */}
                           {item.recommendedContacts.length > 0 && (

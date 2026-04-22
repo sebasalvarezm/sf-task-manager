@@ -46,6 +46,7 @@ export type QueueItem = {
   accountId: string;
   accountName: string;
   website: string | null;
+  employees: number | null;
   bucket: Bucket;
   lastSequenceEndDate: string | null;
   lastContactHit: { name: string | null; email: string | null } | null;
@@ -449,6 +450,7 @@ export async function buildQueue(): Promise<{
       accountId: account.Id,
       accountName: account.Name,
       website: account.Website,
+      employees: account.Employees,
       bucket,
       lastSequenceEndDate: lastCompleted?.endedAt ?? null,
       lastContactHit: lastCompleted

@@ -32,6 +32,7 @@ export type SfAccountWithETasks = {
   Website: string | null;
   Responded__c: string | null;
   LastActivityDate: string | null;
+  Employees: number | null;
   Tasks: SfETask[];
 };
 
@@ -63,7 +64,7 @@ export async function fetchAccountsWithEHistory(): Promise<
   const query = encodeURIComponent(
     `SELECT Id, Subject, Description, Subject_Type__c, ActivityDate, CompletedDateTime, ` +
       `AccountId, Account.Name, Account.Website, Account.Responded__c, ` +
-      `Account.LastActivityDate, Account.Owner.Name, ` +
+      `Account.LastActivityDate, Account.NumberOfEmployees, Account.Owner.Name, ` +
       `WhoId, Who.Name, Who.Email, Status, Type ` +
       `FROM Task ` +
       `WHERE Subject_Type__c IN ('E1','E2','E3','E4','E5') ` +
@@ -101,6 +102,7 @@ export async function fetchAccountsWithEHistory(): Promise<
       Website?: string | null;
       Responded__c?: string | null;
       LastActivityDate?: string | null;
+      NumberOfEmployees?: number | null;
     } | null;
     WhoId: string | null;
     Who?: { Name?: string; Email?: string } | null;
@@ -146,6 +148,7 @@ export async function fetchAccountsWithEHistory(): Promise<
           Website: t.Account?.Website ?? null,
           Responded__c: t.Account?.Responded__c ?? null,
           LastActivityDate: t.Account?.LastActivityDate ?? null,
+          NumberOfEmployees: t.Account?.NumberOfEmployees ?? null,
         },
         tasks: [t],
       });
@@ -182,6 +185,7 @@ export async function fetchAccountsWithEHistory(): Promise<
       Website: account.Website ?? null,
       Responded__c: account.Responded__c ?? null,
       LastActivityDate: account.LastActivityDate ?? null,
+      Employees: account.NumberOfEmployees ?? null,
       Tasks: tasks.map((t) => ({
         Id: t.Id,
         Subject: t.Subject,
