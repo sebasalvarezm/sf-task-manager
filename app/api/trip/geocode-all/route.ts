@@ -7,12 +7,15 @@ import { batchGeocodeAccounts } from "@/lib/geocoding";
 export const maxDuration = 55;
 
 // POST /api/trip/geocode-all
-// Batch geocodes all CDM accounts that aren't already cached in Supabase.
-// Triggered by the "Scan Accounts" button on the Trip Planner page.
+// Geocodes a BATCH of CDM accounts that aren't already cached.
+// The frontend calls this in a loop until all accounts are done.
+// Each call processes up to 40 uncached accounts (~10-15 seconds).
 export async function POST() {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const BATCH_SIZE = 40;
 
   try {
     const accounts = await fetchCDMAccounts();
@@ -33,15 +36,19 @@ export async function POST() {
     if (uncached.length === 0) {
       return NextResponse.json({
         total: accounts.length,
-        alreadyCached: cachedIds.size,
-        newlyGeocoded: 0,
-        failed: 0,
-        failures: [],
+        cached: cachedIds.size,
+        remaining: 0,
+        batchGeocoded: 0,
+        batchFailed: 0,
+        done: true,
       });
     }
 
+    // Process only the first BATCH_SIZE uncached accounts
+    const batch = uncached.slice(0, BATCH_SIZE);
+
     const { results, failed } = await batchGeocodeAccounts(
-      uncached.map((a) => ({
+      batch.map((a) => ({
         id: a.Id,
         name: a.Name,
         billingCity: a.BillingCity,
@@ -63,12 +70,15 @@ export async function POST() {
       });
     }
 
+    const remaining = uncached.length - batch.length;
+
     return NextResponse.json({
       total: accounts.length,
-      alreadyCached: cachedIds.size,
-      newlyGeocoded: results.length,
-      failed: failed.length,
-      failures: failed.slice(0, 20),
+      cached: cachedIds.size + results.length,
+      remaining,
+      batchGeocoded: results.length,
+      batchFailed: failed.length,
+      done: remaining === 0,
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Unknown error";

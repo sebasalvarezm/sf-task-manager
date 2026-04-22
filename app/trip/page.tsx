@@ -61,12 +61,12 @@ export default function TripPage() {
 
   // Scan
   const [scanning, setScanning] = useState(false);
-  const [scanStats, setScanStats] = useState<{
+  const [scanProgress, setScanProgress] = useState<{
     total: number;
-    alreadyCached: number;
-    newlyGeocoded: number;
-    failed: number;
+    cached: number;
+    remaining: number;
   } | null>(null);
+  const [scanDone, setScanDone] = useState(false);
 
   // Uncached warning
   const [uncachedCount, setUncachedCount] = useState(0);
@@ -179,17 +179,30 @@ export default function TripPage() {
 
   async function handleScan() {
     setScanning(true);
-    setScanStats(null);
-    try {
-      const res = await fetch("/api/trip/geocode-all", { method: "POST" });
-      if (res.ok) {
+    setScanDone(false);
+    setScanProgress(null);
+
+    // Loop: each call processes ~40 accounts, repeat until done
+    let done = false;
+    while (!done) {
+      try {
+        const res = await fetch("/api/trip/geocode-all", { method: "POST" });
+        if (!res.ok) break;
         const data = await res.json();
-        setScanStats(data);
+        setScanProgress({
+          total: data.total,
+          cached: data.cached,
+          remaining: data.remaining,
+        });
+        done = data.done;
+      } catch {
+        break;
       }
-    } catch {
-      // Non-fatal
     }
+
+    setScanDone(true);
     setScanning(false);
+    setUncachedCount(0);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
@@ -305,17 +318,28 @@ export default function TripPage() {
               </button>
             </div>
 
-            {/* Scan stats */}
-            {scanStats && (
+            {/* Scan progress */}
+            {scanning && scanProgress && (
+              <div className="mt-3 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  Scanning: {scanProgress.cached} of {scanProgress.total} accounts geocoded
+                  ({scanProgress.remaining} remaining)
+                </div>
+                <div className="mt-1.5 w-full h-1.5 bg-blue-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 rounded-full transition-all"
+                    style={{
+                      width: `${Math.round((scanProgress.cached / scanProgress.total) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+            {scanDone && scanProgress && !scanning && (
               <div className="mt-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                {scanStats.newlyGeocoded + scanStats.alreadyCached} of{" "}
-                {scanStats.total} accounts geocoded
-                {scanStats.failed > 0 && (
-                  <span className="text-amber-600">
-                    {" "}
-                    ({scanStats.failed} failed)
-                  </span>
-                )}
+                Scan complete: {scanProgress.cached} of {scanProgress.total} accounts geocoded.
+                You can now search.
               </div>
             )}
           </div>
