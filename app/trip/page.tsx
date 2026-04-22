@@ -133,8 +133,9 @@ export default function TripPage() {
         setSearchError(
           e instanceof Error ? e.message : "Network error"
         );
+      } finally {
+        setSearching(false);
       }
-      setSearching(false);
     })();
 
     // Discovery runs in parallel (slower, ~1-3 min)
@@ -168,8 +169,9 @@ export default function TripPage() {
         setDiscoveryError(
           e instanceof Error ? e.message : "Discovery error"
         );
+      } finally {
+        setDiscovering(false);
       }
-      setDiscovering(false);
     })();
 
     await Promise.all([searchPromise, discoverPromise]);
