@@ -443,14 +443,14 @@ export default function LandingPage() {
               </span>
             </a>
 
-            {/* ── Email Triage Card (PAUSED) ────────────────────────────── */}
+            {/* ── Weekly Stats Card ──────────────────────────────────── */}
             <a
-              href="/triage"
-              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm transition-all p-8 text-center opacity-60 hover:opacity-80"
+              href="/stats"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-purple-500 transition-all p-8 text-center"
             >
               <div className="text-4xl mb-4">
                 <svg
-                  className="w-12 h-12 mx-auto text-gray-400"
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-purple-500 transition-colors"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -459,21 +459,38 @@ export default function LandingPage() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={1.5}
-                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                    d="M9 19V6m0 13l-3-3m3 3l3-3M15 5v13m0-13l-3 3m3-3l3 3"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M3 3v18h18"
                   />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold text-gray-500 mb-2">
-                Email Triage
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Weekly Stats
               </h2>
-              <p className="text-sm text-gray-400 mb-4">
-                Review AI-drafted replies to your morning inbox, categorized
-                by priority.
+              <p className="text-sm text-gray-500 mb-4">
+                CDM group dashboard — outreach, calls, F2F, and BRO pipeline
+                across this week, last quarter, or YTD.
               </p>
 
-              <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 bg-gray-100 border border-gray-200 rounded-full px-3 py-1">
-                Paused
-              </span>
+              {sfConnected === true ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Salesforce connected
+                </span>
+              ) : sfConnected === false ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                  Salesforce not connected
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                  Checking...
+                </span>
+              )}
             </a>
 
             {/* ── Trip Planner Card ──────────────────────────────────── */}
