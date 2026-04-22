@@ -6,8 +6,6 @@ import {
   geocodeAddress,
   haversineDistance,
   getDrivingDistances,
-  batchGeocodeAccounts,
-  GeocodeAccountResult,
 } from "@/lib/geocoding";
 
 export const maxDuration = 55;
@@ -57,43 +55,9 @@ export async function POST(request: NextRequest) {
       cacheMap.set(row.sf_account_id, row);
     }
 
-    // 4. Geocode uncached accounts
-    const uncached = accounts.filter((a) => !cacheMap.has(a.Id));
-    let newlyGeocoded = 0;
-    let failedCount = 0;
-
-    if (uncached.length > 0) {
-      const { results, failed } = await batchGeocodeAccounts(
-        uncached.map((a) => ({
-          id: a.Id,
-          name: a.Name,
-          billingCity: a.BillingCity,
-          billingState: a.BillingState,
-          billingCountry: a.BillingCountry,
-          website: a.Website,
-        }))
-      );
-
-      // Upsert into cache
-      for (const r of results) {
-        cacheMap.set(r.accountId, {
-          lat: r.lat,
-          lng: r.lng,
-          formatted_address: r.formattedAddress,
-          address_source: r.addressSource,
-        });
-        await supabase.from("account_geocache").upsert({
-          sf_account_id: r.accountId,
-          account_name: r.accountName,
-          lat: r.lat,
-          lng: r.lng,
-          formatted_address: r.formattedAddress,
-          address_source: r.addressSource,
-        });
-      }
-      newlyGeocoded = results.length;
-      failedCount = failed.length;
-    }
+    // 4. Skip uncached accounts (user should run "Scan Accounts" first)
+    // Geocoding all accounts on-the-fly would time out the serverless function.
+    const uncachedCount = accounts.filter((a) => !cacheMap.has(a.Id)).length;
 
     // 5. Haversine pre-filter
     type NearbyAccount = {
@@ -162,9 +126,8 @@ export async function POST(request: NextRequest) {
       results,
       geocodeStats: {
         total: accounts.length,
-        cached: accounts.length - uncached.length,
-        newlyGeocoded,
-        failed: failedCount,
+        cached: accounts.length - uncachedCount,
+        uncached: uncachedCount,
       },
     });
   } catch (e: unknown) {

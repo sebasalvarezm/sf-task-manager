@@ -68,6 +68,9 @@ export default function TripPage() {
     failed: number;
   } | null>(null);
 
+  // Uncached warning
+  const [uncachedCount, setUncachedCount] = useState(0);
+
   // Tab
   const [activeTab, setActiveTab] = useState<"existing" | "discover">(
     "existing"
@@ -125,6 +128,7 @@ export default function TripPage() {
         }
         setResults(data.results ?? []);
         setUserLoc(data.userLocation ?? null);
+        setUncachedCount(data.geocodeStats?.uncached ?? 0);
       } catch (e: unknown) {
         setSearchError(
           e instanceof Error ? e.message : "Network error"
@@ -320,6 +324,15 @@ export default function TripPage() {
           {searchError && (
             <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-4 text-sm text-red-700">
               {searchError}
+            </div>
+          )}
+
+          {/* Uncached warning */}
+          {uncachedCount > 0 && results !== null && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4 text-sm text-amber-700">
+              {uncachedCount} account{uncachedCount !== 1 ? "s" : ""} not
+              geocoded yet — click <strong>Scan Accounts</strong> first to
+              include them in search results.
             </div>
           )}
 
