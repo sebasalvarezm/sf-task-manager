@@ -87,7 +87,7 @@ export async function GET(req: NextRequest) {
 
     console.error("stats route error:", message);
     return NextResponse.json(
-      { error: "Failed to fetch stats from Salesforce" },
+      { error: `Salesforce error: ${message}` },
       { status: 500 }
     );
   }
