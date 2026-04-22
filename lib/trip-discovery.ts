@@ -385,7 +385,7 @@ export async function discoverCompanies(
   sfAccounts: CDMAccount[]
 ): Promise<{
   companies: DiscoveredCompany[];
-  stats: { searched: number; found: number; deduped: number; final: number };
+  stats: { searched: number; found: number; deduped: number; filteredByGeo: number; final: number };
 }> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("Missing ANTHROPIC_API_KEY");
