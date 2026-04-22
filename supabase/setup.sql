@@ -104,3 +104,22 @@ CREATE TABLE IF NOT EXISTS outreach_credentials (
   token_issued_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ============================================================
+-- Table 6: Account Geocache (for Trip Planner)
+-- ============================================================
+-- Caches lat/lng coordinates for Salesforce accounts to avoid re-geocoding.
+-- The Trip Planner geocodes accounts once (via Google Maps + Places API),
+-- then reads from this cache on every search.
+CREATE TABLE IF NOT EXISTS account_geocache (
+  sf_account_id TEXT PRIMARY KEY,
+  account_name TEXT NOT NULL,
+  lat DOUBLE PRECISION NOT NULL,
+  lng DOUBLE PRECISION NOT NULL,
+  formatted_address TEXT,
+  address_source TEXT NOT NULL CHECK (address_source IN ('billing', 'places', 'manual')),
+  geocoded_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_geocache_coords
+  ON account_geocache (lat, lng);

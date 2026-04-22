@@ -1,0 +1,318 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { CDMAccount } from "./salesforce-trip";
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export type DiscoveredCompany = {
+  name: string;
+  website: string | null;
+  description: string;
+  subVertical: string;
+  city: string | null;
+  state: string | null;
+  ownership: "independent" | "pe_vc" | "aggregator";
+  ownershipDetail: string | null;
+};
+
+// ── CDM sub-verticals ────────────────────────────────────────────────────────
+
+const CDM_VERTICALS = [
+  {
+    name: "Contractor",
+    searchTerms:
+      "construction operations software, estimating software, project delivery, bid management, construction scheduling",
+  },
+  {
+    name: "Structure Design & Analysis",
+    searchTerms:
+      "structural engineering software, bridge design, civil infrastructure analysis, FEA structural, foundation design",
+  },
+  {
+    name: "Safety & Compliance",
+    searchTerms:
+      "EHS software, construction safety management, compliance management, OSHA reporting, safety inspection software",
+  },
+  {
+    name: "Bulk Materials",
+    searchTerms:
+      "aggregate management software, concrete dispatch, asphalt plant software, bulk material tracking, ready-mix software",
+  },
+  {
+    name: "Mining",
+    searchTerms:
+      "mining operations software, mine planning, resource estimation, mining fleet management, mineral processing software",
+  },
+  {
+    name: "Waste",
+    searchTerms:
+      "waste management software, recycling operations, waste hauler software, landfill management, environmental services software",
+  },
+  {
+    name: "Equipment",
+    searchTerms:
+      "heavy equipment management software, fleet tracking, equipment rental software, construction equipment telematics",
+  },
+  {
+    name: "Bulk Liquids",
+    searchTerms:
+      "fuel management software, chemical logistics, liquid bulk transport, tank monitoring, petroleum distribution software",
+  },
+  {
+    name: "Forest & Lumber",
+    searchTerms:
+      "forestry management software, lumber tracking, timber operations, wood products ERP, sawmill software",
+  },
+];
+
+// Software buy-and-hold aggregators to EXCLUDE
+const AGGREGATORS = [
+  "Constellation Software",
+  "Volaris Group",
+  "Harris Computer",
+  "Jonas Software",
+  "Vela Software",
+  "Perseus Group",
+  "Lumine Group",
+  "Topicus",
+  "N-able",
+  "Arcadea Group",
+  "Roper Technologies",
+  "Fortive",
+  "Trimble",
+  "Valsoft",
+  "Valstonecorp",
+];
+
+// ── Search one sub-vertical ──────────────────────────────────────────────────
+
+async function searchVertical(
+  client: Anthropic,
+  vertical: (typeof CDM_VERTICALS)[number],
+  location: string,
+  radiusMiles: number
+): Promise<DiscoveredCompany[]> {
+  try {
+    const resp = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 2048,
+      messages: [
+        {
+          role: "user",
+          content: `Find software companies near ${location} (within roughly ${radiusMiles} miles) that serve the ${vertical.name} industry.
+
+Search terms to guide your research: ${vertical.searchTerms}
+
+Requirements:
+- Must be SOFTWARE companies (SaaS, desktop software, or cloud platforms)
+- Must serve the ${vertical.name} vertical specifically
+- Located near ${location} (same state or neighboring area)
+- Return up to 8 companies
+
+For each company, return:
+- name: company name
+- website: company website URL (if known)
+- description: 1-2 sentences about what they do
+- city: city where they're headquartered
+- state: US state abbreviation (or province/country if outside US)
+
+Return a JSON array only (no markdown, no explanation):
+[{"name":"...","website":"...","description":"...","city":"...","state":"..."}]
+
+If you cannot find any relevant companies, return [].`,
+        },
+      ],
+    });
+
+    const text =
+      resp.content[0].type === "text" ? resp.content[0].text : "";
+    const cleaned = text
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim();
+
+    const parsed = JSON.parse(cleaned) as Array<{
+      name: string;
+      website?: string;
+      description: string;
+      city?: string;
+      state?: string;
+    }>;
+
+    return (parsed ?? []).slice(0, 8).map((c) => ({
+      name: c.name,
+      website: c.website ?? null,
+      description: c.description,
+      subVertical: vertical.name,
+      city: c.city ?? null,
+      state: c.state ?? null,
+      ownership: "independent" as const,
+      ownershipDetail: null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ── Check ownership of discovered companies ─────────────────────────────────
+
+async function checkOwnershipBatch(
+  client: Anthropic,
+  companies: DiscoveredCompany[]
+): Promise<DiscoveredCompany[]> {
+  if (companies.length === 0) return [];
+
+  const aggregatorList = AGGREGATORS.join(", ");
+  const companyList = companies
+    .map((c, i) => `${i + 1}. ${c.name}${c.website ? ` (${c.website})` : ""}`)
+    .join("\n");
+
+  try {
+    const resp = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 2048,
+      messages: [
+        {
+          role: "user",
+          content: `For each company below, determine its ownership status:
+- "independent" = privately held, no known acquirer
+- "pe_vc" = backed by private equity or venture capital
+- "aggregator" = acquired by a buy-and-hold software aggregator
+
+Known software aggregators to check against: ${aggregatorList}
+
+Companies:
+${companyList}
+
+Return a JSON array with one entry per company (same order):
+[{"index":0,"ownership":"independent","detail":null},{"index":1,"ownership":"aggregator","detail":"Acquired by Constellation Software (Volaris Group) in 2021"}]
+
+"detail" is a short note only if ownership is "pe_vc" or "aggregator" (who owns them).
+Return [] if you cannot determine ownership for any.`,
+        },
+      ],
+    });
+
+    const text =
+      resp.content[0].type === "text" ? resp.content[0].text : "";
+    const cleaned = text
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim();
+
+    const parsed = JSON.parse(cleaned) as Array<{
+      index: number;
+      ownership: string;
+      detail: string | null;
+    }>;
+
+    for (const entry of parsed ?? []) {
+      if (entry.index >= 0 && entry.index < companies.length) {
+        const o = entry.ownership as "independent" | "pe_vc" | "aggregator";
+        if (["independent", "pe_vc", "aggregator"].includes(o)) {
+          companies[entry.index].ownership = o;
+          companies[entry.index].ownershipDetail = entry.detail;
+        }
+      }
+    }
+  } catch {
+    // Non-fatal: leave all as "independent"
+  }
+
+  return companies;
+}
+
+// ── Deduplicate against existing SF accounts ────────────────────────────────
+
+function deduplicateAgainstSF(
+  discovered: DiscoveredCompany[],
+  sfAccounts: CDMAccount[]
+): DiscoveredCompany[] {
+  const sfNames = new Set(
+    sfAccounts.map((a) => a.Name.toLowerCase().trim())
+  );
+  const sfDomains = new Set(
+    sfAccounts
+      .map((a) => {
+        if (!a.Website) return null;
+        return a.Website.replace(/^https?:\/\//, "")
+          .replace(/^www\./, "")
+          .split("/")[0]
+          .toLowerCase();
+      })
+      .filter(Boolean) as string[]
+  );
+
+  return discovered.filter((c) => {
+    // Check name match
+    if (sfNames.has(c.name.toLowerCase().trim())) return false;
+
+    // Check domain match
+    if (c.website) {
+      const domain = c.website
+        .replace(/^https?:\/\//, "")
+        .replace(/^www\./, "")
+        .split("/")[0]
+        .toLowerCase();
+      if (sfDomains.has(domain)) return false;
+    }
+
+    return true;
+  });
+}
+
+// ── Main discovery function ─────────────────────────────────────────────────
+
+export async function discoverCompanies(
+  location: string,
+  radiusMiles: number,
+  sfAccounts: CDMAccount[]
+): Promise<{
+  companies: DiscoveredCompany[];
+  stats: { searched: number; found: number; deduped: number; final: number };
+}> {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error("Missing ANTHROPIC_API_KEY");
+  }
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  // Step 1: Search all 9 verticals in parallel
+  const verticalResults = await Promise.all(
+    CDM_VERTICALS.map((v) => searchVertical(client, v, location, radiusMiles))
+  );
+
+  // Merge and deduplicate by name (case-insensitive)
+  const seen = new Set<string>();
+  const allFound: DiscoveredCompany[] = [];
+  for (const batch of verticalResults) {
+    for (const c of batch) {
+      const key = c.name.toLowerCase().trim();
+      if (!seen.has(key)) {
+        seen.add(key);
+        allFound.push(c);
+      }
+    }
+  }
+
+  // Step 2: Remove companies already in Salesforce
+  const afterDedup = deduplicateAgainstSF(allFound, sfAccounts);
+
+  // Step 3: Check ownership in batches of 15
+  const BATCH_SIZE = 15;
+  const withOwnership: DiscoveredCompany[] = [];
+  for (let i = 0; i < afterDedup.length; i += BATCH_SIZE) {
+    const batch = afterDedup.slice(i, i + BATCH_SIZE);
+    const checked = await checkOwnershipBatch(client, batch);
+    withOwnership.push(...checked);
+  }
+
+  return {
+    companies: withOwnership,
+    stats: {
+      searched: CDM_VERTICALS.length,
+      found: allFound.length,
+      deduped: allFound.length - afterDedup.length,
+      final: withOwnership.length,
+    },
+  };
+}

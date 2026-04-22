@@ -475,6 +475,57 @@ export default function LandingPage() {
                 Paused
               </span>
             </a>
+
+            {/* ── Trip Planner Card ──────────────────────────────────── */}
+            <a
+              href="/trip"
+              className="group block bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-lg hover:border-emerald-400 transition-all p-8 text-center"
+            >
+              <div className="text-4xl mb-4">
+                <svg
+                  className="w-12 h-12 mx-auto text-navy group-hover:text-emerald-500 transition-colors"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.5}
+                    d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                </svg>
+              </div>
+              <h2 className="text-lg font-semibold text-navy mb-2">
+                Trip Planner
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">
+                Find nearby CDM accounts and discover new targets when
+                traveling — ranked by driving distance.
+              </p>
+
+              {/* Connection status */}
+              {sfConnected === true ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Salesforce connected
+                </span>
+              ) : sfConnected === false ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+                  Salesforce not connected
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs text-gray-400">
+                  Checking...
+                </span>
+              )}
+            </a>
           </div>
         </div>
       </main>
