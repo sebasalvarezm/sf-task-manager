@@ -97,22 +97,23 @@ function cleanE1Body(raw: string | null): string | null {
 
   let body = raw;
 
-  // 1. Remove "From: ..." and "To: ..." header lines at the top
-  body = body.replace(/^From:\s*"?[^"\n]*"?\s*<[^>]*>\s*\n?/im, "");
-  body = body.replace(/^To:\s*"?[^"\n]*"?\s*<[^>]*>\s*\n?/im, "");
+  // 1. Skip everything before the salutation "Hi {FirstName}".
+  //    Handles any pre-body noise: From/To headers (with or without angle
+  //    brackets), subject repeats, delivery metadata, etc.
+  const hiMatch = body.match(/Hi\s+[A-Z][a-z]+,?/);
+  if (hiMatch && hiMatch.index != null && hiMatch.index > 0) {
+    body = body.slice(hiMatch.index);
+  }
 
-  // 2. Cut everything after "Best," + name line (removes signature + legal notice)
-  const bestMatch = body.match(
-    /\nBest,?\s*\n\s*\w+\s*\n/i
-  );
+  // 2. Cut everything after "Best," + signer name (removes signature + legal)
+  //    Handles "Best,\nNate", "Best, Nate", or "Best\nNate"
+  const bestMatch = body.match(/\bBest,?\s*\n?\s*\w+/i);
   if (bestMatch && bestMatch.index != null) {
-    // Keep "Best,\n{name}" but drop everything after
     const endIdx = bestMatch.index + bestMatch[0].length;
     body = body.slice(0, endIdx).trimEnd();
   }
 
   // 3. Replace team member first names with the active user's name
-  // Only replace when it appears as "My name is {Name}" or "Best,\n{Name}"
   for (const name of TEAM_FIRST_NAMES) {
     if (name === ACTIVE_USER_NAME) continue;
     // "My name is Nate" → "My name is Sebastian"
@@ -120,9 +121,9 @@ function cleanE1Body(raw: string | null): string | null {
       new RegExp(`My name is ${name}\\b`, "g"),
       `My name is ${ACTIVE_USER_NAME}`
     );
-    // "Best,\nNate" → "Best,\nSebastian"
+    // "Best,\nNate" or "Best, Nate" or "Best Nate" → replace with Sebastian
     body = body.replace(
-      new RegExp(`(Best,?\\s*\\n\\s*)${name}\\b`, "gi"),
+      new RegExp(`(Best,?\\s+)${name}\\b`, "gi"),
       `$1${ACTIVE_USER_NAME}`
     );
   }
