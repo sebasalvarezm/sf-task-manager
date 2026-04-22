@@ -10,6 +10,7 @@ export type DiscoveredCompany = {
   subVertical: string;
   city: string | null;
   state: string | null;
+  employeesEstimate: number | null;
   ownership: "independent" | "pe_vc" | "aggregator";
   ownershipDetail: string | null;
 };
@@ -102,11 +103,31 @@ async function searchVertical(
 
 Search terms to guide your research: ${vertical.searchTerms}
 
+**ACQUISITION PROFILE (critical — prioritize these):**
+We are Valstone, an M&A firm that acquires small vertical software companies. Our target profile:
+- **Employee count: 20 to 150 (sweet spot is 30-80)**
+- Bootstrapped or lightly-funded (not venture-backed mega-rounds)
+- Niche, specialized, often founder-led
+- B2B software for a specific industry vertical
+- Usually $3M–$30M ARR
+
+**AVOID returning:**
+- Large public software companies (Procore, Autodesk, Oracle, etc.)
+- Unicorns or heavily VC-funded companies (Series C+)
+- Companies with 200+ employees
+- Household-name enterprise software
+
+**PREFER returning:**
+- Smaller, specialized companies that most people haven't heard of
+- Regional players serving a specific industry
+- Founder-owned companies with stable niches
+- Companies that appear on LinkedIn with 20-150 employees
+
 Requirements:
 - Must be SOFTWARE companies (SaaS, desktop software, or cloud platforms)
 - Must serve the ${vertical.name} vertical specifically
 - Located near ${location} (same state or neighboring area)
-- Return up to 8 companies
+- Return up to 10 companies
 
 For each company, return:
 - name: company name
@@ -114,9 +135,10 @@ For each company, return:
 - description: 1-2 sentences about what they do
 - city: city where they're headquartered
 - state: US state abbreviation (or province/country if outside US)
+- employees: your best estimate of employee count (integer, or null if truly unknown)
 
 Return a JSON array only (no markdown, no explanation):
-[{"name":"...","website":"...","description":"...","city":"...","state":"..."}]
+[{"name":"...","website":"...","description":"...","city":"...","state":"...","employees":45}]
 
 If you cannot find any relevant companies, return [].`,
         },
@@ -136,15 +158,23 @@ If you cannot find any relevant companies, return [].`,
       description: string;
       city?: string;
       state?: string;
+      employees?: number | null;
     }>;
 
-    return (parsed ?? []).slice(0, 8).map((c) => ({
+    // Filter out companies clearly too large for Valstone's profile (>200 employees)
+    const inSizeRange = (parsed ?? []).filter((c) => {
+      if (c.employees == null) return true; // keep if unknown
+      return c.employees <= 200;
+    });
+
+    return inSizeRange.slice(0, 10).map((c) => ({
       name: c.name,
       website: c.website ?? null,
       description: c.description,
       subVertical: vertical.name,
       city: c.city ?? null,
       state: c.state ?? null,
+      employeesEstimate: c.employees ?? null,
       ownership: "independent" as const,
       ownershipDetail: null,
     }));

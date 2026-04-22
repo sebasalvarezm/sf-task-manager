@@ -27,6 +27,7 @@ type DiscoveredCompany = {
   subVertical: string;
   city: string | null;
   state: string | null;
+  employeesEstimate: number | null;
   ownership: "independent" | "pe_vc" | "aggregator";
   ownershipDetail: string | null;
 };
@@ -584,6 +585,18 @@ export default function TripPage() {
                                   <span className="text-[10px] px-2 py-0.5 rounded-full border bg-navy text-white border-navy">
                                     {c.subVertical}
                                   </span>
+                                  {c.employeesEstimate != null && (
+                                    <span
+                                      className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                                        c.employeesEstimate >= 20 &&
+                                        c.employeesEstimate <= 150
+                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                          : "bg-gray-100 text-gray-500 border-gray-200"
+                                      }`}
+                                    >
+                                      ~{c.employeesEstimate} employees
+                                    </span>
+                                  )}
                                 </div>
                                 <p className="text-sm text-gray-600 mb-1">
                                   {c.description}
