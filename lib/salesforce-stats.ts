@@ -13,10 +13,14 @@ export const OPPORTUNITY_STAGES = [
   "Incoming",
   "Pre-DD",
   "DD",
-  "On Ice",
   "IOI",
   "LOI",
+  "On Ice",
 ] as const;
+
+// Salesforce stores BRO amounts in thousands — 500 = $500K, 1500 = $1.5M.
+// Multiply raw Opportunity.Amount values by this before formatting.
+const BRO_AMOUNT_MULTIPLIER = 1000;
 
 export type TrackedSubjectType = (typeof TRACKED_SUBJECT_TYPES)[number];
 export type OpportunityStage = (typeof OPPORTUNITY_STAGES)[number];
@@ -168,7 +172,10 @@ export async function fetchOpportunitiesByStage(
   const byStage = new Map<OpportunityStage, number>();
   for (const r of rows) byStage.set(r.stage, Number(r.total) || 0);
 
-  return OPPORTUNITY_STAGES.map((s) => ({ stage: s, total: byStage.get(s) ?? 0 }));
+  return OPPORTUNITY_STAGES.map((s) => ({
+    stage: s,
+    total: (byStage.get(s) ?? 0) * BRO_AMOUNT_MULTIPLIER,
+  }));
 }
 
 // ── Open BRO by originator (Owner.Name) ──────────────────────────────────────
@@ -190,7 +197,10 @@ export async function fetchOpenBROByOriginator(
   const byOwner = new Map<string, number>();
   for (const r of rows) byOwner.set(r.ownerName, Number(r.total) || 0);
 
-  return CDM_OWNER_NAMES.map((n) => ({ owner: n, total: byOwner.get(n) ?? 0 }));
+  return CDM_OWNER_NAMES.map((n) => ({
+    owner: n,
+    total: (byOwner.get(n) ?? 0) * BRO_AMOUNT_MULTIPLIER,
+  }));
 }
 
 // ── F2F This Year (always YTD, regardless of selected range) ─────────────────

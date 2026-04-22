@@ -16,6 +16,7 @@ import {
 import RangePicker from "../components/RangePicker";
 import ConnectSalesforce from "../components/ConnectSalesforce";
 import { RangePreset, computeRange } from "@/lib/date-ranges";
+import { CDM_OWNER_NAMES } from "@/lib/salesforce-stats";
 
 // ── Types mirroring /api/salesforce/stats response ───────────────────────────
 
@@ -84,12 +85,16 @@ function fmtNumber(n: number): string {
 export default function StatsPage() {
   const router = useRouter();
   const [preset, setPreset] = useState<RangePreset>("this_week");
+  const [trailingN, setTrailingN] = useState<number>(4);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<StatsResponse | null>(null);
 
-  const range = useMemo(() => computeRange(preset), [preset]);
+  const range = useMemo(
+    () => computeRange(preset, new Date(), trailingN),
+    [preset, trailingN]
+  );
 
   // ── On mount: check Salesforce connection ──────────────────────────────────
   useEffect(() => {
@@ -113,7 +118,7 @@ export default function StatsPage() {
     if (!connected) return;
     loadStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, preset]);
+  }, [connected, preset, trailingN]);
 
   async function loadStats() {
     setLoading(true);
@@ -230,12 +235,20 @@ export default function StatsPage() {
 
       {/* Main */}
       <main className="flex-1 px-8 py-8 max-w-[1400px] w-full mx-auto">
-        {/* Range picker */}
-        <div className="mb-2">
-          <RangePicker value={preset} onChange={setPreset} />
+        {/* Range picker + CDM Team badge */}
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <RangePicker
+            value={preset}
+            trailingN={trailingN}
+            onChange={(p, n) => {
+              setPreset(p);
+              setTrailingN(n);
+            }}
+          />
+          <CdmTeamBadge />
         </div>
         <p className="text-sm text-gray-500 mb-6">
-          Showing <span className="font-medium text-navy">{range.label}</span> · team: Sebastian, Nate, Tyson
+          Showing <span className="font-medium text-navy">{range.label}</span>
         </p>
 
         {connected === false && (
@@ -288,7 +301,7 @@ export default function StatsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <ChartCard title="Outreach by Person">
                 <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={outreachByPersonData}>
+                  <BarChart data={outreachByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
@@ -303,7 +316,7 @@ export default function StatsPage() {
               <ChartCard title={showTrend ? "Outreach Trend" : "E1 vs RCE1"}>
                 {showTrend ? (
                   <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={trendData}>
+                    <BarChart data={trendData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                       <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
@@ -313,7 +326,7 @@ export default function StatsPage() {
                   </ResponsiveContainer>
                 ) : (
                   <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={e1VsRce1Data}>
+                    <BarChart data={e1VsRce1Data} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                       <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
@@ -331,7 +344,7 @@ export default function StatsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <ChartCard title="Calls (C1) + F2F by Person">
                 <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={callsF2FByPersonData}>
+                  <BarChart data={callsF2FByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
@@ -346,7 +359,7 @@ export default function StatsPage() {
               <ChartCard title={showTrend ? "Calls + F2F Trend" : "E1 vs RCE1 by Person"}>
                 {showTrend ? (
                   <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={trendData}>
+                    <BarChart data={trendData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                       <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
@@ -358,7 +371,7 @@ export default function StatsPage() {
                   </ResponsiveContainer>
                 ) : (
                   <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={e1VsRce1Data}>
+                    <BarChart data={e1VsRce1Data} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                       <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
@@ -379,7 +392,7 @@ export default function StatsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
               <ChartCard title="Open BRO by Originator">
                 <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={originatorData}>
+                  <BarChart data={originatorData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => fmtMoney(Number(v))} />
@@ -398,7 +411,7 @@ export default function StatsPage() {
 
               <ChartCard title="All BRO by Stage">
                 <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={stageData}>
+                  <BarChart data={stageData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
                     <XAxis dataKey="name" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => fmtMoney(Number(v))} />
@@ -447,6 +460,31 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
       <h3 className="text-sm font-semibold text-navy mb-3">{title}</h3>
       {children}
+    </div>
+  );
+}
+
+function CdmTeamBadge() {
+  return (
+    <div className="relative group inline-block">
+      <span className="inline-flex items-center gap-2 text-xs font-medium text-navy bg-white border border-gray-200 rounded-full px-3 py-1.5 cursor-help select-none">
+        <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+        CDM Team
+        <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </span>
+      <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl border border-gray-200 shadow-lg p-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-20 pointer-events-none">
+        <p className="text-xs font-semibold text-navy mb-2 uppercase tracking-wide">Team Members</p>
+        <ul className="text-sm text-gray-700 space-y-1">
+          {CDM_OWNER_NAMES.map((n) => (
+            <li key={n} className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-navy" />
+              {n}
+            </li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }

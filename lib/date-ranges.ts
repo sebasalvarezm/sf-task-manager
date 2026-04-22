@@ -4,7 +4,6 @@ import {
   startOfQuarter,
   endOfQuarter,
   startOfYear,
-  startOfMonth,
   endOfMonth,
   addWeeks,
   subQuarters,
@@ -17,9 +16,8 @@ import {
 
 export type RangePreset =
   | "this_week"
-  | "trailing_4w"
-  | "trailing_8w"
-  | "trailing_13w"
+  | "last_week"
+  | "trailing"
   | "this_quarter"
   | "last_quarter"
   | "ytd";
@@ -36,7 +34,7 @@ export type RangeResult = {
   end: string;          // yyyy-MM-dd
   bucket: "week" | "month";
   buckets: Bucket[];
-  label: string;        // Human-readable, e.g. "Apr 20 – Apr 26, 2026"
+  label: string;        // Human-readable, e.g. "Apr 19 – Apr 25, 2026"
 };
 
 const ISO = (d: Date) => format(d, "yyyy-MM-dd");
@@ -65,7 +63,11 @@ function monthlyBuckets(start: Date, end: Date): Bucket[] {
   });
 }
 
-export function computeRange(preset: RangePreset, today: Date = new Date()): RangeResult {
+export function computeRange(
+  preset: RangePreset,
+  today: Date = new Date(),
+  trailingWeeks: number = 4
+): RangeResult {
   const weekOpts = { weekStartsOn: 0 as const };
 
   switch (preset) {
@@ -81,10 +83,21 @@ export function computeRange(preset: RangePreset, today: Date = new Date()): Ran
         label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")}`,
       };
     }
-    case "trailing_4w":
-    case "trailing_8w":
-    case "trailing_13w": {
-      const n = preset === "trailing_4w" ? 4 : preset === "trailing_8w" ? 8 : 13;
+    case "last_week": {
+      const last = addWeeks(today, -1);
+      const start = startOfWeek(last, weekOpts);
+      const end = endOfWeek(last, weekOpts);
+      return {
+        preset,
+        start: ISO(start),
+        end: ISO(end),
+        bucket: "week",
+        buckets: weeklyBuckets(start, end),
+        label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")}`,
+      };
+    }
+    case "trailing": {
+      const n = Math.max(1, Math.min(52, Math.floor(trailingWeeks)));
       const end = endOfWeek(today, weekOpts);
       const start = startOfWeek(addWeeks(today, -(n - 1)), weekOpts);
       return {
@@ -139,9 +152,8 @@ export function computeRange(preset: RangePreset, today: Date = new Date()): Ran
 
 export const PRESET_OPTIONS: { value: RangePreset; label: string }[] = [
   { value: "this_week", label: "This Week" },
-  { value: "trailing_4w", label: "Trailing 4W" },
-  { value: "trailing_8w", label: "Trailing 8W" },
-  { value: "trailing_13w", label: "Trailing 13W" },
+  { value: "last_week", label: "Last Week" },
+  { value: "trailing", label: "Trailing Weeks" },
   { value: "this_quarter", label: "This Quarter" },
   { value: "last_quarter", label: "Last Quarter" },
   { value: "ytd", label: "YTD" },
