@@ -99,7 +99,12 @@ async function searchVertical(
       messages: [
         {
           role: "user",
-          content: `Find software companies near ${location} (within roughly ${radiusMiles} miles) that serve the ${vertical.name} industry.
+          content: `Find software companies located within roughly ${radiusMiles} driving miles of ${location} that serve the ${vertical.name} industry.
+
+**CRITICAL GEOGRAPHIC CONSTRAINT:**
+Every company MUST be physically headquartered within ${radiusMiles} miles of ${location}. Do NOT include companies in other states or regions, even if they would otherwise fit the profile. When in doubt, exclude.
+
+If ${location} is in the USA, only return US companies in the same state or an immediately neighboring state. Do NOT return companies from across the country (e.g., if the trip is to Colorado, do NOT include Florida, Wisconsin, or Oklahoma companies).
 
 Search terms to guide your research: ${vertical.searchTerms}
 
@@ -251,6 +256,88 @@ Return [] if you cannot determine ownership for any.`,
   return companies;
 }
 
+// ── US state adjacency map (for geographic filtering) ───────────────────────
+// Each state maps to itself + bordering states. Used to reject discovery
+// results that are clearly far from the user's trip location.
+
+const STATE_ADJACENCY: Record<string, string[]> = {
+  AL: ["AL", "FL", "GA", "MS", "TN"],
+  AK: ["AK"],
+  AZ: ["AZ", "CA", "CO", "NM", "NV", "UT"],
+  AR: ["AR", "LA", "MO", "MS", "OK", "TN", "TX"],
+  CA: ["CA", "AZ", "NV", "OR"],
+  CO: ["CO", "AZ", "KS", "NE", "NM", "OK", "UT", "WY"],
+  CT: ["CT", "MA", "NY", "RI"],
+  DE: ["DE", "MD", "NJ", "PA"],
+  FL: ["FL", "AL", "GA"],
+  GA: ["GA", "AL", "FL", "NC", "SC", "TN"],
+  HI: ["HI"],
+  ID: ["ID", "MT", "NV", "OR", "UT", "WA", "WY"],
+  IL: ["IL", "IN", "IA", "KY", "MO", "WI"],
+  IN: ["IN", "IL", "KY", "MI", "OH"],
+  IA: ["IA", "IL", "MN", "MO", "NE", "SD", "WI"],
+  KS: ["KS", "CO", "MO", "NE", "OK"],
+  KY: ["KY", "IL", "IN", "MO", "OH", "TN", "VA", "WV"],
+  LA: ["LA", "AR", "MS", "TX"],
+  ME: ["ME", "NH"],
+  MD: ["MD", "DE", "PA", "VA", "WV", "DC"],
+  MA: ["MA", "CT", "NH", "NY", "RI", "VT"],
+  MI: ["MI", "IN", "OH", "WI"],
+  MN: ["MN", "IA", "ND", "SD", "WI"],
+  MS: ["MS", "AL", "AR", "LA", "TN"],
+  MO: ["MO", "AR", "IA", "IL", "KS", "KY", "NE", "OK", "TN"],
+  MT: ["MT", "ID", "ND", "SD", "WY"],
+  NE: ["NE", "CO", "IA", "KS", "MO", "SD", "WY"],
+  NV: ["NV", "AZ", "CA", "ID", "OR", "UT"],
+  NH: ["NH", "MA", "ME", "VT"],
+  NJ: ["NJ", "DE", "NY", "PA"],
+  NM: ["NM", "AZ", "CO", "OK", "TX", "UT"],
+  NY: ["NY", "CT", "MA", "NJ", "PA", "VT"],
+  NC: ["NC", "GA", "SC", "TN", "VA"],
+  ND: ["ND", "MN", "MT", "SD"],
+  OH: ["OH", "IN", "KY", "MI", "PA", "WV"],
+  OK: ["OK", "AR", "CO", "KS", "MO", "NM", "TX"],
+  OR: ["OR", "CA", "ID", "NV", "WA"],
+  PA: ["PA", "DE", "MD", "NJ", "NY", "OH", "WV"],
+  RI: ["RI", "CT", "MA"],
+  SC: ["SC", "GA", "NC"],
+  SD: ["SD", "IA", "MN", "MT", "ND", "NE", "WY"],
+  TN: ["TN", "AL", "AR", "GA", "KY", "MO", "MS", "NC", "VA"],
+  TX: ["TX", "AR", "LA", "NM", "OK"],
+  UT: ["UT", "AZ", "CO", "ID", "NM", "NV", "WY"],
+  VT: ["VT", "MA", "NH", "NY"],
+  VA: ["VA", "KY", "MD", "NC", "TN", "WV", "DC"],
+  WA: ["WA", "ID", "OR"],
+  WV: ["WV", "KY", "MD", "OH", "PA", "VA"],
+  WI: ["WI", "IA", "IL", "MI", "MN"],
+  WY: ["WY", "CO", "ID", "MT", "NE", "SD", "UT"],
+  DC: ["DC", "MD", "VA"],
+};
+
+function stateAbbrevFromLocation(location: string): string | null {
+  // Try to extract a 2-letter state abbreviation from the user's input
+  // e.g., "Denver, CO" → "CO", "1 Lake Ave, Colorado Springs, CO 80906" → "CO"
+  const match = location.match(/\b([A-Z]{2})\b/);
+  if (match) return match[1];
+  return null;
+}
+
+function filterByGeography(
+  companies: DiscoveredCompany[],
+  userLocation: string
+): DiscoveredCompany[] {
+  const userState = stateAbbrevFromLocation(userLocation);
+  if (!userState || !STATE_ADJACENCY[userState]) return companies;
+
+  const allowed = new Set(STATE_ADJACENCY[userState]);
+
+  return companies.filter((c) => {
+    if (!c.state) return true; // keep if unknown — Claude might not have returned it
+    const companyState = c.state.toUpperCase().trim();
+    return allowed.has(companyState);
+  });
+}
+
 // ── Deduplicate against existing SF accounts ────────────────────────────────
 
 function deduplicateAgainstSF(
@@ -324,10 +411,13 @@ export async function discoverCompanies(
     }
   }
 
-  // Step 2: Remove companies already in Salesforce
-  const afterDedup = deduplicateAgainstSF(allFound, sfAccounts);
+  // Step 2: Geographic filter — drop companies outside the trip state and its neighbors
+  const afterGeo = filterByGeography(allFound, location);
 
-  // Step 3: Check ownership in batches of 15
+  // Step 3: Remove companies already in Salesforce
+  const afterDedup = deduplicateAgainstSF(afterGeo, sfAccounts);
+
+  // Step 4: Check ownership in batches of 15
   const BATCH_SIZE = 15;
   const withOwnership: DiscoveredCompany[] = [];
   for (let i = 0; i < afterDedup.length; i += BATCH_SIZE) {
@@ -342,6 +432,7 @@ export async function discoverCompanies(
       searched: CDM_VERTICALS.length,
       found: allFound.length,
       deduped: allFound.length - afterDedup.length,
+      filteredByGeo: allFound.length - afterGeo.length,
       final: withOwnership.length,
     },
   };
