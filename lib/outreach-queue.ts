@@ -78,6 +78,60 @@ function leadershipRank(title: string | null): number {
   return 99;
 }
 
+// ── E1 content cleanup ───────────────────────────────────────────────────────
+// Cleans up the raw E1 subject + body from Salesforce before displaying or
+// sending to Outreach. Removes [E1] prefix, From/To headers, signature block,
+// confidentiality notice, and replaces the original sender name with Sebastian.
+
+const TEAM_FIRST_NAMES = ["Nate", "Tyson", "Sebastian"];
+const ACTIVE_USER_NAME = "Sebastian"; // TODO: derive from logged-in user
+
+function cleanE1Subject(raw: string): string {
+  // Remove "[E1] - " or "[E1] – " prefix
+  return raw.replace(/^\[E\d\]\s*[-–—]\s*/i, "").trim();
+}
+
+function cleanE1Body(raw: string | null): string | null {
+  if (!raw) return null;
+
+  let body = raw;
+
+  // 1. Remove "From: ..." and "To: ..." header lines at the top
+  body = body.replace(/^From:\s*"?[^"\n]*"?\s*<[^>]*>\s*\n?/im, "");
+  body = body.replace(/^To:\s*"?[^"\n]*"?\s*<[^>]*>\s*\n?/im, "");
+
+  // 2. Cut everything after "Best," + name line (removes signature + legal notice)
+  const bestMatch = body.match(
+    /\nBest,?\s*\n\s*\w+\s*\n/i
+  );
+  if (bestMatch && bestMatch.index != null) {
+    // Keep "Best,\n{name}" but drop everything after
+    const endIdx = bestMatch.index + bestMatch[0].length;
+    body = body.slice(0, endIdx).trimEnd();
+  }
+
+  // 3. Replace team member first names with the active user's name
+  // Only replace when it appears as "My name is {Name}" or "Best,\n{Name}"
+  for (const name of TEAM_FIRST_NAMES) {
+    if (name === ACTIVE_USER_NAME) continue;
+    // "My name is Nate" → "My name is Sebastian"
+    body = body.replace(
+      new RegExp(`My name is ${name}\\b`, "g"),
+      `My name is ${ACTIVE_USER_NAME}`
+    );
+    // "Best,\nNate" → "Best,\nSebastian"
+    body = body.replace(
+      new RegExp(`(Best,?\\s*\\n\\s*)${name}\\b`, "gi"),
+      `$1${ACTIVE_USER_NAME}`
+    );
+  }
+
+  // 4. Trim leading/trailing whitespace
+  body = body.trim();
+
+  return body;
+}
+
 // ── Sequence grouping ────────────────────────────────────────────────────────
 // Groups an account's E1-E5 tasks by contact (WhoId). Each contact group
 // becomes a SequenceHistory entry.
@@ -154,8 +208,8 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
       firstE1: e1Task
         ? {
             taskId: e1Task.Id,
-            subject: e1Task.Subject,
-            description: e1Task.Description,
+            subject: cleanE1Subject(e1Task.Subject),
+            description: cleanE1Body(e1Task.Description),
           }
         : null,
     });
