@@ -201,7 +201,7 @@ export async function fetchF2FThisYear(credentials: SfCredentials): Promise<numb
     `FROM Task ` +
     `WHERE Subject_Type__c = 'F2F' ` +
     `AND Status = 'Completed' ` +
-    `AND CALENDAR_YEAR(ActivityDate) = ${new Date().getFullYear()} ` +
+    `AND ActivityDate = THIS_YEAR ` +
     `AND Owner.Name IN (${ownerNamesClause})`;
 
   type Row = { cnt: number };

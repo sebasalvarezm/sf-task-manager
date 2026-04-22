@@ -42,9 +42,9 @@ export type RangeResult = {
 const ISO = (d: Date) => format(d, "yyyy-MM-dd");
 
 function weeklyBuckets(start: Date, end: Date): Bucket[] {
-  const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 1 });
+  const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 0 });
   return weeks.map((ws) => {
-    const we = minDate([endOfWeek(ws, { weekStartsOn: 1 }), end]);
+    const we = minDate([endOfWeek(ws, { weekStartsOn: 0 }), end]);
     return {
       label: format(ws, "MMM d"),
       start: ISO(ws),
@@ -66,7 +66,7 @@ function monthlyBuckets(start: Date, end: Date): Bucket[] {
 }
 
 export function computeRange(preset: RangePreset, today: Date = new Date()): RangeResult {
-  const weekOpts = { weekStartsOn: 1 as const };
+  const weekOpts = { weekStartsOn: 0 as const };
 
   switch (preset) {
     case "this_week": {
