@@ -62,9 +62,17 @@ type JsonApiBody = {
 export type MailingWithEngagement = {
   mailingId: string;
   prospectId: string;
-  sentAt: string;       // deliveredAt, ISO timestamp
+  sentAt: string;       // deliveredAt (or createdAt fallback), ISO timestamp
+  state: string;
   openCount: number;
   clickCount: number;
+};
+
+export type MailingFetchResult = {
+  mailings: MailingWithEngagement[];
+  rawCount: number;      // total mailing records returned by Outreach
+  stateBreakdown: Record<string, number>; // how many of each state
+  withDeliveredAt: number; // how many had deliveredAt populated
 };
 
 // ── Mailings (send events + per-mailing open counts) ─────────────────────────
@@ -72,37 +80,83 @@ export type MailingWithEngagement = {
 export async function fetchMailingsWithEngagement(
   start: string,   // yyyy-MM-dd
   end: string      // yyyy-MM-dd
-): Promise<MailingWithEngagement[]> {
+): Promise<MailingFetchResult> {
   const credentials = await getOutreachValidCredentials();
   if (!credentials) throw new Error("OUTREACH_NOT_CONNECTED");
 
-  const startIso = `${start}T00:00:00Z`;
-  const endIso = `${end}T23:59:59Z`;
+  // Outreach date range syntax uses `..` with NO trailing Z — the Z suffix
+  // appears to silently match nothing. createdAt is more reliable than
+  // deliveredAt because it's always populated; we filter by state / presence
+  // of deliveredAt in the client.
+  const startIso = `${start}T00:00:00`;
+  const endIso = `${end}T23:59:59`;
 
-  // filter[deliveredAt]=>=start..<=end is the Outreach range syntax.
   const path =
-    `/mailings?filter[deliveredAt]=${encodeURIComponent(`${startIso}..${endIso}`)}` +
-    `&filter[state]=delivered` +
-    `&fields[mailing]=deliveredAt,openCount,clickCount` +
+    `/mailings?filter[createdAt]=${encodeURIComponent(`${startIso}..${endIso}`)}` +
+    `&fields[mailing]=deliveredAt,createdAt,state,openCount,clickCount` +
     `&page[size]=100` +
-    `&sort=deliveredAt`;
+    `&sort=createdAt`;
 
-  return paginate<MailingWithEngagement>(credentials, path, (body) => {
-    const out: MailingWithEngagement[] = [];
+  const mailings: MailingWithEngagement[] = [];
+  const stateBreakdown: Record<string, number> = {};
+  let rawCount = 0;
+  let withDeliveredAt = 0;
+
+  const rows = await paginate<{
+    id: string;
+    prospectId: string;
+    deliveredAt: string | null;
+    createdAt: string | null;
+    state: string;
+    openCount: number;
+    clickCount: number;
+  }>(credentials, path, (body) => {
+    const out: {
+      id: string;
+      prospectId: string;
+      deliveredAt: string | null;
+      createdAt: string | null;
+      state: string;
+      openCount: number;
+      clickCount: number;
+    }[] = [];
     for (const row of body.data ?? []) {
       const prospectId = row.relationships?.prospect?.data?.id;
-      const sentAt = row.attributes?.deliveredAt as string | undefined;
-      if (!prospectId || !sentAt) continue;
+      if (!prospectId) continue;
       out.push({
-        mailingId: row.id,
+        id: row.id,
         prospectId,
-        sentAt,
+        deliveredAt: (row.attributes?.deliveredAt as string | null) ?? null,
+        createdAt: (row.attributes?.createdAt as string | null) ?? null,
+        state: (row.attributes?.state as string) ?? "unknown",
         openCount: Number(row.attributes?.openCount) || 0,
         clickCount: Number(row.attributes?.clickCount) || 0,
       });
     }
     return out;
   });
+
+  for (const r of rows) {
+    rawCount++;
+    stateBreakdown[r.state] = (stateBreakdown[r.state] ?? 0) + 1;
+    if (r.deliveredAt) withDeliveredAt++;
+
+    // Accept any mailing that has either deliveredAt OR a "sent-ish" state.
+    // We prefer deliveredAt as sentAt, falling back to createdAt.
+    const sentAt = r.deliveredAt ?? r.createdAt;
+    if (!sentAt) continue;
+
+    mailings.push({
+      mailingId: r.id,
+      prospectId: r.prospectId,
+      sentAt,
+      state: r.state,
+      openCount: r.openCount,
+      clickCount: r.clickCount,
+    });
+  }
+
+  return { mailings, rawCount, stateBreakdown, withDeliveredAt };
 }
 
 // ── Batched prospect lookups (name + company) ────────────────────────────────

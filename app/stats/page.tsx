@@ -83,6 +83,11 @@ type EngagementResponse = {
   heatmap: HeatmapData;
   multiOpens: EnrichedMultiOpen[];
   totals: { mailings: number; multiOpenCount: number };
+  debug?: {
+    rawCount: number;
+    withDeliveredAt: number;
+    stateBreakdown: Record<string, number>;
+  };
 };
 
 // ── Colors ───────────────────────────────────────────────────────────────────
@@ -568,9 +573,16 @@ export default function StatsPage() {
               ) : engagementError ? (
                 <p className="text-sm text-red-700">{engagementError}</p>
               ) : engagement && engagement.totals.mailings === 0 ? (
-                <p className="text-sm text-gray-500">
-                  No sends in this range yet. Try a wider range.
-                </p>
+                <div>
+                  <p className="text-sm text-gray-500">
+                    No sends in this range yet. Try a wider range.
+                  </p>
+                  {engagement.debug && (
+                    <pre className="text-xs text-gray-400 mt-3 bg-gray-50 rounded p-2 overflow-x-auto">
+                      {`Outreach returned ${engagement.debug.rawCount} raw mailings, ${engagement.debug.withDeliveredAt} with deliveredAt.\nStates: ${JSON.stringify(engagement.debug.stateBreakdown)}`}
+                    </pre>
+                  )}
+                </div>
               ) : engagement ? (
                 <Heatmap data={engagement.heatmap} />
               ) : null}

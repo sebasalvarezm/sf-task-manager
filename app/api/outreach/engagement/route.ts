@@ -11,7 +11,7 @@ import {
 } from "@/lib/analytics-derivations";
 
 // Returns heatmap + multi-open card data for the given date range.
-// Uses only the /mailings endpoint (which carries openCount/replyCount
+// Uses only the /mailings endpoint (which carries openCount/clickCount
 // on each record), so no events.read scope is needed.
 export async function GET(req: NextRequest) {
   if (!(await isAuthenticated())) {
@@ -30,7 +30,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const mailings = await fetchMailingsWithEngagement(start, end);
+    const { mailings, rawCount, stateBreakdown, withDeliveredAt } =
+      await fetchMailingsWithEngagement(start, end);
 
     const heatmap = computeHeatmap(mailings);
     const multiRaw = computeMultiOpens(mailings);
@@ -46,6 +47,11 @@ export async function GET(req: NextRequest) {
       totals: {
         mailings: mailings.length,
         multiOpenCount: multiRaw.length,
+      },
+      debug: {
+        rawCount,
+        withDeliveredAt,
+        stateBreakdown,
       },
     });
   } catch (error) {
