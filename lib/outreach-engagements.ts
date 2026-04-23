@@ -84,12 +84,12 @@ export async function fetchMailingsWithEngagement(
   const credentials = await getOutreachValidCredentials();
   if (!credentials) throw new Error("OUTREACH_NOT_CONNECTED");
 
-  // Outreach date range syntax uses `..` with NO trailing Z — the Z suffix
-  // appears to silently match nothing. createdAt is more reliable than
-  // deliveredAt because it's always populated; we filter by state / presence
-  // of deliveredAt in the client.
-  const startIso = `${start}T00:00:00`;
-  const endIso = `${end}T23:59:59`;
+  // Outreach date range syntax: `start..end` with timestamps in one of:
+  // YYYY-MM-DD, YYYY-MM-DDTHH:MMZ, YYYY-MM-DDTHH:MM:SSZ, YYYY-MM-DDTHH:MM:SS.UUUZ.
+  // The trailing Z is required (not optional, despite what I assumed before).
+  // createdAt is more reliable than deliveredAt because it's always populated.
+  const startIso = `${start}T00:00:00Z`;
+  const endIso = `${end}T23:59:59Z`;
 
   const path =
     `/mailings?filter[createdAt]=${encodeURIComponent(`${startIso}..${endIso}`)}` +
