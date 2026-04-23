@@ -73,6 +73,13 @@ export type MailingFetchResult = {
   rawCount: number;      // total mailing records returned by Outreach
   stateBreakdown: Record<string, number>; // how many of each state
   withDeliveredAt: number; // how many had deliveredAt populated
+  // Date diagnostics: helps us see why records get filtered out.
+  earliestCreatedAt: string | null;
+  latestCreatedAt: string | null;
+  countInRange: number;
+  countBeforeRange: number;
+  countAfterRange: number;
+  sampleDates: string[]; // first 5 createdAt values we saw
 };
 
 // ── Mailings (send events + per-mailing open counts) ─────────────────────────
@@ -103,7 +110,14 @@ export async function fetchMailingsWithEngagement(
   const stateBreakdown: Record<string, number> = {};
   let rawCount = 0;
   let withDeliveredAt = 0;
-  let hitBeforeRange = false;
+
+  // Date diagnostics
+  let earliestCreatedAt: string | null = null;
+  let latestCreatedAt: string | null = null;
+  let countInRange = 0;
+  let countBeforeRange = 0;
+  let countAfterRange = 0;
+  const sampleDates: string[] = [];
 
   const initialPath =
     `/mailings?fields[mailing]=deliveredAt,createdAt,state,openCount,clickCount` +
@@ -113,7 +127,7 @@ export async function fetchMailingsWithEngagement(
   let next: string | null = initialPath;
   let pages = 0;
 
-  while (next && pages < MAX_PAGES && !hitBeforeRange) {
+  while (next && pages < MAX_PAGES) {
     const res = await outreachFetch(credentials, next);
     if (!res.ok) {
       if (res.status === 401) throw new Error("OUTREACH_NOT_CONNECTED");
@@ -125,23 +139,31 @@ export async function fetchMailingsWithEngagement(
       rawCount++;
       const createdAt = (row.attributes?.createdAt as string | null) ?? null;
       if (!createdAt) continue;
-      const createdMs = new Date(createdAt).getTime();
 
-      // Newest-first sort: once we're older than start, we can stop.
-      if (createdMs < startMs) {
-        hitBeforeRange = true;
-        break;
-      }
-
-      // Skip if newer than end (shouldn't happen with sort=-createdAt from
-      // page 1, but guard anyway).
-      if (createdMs > endMs) continue;
+      if (sampleDates.length < 5) sampleDates.push(createdAt);
+      if (!earliestCreatedAt || createdAt < earliestCreatedAt)
+        earliestCreatedAt = createdAt;
+      if (!latestCreatedAt || createdAt > latestCreatedAt)
+        latestCreatedAt = createdAt;
 
       const state = (row.attributes?.state as string) ?? "unknown";
       stateBreakdown[state] = (stateBreakdown[state] ?? 0) + 1;
 
       const deliveredAt = (row.attributes?.deliveredAt as string | null) ?? null;
       if (deliveredAt) withDeliveredAt++;
+
+      const createdMs = new Date(createdAt).getTime();
+
+      if (createdMs < startMs) {
+        countBeforeRange++;
+        // Don't break — sort may not be honored by the API. Keep scanning.
+        continue;
+      }
+      if (createdMs > endMs) {
+        countAfterRange++;
+        continue;
+      }
+      countInRange++;
 
       const prospectId = row.relationships?.prospect?.data?.id;
       if (!prospectId) continue;
@@ -160,7 +182,18 @@ export async function fetchMailingsWithEngagement(
     pages++;
   }
 
-  return { mailings, rawCount, stateBreakdown, withDeliveredAt };
+  return {
+    mailings,
+    rawCount,
+    stateBreakdown,
+    withDeliveredAt,
+    earliestCreatedAt,
+    latestCreatedAt,
+    countInRange,
+    countBeforeRange,
+    countAfterRange,
+    sampleDates,
+  };
 }
 
 // ── Batched prospect lookups (name + company) ────────────────────────────────

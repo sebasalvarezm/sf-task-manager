@@ -87,6 +87,13 @@ type EngagementResponse = {
     rawCount: number;
     withDeliveredAt: number;
     stateBreakdown: Record<string, number>;
+    earliestCreatedAt: string | null;
+    latestCreatedAt: string | null;
+    countInRange: number;
+    countBeforeRange: number;
+    countAfterRange: number;
+    sampleDates: string[];
+    requestedRange: { start: string; end: string };
   };
 };
 
@@ -578,8 +585,15 @@ export default function StatsPage() {
                     No sends in this range yet. Try a wider range.
                   </p>
                   {engagement.debug && (
-                    <pre className="text-xs text-gray-400 mt-3 bg-gray-50 rounded p-2 overflow-x-auto">
-                      {`Outreach returned ${engagement.debug.rawCount} raw mailings, ${engagement.debug.withDeliveredAt} with deliveredAt.\nStates: ${JSON.stringify(engagement.debug.stateBreakdown)}`}
+                    <pre className="text-xs text-gray-400 mt-3 bg-gray-50 rounded p-2 overflow-x-auto whitespace-pre-wrap">
+                      {[
+                        `Outreach returned ${engagement.debug.rawCount} raw mailings, ${engagement.debug.withDeliveredAt} with deliveredAt.`,
+                        `Requested: ${engagement.debug.requestedRange.start} → ${engagement.debug.requestedRange.end}`,
+                        `createdAt span: ${engagement.debug.earliestCreatedAt ?? "—"} → ${engagement.debug.latestCreatedAt ?? "—"}`,
+                        `In range: ${engagement.debug.countInRange} · Before: ${engagement.debug.countBeforeRange} · After: ${engagement.debug.countAfterRange}`,
+                        `Sample dates: ${engagement.debug.sampleDates.join(", ")}`,
+                        `States: ${JSON.stringify(engagement.debug.stateBreakdown)}`,
+                      ].join("\n")}
                     </pre>
                   )}
                 </div>

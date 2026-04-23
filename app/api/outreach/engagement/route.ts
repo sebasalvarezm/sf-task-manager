@@ -30,8 +30,18 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const { mailings, rawCount, stateBreakdown, withDeliveredAt } =
-      await fetchMailingsWithEngagement(start, end);
+    const {
+      mailings,
+      rawCount,
+      stateBreakdown,
+      withDeliveredAt,
+      earliestCreatedAt,
+      latestCreatedAt,
+      countInRange,
+      countBeforeRange,
+      countAfterRange,
+      sampleDates,
+    } = await fetchMailingsWithEngagement(start, end);
 
     const heatmap = computeHeatmap(mailings);
     const multiRaw = computeMultiOpens(mailings);
@@ -52,6 +62,13 @@ export async function GET(req: NextRequest) {
         rawCount,
         withDeliveredAt,
         stateBreakdown,
+        earliestCreatedAt,
+        latestCreatedAt,
+        countInRange,
+        countBeforeRange,
+        countAfterRange,
+        sampleDates,
+        requestedRange: { start, end },
       },
     });
   } catch (error) {
