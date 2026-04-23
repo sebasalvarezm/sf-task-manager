@@ -46,11 +46,11 @@ export default function Heatmap({ data, minSendsForRate = 5 }: Props) {
       {data.peak && (
         <p className="text-sm font-semibold text-green-600 mb-3">
           Peak: {DAY_LABELS[data.peak.dow]} {hourLabel(data.peak.hour)} —{" "}
-          {(data.peak.rate * 100).toFixed(1)}% reply rate ({data.peak.sent} sent)
+          {(data.peak.rate * 100).toFixed(1)}% open rate ({data.peak.sent} sent)
         </p>
       )}
       <p className="text-xs text-gray-500 mb-3">
-        Cell color = reply rate · Number = reply % · Hover for details · Cells with &lt;{minSendsForRate} sends are neutral
+        Cell color = open rate · Number = open % · Hover for details · Cells with &lt;{minSendsForRate} sends are neutral
       </p>
 
       <div className="overflow-x-auto">
@@ -74,7 +74,7 @@ export default function Heatmap({ data, minSendsForRate = 5 }: Props) {
                 {DAY_LABELS.map((_, dow) => {
                   const c = data.cells[dow][h];
                   const cls = cellClass(c.sent, c.rate, peakRate, minSendsForRate);
-                  const title = `${DAY_LABELS[dow]} ${hourLabel(h)} — ${c.sent} sent, ${c.replied} replies (${(c.rate * 100).toFixed(1)}%)`;
+                  const title = `${DAY_LABELS[dow]} ${hourLabel(h)} — ${c.sent} sent, ${c.opened} opened (${(c.rate * 100).toFixed(1)}%)`;
                   const showLabel = c.sent >= minSendsForRate;
                   return (
                     <td
@@ -94,7 +94,7 @@ export default function Heatmap({ data, minSendsForRate = 5 }: Props) {
       </div>
 
       <p className="text-xs text-gray-400 mt-3">
-        {data.totalSent.toLocaleString()} sends · {data.totalReplied.toLocaleString()} replies · times shown in Eastern Time
+        {data.totalSent.toLocaleString()} sends · {data.totalOpened.toLocaleString()} opened · times shown in Eastern Time
       </p>
     </div>
   );

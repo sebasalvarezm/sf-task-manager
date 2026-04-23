@@ -443,7 +443,7 @@ export default function StatsPage() {
                 value={
                   engagement ? fmtNumber(engagement.totals.multiOpenCount) : "—"
                 }
-                title="Opened 3+ times, never replied"
+                title="Highly engaged prospects (3+ opens)"
                 subtitle={
                   !outreachConnected
                     ? "Outreach not connected — connect to see warm leads."
@@ -452,7 +452,7 @@ export default function StatsPage() {
                     : engagementLoading
                     ? "Loading..."
                     : engagement
-                    ? `${engagement.totals.multiOpenCount} prospect${engagement.totals.multiOpenCount === 1 ? "" : "s"} showing high interest`
+                    ? `${engagement.totals.multiOpenCount} prospect${engagement.totals.multiOpenCount === 1 ? "" : "s"} opened 3+ emails in range`
                     : undefined
                 }
               >
@@ -463,7 +463,7 @@ export default function StatsPage() {
                       title={
                         `${m.firstName} ${m.lastName}`.trim() || "(unknown)"
                       }
-                      subtitle={`${m.company || "—"} · last opened ${daysAgo(m.lastOpenedAt)}`}
+                      subtitle={`${m.company || "—"} · last sent ${daysAgo(m.lastSentAt)}`}
                       right={
                         <span className="text-amber-600 font-semibold">
                           {m.openCount} opens

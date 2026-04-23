@@ -55,20 +55,19 @@ type JsonApiBody = {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-// A single delivered mailing with engagement counts already attached.
-// Outreach's /mailings resource carries openCount and replyCount as
-// first-class attributes, so we don't need the /events endpoint (which
-// needs a separate events.read scope and different filter syntax).
+// A single delivered mailing with its open/click counts.
+// Outreach's /mailings resource exposes openCount and clickCount as
+// first-class attributes. (replyCount is NOT on the mailing resource,
+// so we track engagement via opens only — an "open rate" heatmap.)
 export type MailingWithEngagement = {
   mailingId: string;
   prospectId: string;
   sentAt: string;       // deliveredAt, ISO timestamp
   openCount: number;
-  replyCount: number;
   clickCount: number;
 };
 
-// ── Mailings (send events + per-mailing engagement counts) ───────────────────
+// ── Mailings (send events + per-mailing open counts) ─────────────────────────
 
 export async function fetchMailingsWithEngagement(
   start: string,   // yyyy-MM-dd
@@ -81,12 +80,10 @@ export async function fetchMailingsWithEngagement(
   const endIso = `${end}T23:59:59Z`;
 
   // filter[deliveredAt]=>=start..<=end is the Outreach range syntax.
-  // Include openCount / replyCount / clickCount in sparse fieldset to
-  // keep responses tight.
   const path =
     `/mailings?filter[deliveredAt]=${encodeURIComponent(`${startIso}..${endIso}`)}` +
     `&filter[state]=delivered` +
-    `&fields[mailing]=deliveredAt,openCount,replyCount,clickCount` +
+    `&fields[mailing]=deliveredAt,openCount,clickCount` +
     `&page[size]=100` +
     `&sort=deliveredAt`;
 
@@ -101,7 +98,6 @@ export async function fetchMailingsWithEngagement(
         prospectId,
         sentAt,
         openCount: Number(row.attributes?.openCount) || 0,
-        replyCount: Number(row.attributes?.replyCount) || 0,
         clickCount: Number(row.attributes?.clickCount) || 0,
       });
     }
