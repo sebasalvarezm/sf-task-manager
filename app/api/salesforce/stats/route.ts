@@ -7,10 +7,12 @@ import {
   fetchOpportunitiesByStage,
   fetchOpenBROByOriginator,
   fetchF2FThisYear,
+  fetchStuckOpportunities,
   CDM_OWNER_NAMES,
   TaskCountRow,
 } from "@/lib/salesforce-stats";
 import { Bucket } from "@/lib/date-ranges";
+import { computeConversion } from "@/lib/analytics-derivations";
 
 // Returns all stats for the selected range:
 // { kpis, byPerson, byBucket, byStage, byOriginator }
@@ -49,19 +51,27 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "NOT_CONNECTED" }, { status: 403 });
     }
 
-    const [taskRows, bucketRows, stageRows, originatorRows, f2fYtd] =
+    const [taskRows, bucketRows, stageRows, originatorRows, f2fYtd, stuckOpps] =
       await Promise.all([
         fetchTaskCountsForRange(credentials, start, end),
         fetchTaskCountsByBucket(credentials, buckets),
         fetchOpportunitiesByStage(credentials),
         fetchOpenBROByOriginator(credentials),
         fetchF2FThisYear(credentials),
+        fetchStuckOpportunities(credentials),
       ]);
 
     const kpis = computeKpis(taskRows);
     const byPerson = computeByPerson(taskRows, originatorRows);
 
     const totalOpenBRO = originatorRows.reduce((sum, r) => sum + r.total, 0);
+
+    // E1+RCE1 → C1 conversion (team + per person)
+    const teamConversion = computeConversion(kpis.totalOutreach, kpis.c1);
+    const conversionByPerson = byPerson.map((p) => ({
+      owner: p.owner,
+      ...computeConversion(p.outreach, p.c1),
+    }));
 
     return NextResponse.json({
       kpis: {
@@ -73,10 +83,15 @@ export async function GET(req: NextRequest) {
         totalOpenBRO,
         f2fThisYear: f2fYtd,
       },
+      conversion: {
+        team: teamConversion,
+        byPerson: conversionByPerson,
+      },
       byPerson,
       byBucket: bucketRows,
       byStage: stageRows,
       byOriginator: originatorRows,
+      stuckOpps,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

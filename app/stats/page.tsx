@@ -15,10 +15,13 @@ import {
 } from "recharts";
 import RangePicker from "../components/RangePicker";
 import ConnectSalesforce from "../components/ConnectSalesforce";
+import ActionCard, { ActionRow } from "../components/ActionCard";
+import Heatmap from "../components/Heatmap";
 import { RangePreset, computeRange } from "@/lib/date-ranges";
 import { CDM_OWNER_NAMES } from "@/lib/salesforce-stats";
+import { HeatmapData, EnrichedMultiOpen } from "@/lib/analytics-derivations";
 
-// ── Types mirroring /api/salesforce/stats response ───────────────────────────
+// ── Types mirroring API responses ────────────────────────────────────────────
 
 type PersonBreakdown = {
   owner: string;
@@ -42,6 +45,19 @@ type BucketRow = {
 type StageRow = { stage: string; total: number };
 type OriginatorRow = { owner: string; total: number };
 
+type StuckOpp = {
+  id: string;
+  name: string;
+  accountName: string;
+  stage: string;
+  amount: number;
+  daysStuck: number;
+  lastStageChangeDate: string;
+  owner: string;
+};
+
+type ConversionBlock = { outreach: number; c1: number; rate: number };
+
 type StatsResponse = {
   kpis: {
     totalOutreach: number;
@@ -52,19 +68,30 @@ type StatsResponse = {
     totalOpenBRO: number;
     f2fThisYear: number;
   };
+  conversion: {
+    team: ConversionBlock;
+    byPerson: Array<{ owner: string } & ConversionBlock>;
+  };
   byPerson: PersonBreakdown[];
   byBucket: BucketRow[];
   byStage: StageRow[];
   byOriginator: OriginatorRow[];
+  stuckOpps: StuckOpp[];
 };
 
-// ── Color palette (subset of the first reference image aesthetic) ────────────
+type EngagementResponse = {
+  heatmap: HeatmapData;
+  multiOpens: EnrichedMultiOpen[];
+  totals: { sends: number; events: number; multiOpenCount: number };
+};
+
+// ── Colors ───────────────────────────────────────────────────────────────────
 const BLUE = "#6FA8F0";
 const GREEN = "#8DD178";
 const ORANGE = "#F2B84B";
 const NAVY = "#1B2A4A";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Formatters ───────────────────────────────────────────────────────────────
 
 function firstName(full: string): string {
   return full.split(" ")[0];
@@ -80,49 +107,74 @@ function fmtNumber(n: number): string {
   return n.toLocaleString();
 }
 
+function fmtPct(rate: number): string {
+  return `${(rate * 100).toFixed(1)}%`;
+}
+
+function daysAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const d = Math.floor(ms / (1000 * 60 * 60 * 24));
+  if (d <= 0) return "today";
+  if (d === 1) return "1d ago";
+  return `${d}d ago`;
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function StatsPage() {
   const router = useRouter();
   const [preset, setPreset] = useState<RangePreset>("this_week");
   const [trailingN, setTrailingN] = useState<number>(4);
-  const [connected, setConnected] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
+  const [sfConnected, setSfConnected] = useState<boolean | null>(null);
+  const [outreachConnected, setOutreachConnected] = useState<boolean | null>(null);
+
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const [data, setData] = useState<StatsResponse | null>(null);
+
+  const [engagementLoading, setEngagementLoading] = useState(false);
+  const [engagementError, setEngagementError] = useState<string | null>(null);
+  const [engagement, setEngagement] = useState<EngagementResponse | null>(null);
 
   const range = useMemo(
     () => computeRange(preset, new Date(), trailingN),
     [preset, trailingN]
   );
 
-  // ── On mount: check Salesforce connection ──────────────────────────────────
+  // ── Connection checks ──────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/salesforce/status");
-        if (res.ok) {
-          const d = await res.json();
-          setConnected(Boolean(d.connected));
-        } else {
-          setConnected(false);
-        }
+        const [sfRes, oRes] = await Promise.all([
+          fetch("/api/salesforce/status"),
+          fetch("/api/outreach/status"),
+        ]);
+        const sfJson = sfRes.ok ? await sfRes.json() : { connected: false };
+        const oJson = oRes.ok ? await oRes.json() : { connected: false };
+        setSfConnected(Boolean(sfJson.connected));
+        setOutreachConnected(Boolean(oJson.connected));
       } catch {
-        setConnected(false);
+        setSfConnected(false);
+        setOutreachConnected(false);
       }
     })();
   }, []);
 
-  // ── Load stats when connected or range changes ─────────────────────────────
+  // ── Load stats + engagement when connected or range changes ────────────────
   useEffect(() => {
-    if (!connected) return;
-    loadStats();
+    if (sfConnected) loadStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, preset, trailingN]);
+  }, [sfConnected, preset, trailingN]);
+
+  useEffect(() => {
+    if (outreachConnected) loadEngagement();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outreachConnected, preset, trailingN]);
 
   async function loadStats() {
-    setLoading(true);
-    setError(null);
+    setStatsLoading(true);
+    setStatsError(null);
     try {
       const params = new URLSearchParams({
         start: range.start,
@@ -133,24 +185,53 @@ export default function StatsPage() {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         if (body.error === "NOT_CONNECTED") {
-          setConnected(false);
+          setSfConnected(false);
           return;
         }
         throw new Error(body.error ?? "Failed to load stats");
       }
-      const json = (await res.json()) as StatsResponse;
-      setData(json);
+      setData((await res.json()) as StatsResponse);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unexpected error");
+      setStatsError(err instanceof Error ? err.message : "Unexpected error");
     } finally {
-      setLoading(false);
+      setStatsLoading(false);
     }
   }
 
-  async function handleDisconnect() {
+  async function loadEngagement() {
+    setEngagementLoading(true);
+    setEngagementError(null);
+    try {
+      const params = new URLSearchParams({
+        start: range.start,
+        end: range.end,
+      });
+      const res = await fetch(`/api/outreach/engagement?${params.toString()}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        if (body.error === "OUTREACH_NOT_CONNECTED") {
+          setOutreachConnected(false);
+          return;
+        }
+        throw new Error(body.error ?? "Failed to load engagement");
+      }
+      setEngagement((await res.json()) as EngagementResponse);
+    } catch (err) {
+      setEngagementError(err instanceof Error ? err.message : "Unexpected error");
+    } finally {
+      setEngagementLoading(false);
+    }
+  }
+
+  async function handleSfDisconnect() {
     await fetch("/api/salesforce/status", { method: "DELETE" });
-    setConnected(false);
+    setSfConnected(false);
     setData(null);
+  }
+
+  function handleRefresh() {
+    if (sfConnected) loadStats();
+    if (outreachConnected) loadEngagement();
   }
 
   // ── Derived chart data ─────────────────────────────────────────────────────
@@ -228,14 +309,37 @@ export default function StatsPage() {
             Weekly Stats · CDM Group
           </span>
         </div>
-        {connected !== null && (
-          <ConnectSalesforce connected={connected} onDisconnect={handleDisconnect} />
-        )}
+        <div className="flex items-center gap-3">
+          {outreachConnected !== null && (
+            <span
+              className={
+                "inline-flex items-center gap-1.5 text-xs rounded-full px-3 py-1 border " +
+                (outreachConnected
+                  ? "text-green-400 bg-green-950/40 border-green-700"
+                  : "text-amber-300 bg-amber-950/40 border-amber-700")
+              }
+            >
+              <span
+                className={
+                  "w-1.5 h-1.5 rounded-full " +
+                  (outreachConnected ? "bg-green-400" : "bg-amber-400")
+                }
+              />
+              Outreach {outreachConnected ? "connected" : "not connected"}
+            </span>
+          )}
+          {sfConnected !== null && (
+            <ConnectSalesforce
+              connected={sfConnected}
+              onDisconnect={handleSfDisconnect}
+            />
+          )}
+        </div>
       </header>
 
       {/* Main */}
       <main className="flex-1 px-8 py-8 max-w-[1400px] w-full mx-auto">
-        {/* Range picker + CDM Team badge */}
+        {/* Top controls */}
         <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
           <RangePicker
             value={preset}
@@ -245,45 +349,56 @@ export default function StatsPage() {
               setTrailingN(n);
             }}
           />
-          <CdmTeamBadge />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleRefresh}
+              className="text-sm font-medium text-navy bg-white border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50"
+            >
+              Refresh
+            </button>
+            <CdmTeamBadge />
+          </div>
         </div>
-        <p className="text-sm text-gray-500 mb-6">
+        <p className="text-sm text-gray-500 mb-8">
           Showing <span className="font-medium text-navy">{range.label}</span>
         </p>
 
-        {connected === false && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 text-center">
-            <p className="text-sm text-amber-700 mb-3">
+        {sfConnected === false && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 text-center mb-6">
+            <p className="text-sm text-amber-700">
               Salesforce is not connected. Connect to see stats.
             </p>
           </div>
         )}
 
-        {connected === true && loading && (
-          <div className="flex justify-center py-16">
-            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-orange" />
-          </div>
-        )}
+        {/* ── ACTIVITY SUMMARY ─────────────────────────────────────────────── */}
+        <SectionHeader title="Activity Summary" color="bg-blue-500" />
 
-        {connected === true && error && (
+        {sfConnected === true && statsLoading && !data && <LoadingSpinner />}
+        {sfConnected === true && statsError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700 mb-6">
-            {error}
+            {statsError}
           </div>
         )}
 
-        {connected === true && !loading && data && (
+        {sfConnected === true && data && (
           <>
-            {/* KPI row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-10">
               <KpiCard
                 label="Total Outreach"
                 sublabel={`${fmtNumber(data.kpis.e1)} E1 · ${fmtNumber(data.kpis.rce1)} RCE1`}
                 value={fmtNumber(data.kpis.totalOutreach)}
               />
               <KpiCard
-                label="Total Calls (C1)"
-                sublabel="Completed"
+                label="Total Calls"
+                sublabel="C1 completed"
                 value={fmtNumber(data.kpis.totalCalls)}
+              />
+              <KpiCard
+                label="Conversion"
+                sublabel={`${fmtNumber(data.conversion.team.c1)} calls / ${fmtNumber(data.conversion.team.outreach)} outreach`}
+                value={fmtPct(data.conversion.team.rate)}
+                accent="text-green-600"
               />
               <KpiCard
                 label="F2F This Year"
@@ -297,7 +412,71 @@ export default function StatsPage() {
               />
             </div>
 
-            {/* Row 1: Outreach by Person + Trend */}
+            {/* ── ACTION ITEMS ───────────────────────────────────────────── */}
+            <SectionHeader title="Action Items" color="bg-red-500" />
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-10">
+              <ActionCard
+                pill="FIX"
+                tone="fix"
+                value={fmtNumber(data.stuckOpps.length)}
+                title="Stuck 30+ days in stage"
+                subtitle={
+                  data.stuckOpps.length === 0
+                    ? "No opportunities flagged — pipeline is moving."
+                    : `${data.stuckOpps.length} open opportunit${data.stuckOpps.length === 1 ? "y" : "ies"} without a stage change in 30+ days`
+                }
+              >
+                {data.stuckOpps.slice(0, 10).map((o) => (
+                  <ActionRow
+                    key={o.id}
+                    title={o.accountName}
+                    subtitle={`${o.stage} · ${fmtMoney(o.amount)} · ${firstName(o.owner)}`}
+                    right={<span className="text-red-600 font-semibold">{o.daysStuck}d</span>}
+                  />
+                ))}
+              </ActionCard>
+
+              <ActionCard
+                pill="WARM"
+                tone="warm"
+                value={
+                  engagement ? fmtNumber(engagement.totals.multiOpenCount) : "—"
+                }
+                title="Opened 3+ times, never replied"
+                subtitle={
+                  !outreachConnected
+                    ? "Outreach not connected — connect to see warm leads."
+                    : engagementError
+                    ? "Error loading engagement data."
+                    : engagementLoading
+                    ? "Loading..."
+                    : engagement
+                    ? `${engagement.totals.multiOpenCount} prospect${engagement.totals.multiOpenCount === 1 ? "" : "s"} showing high interest`
+                    : undefined
+                }
+              >
+                {engagement &&
+                  engagement.multiOpens.slice(0, 10).map((m) => (
+                    <ActionRow
+                      key={m.prospectId}
+                      title={
+                        `${m.firstName} ${m.lastName}`.trim() || "(unknown)"
+                      }
+                      subtitle={`${m.company || "—"} · last opened ${daysAgo(m.lastOpenedAt)}`}
+                      right={
+                        <span className="text-amber-600 font-semibold">
+                          {m.openCount} opens
+                        </span>
+                      }
+                    />
+                  ))}
+              </ActionCard>
+            </div>
+
+            {/* ── TEAM BREAKDOWN ─────────────────────────────────────────── */}
+            <SectionHeader title="Team Breakdown" color="bg-navy" />
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <ChartCard title="Outreach by Person">
                 <ResponsiveContainer width="100%" height={260}>
@@ -340,8 +519,7 @@ export default function StatsPage() {
               </ChartCard>
             </div>
 
-            {/* Row 2: Calls + F2F */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
               <ChartCard title="Calls (C1) + F2F by Person">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={callsF2FByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
@@ -356,39 +534,55 @@ export default function StatsPage() {
                 </ResponsiveContainer>
               </ChartCard>
 
-              <ChartCard title={showTrend ? "Calls + F2F Trend" : "E1 vs RCE1 by Person"}>
-                {showTrend ? (
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={trendData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                      <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-                      <Tooltip />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Bar dataKey="Calls" fill={BLUE} radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="F2F" fill={ORANGE} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={e1VsRce1Data} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                      <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-                      <Tooltip />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Bar dataKey="E1" fill={BLUE} radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="RCE1" fill={GREEN} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
+              <ChartCard title="Conversion Rate by Person">
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart
+                    data={data.conversion.byPerson.map((p) => ({
+                      name: firstName(p.owner),
+                      Rate: parseFloat((p.rate * 100).toFixed(1)),
+                    }))}
+                    margin={{ top: 24, right: 16, left: 0, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}%`} />
+                    <Tooltip formatter={(v) => `${v}%`} />
+                    <Bar dataKey="Rate" fill={GREEN} radius={[4, 4, 0, 0]}>
+                      <LabelList dataKey="Rate" position="top" formatter={(v: number) => `${v}%`} style={{ fontSize: 12, fill: NAVY }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               </ChartCard>
             </div>
 
-            {/* Row 3: BRO (always snapshot, not range-dependent) */}
-            <h2 className="text-lg font-semibold text-navy mt-4 mb-3">
-              BRO Pipeline <span className="text-xs font-normal text-gray-400">· current open snapshot</span>
-            </h2>
+            {/* ── BEST SEND TIMES ────────────────────────────────────────── */}
+            <SectionHeader title="Best Send Times (ET)" color="bg-green-500" />
+
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 mb-10">
+              {!outreachConnected ? (
+                <p className="text-sm text-gray-500">
+                  Connect Outreach.io to see the send-times heatmap.
+                </p>
+              ) : engagementLoading && !engagement ? (
+                <p className="text-sm text-gray-500">Loading engagement data…</p>
+              ) : engagementError ? (
+                <p className="text-sm text-red-700">{engagementError}</p>
+              ) : engagement && engagement.totals.sends === 0 ? (
+                <p className="text-sm text-gray-500">
+                  No sends in this range yet. Try a wider range.
+                </p>
+              ) : engagement ? (
+                <Heatmap data={engagement.heatmap} />
+              ) : null}
+            </div>
+
+            {/* ── BRO PIPELINE ───────────────────────────────────────────── */}
+            <SectionHeader
+              title="BRO Pipeline"
+              color="bg-purple-500"
+              subtitle="current open snapshot"
+            />
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
               <ChartCard title="Open BRO by Originator">
                 <ResponsiveContainer width="100%" height={260}>
@@ -437,19 +631,55 @@ export default function StatsPage() {
 
 // ── Small presentational components ──────────────────────────────────────────
 
+function SectionHeader({
+  title,
+  color,
+  subtitle,
+}: {
+  title: string;
+  color: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 mb-4">
+      <span className={`inline-block w-1 h-5 rounded-full ${color}`} />
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-navy">
+        {title}
+      </h2>
+      {subtitle && (
+        <span className="text-xs text-gray-400 font-normal normal-case tracking-normal">
+          · {subtitle}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function LoadingSpinner() {
+  return (
+    <div className="flex justify-center py-12">
+      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-orange" />
+    </div>
+  );
+}
+
 function KpiCard({
   label,
   sublabel,
   value,
+  accent,
 }: {
   label: string;
   sublabel: string;
   value: string;
+  accent?: string;
 }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
       <p className="text-xs text-gray-500 uppercase tracking-wide">{label}</p>
-      <p className="text-3xl font-semibold text-navy mt-2">{value}</p>
+      <p className={`text-3xl font-semibold mt-2 tabular-nums ${accent ?? "text-navy"}`}>
+        {value}
+      </p>
       <p className="text-xs text-gray-400 mt-1">{sublabel}</p>
     </div>
   );

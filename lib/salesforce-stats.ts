@@ -50,6 +50,17 @@ export type OriginatorTotalRow = {
   total: number;
 };
 
+export type StuckOpportunity = {
+  id: string;
+  name: string;
+  accountName: string;
+  stage: OpportunityStage;
+  amount: number;        // already multiplied by BRO_AMOUNT_MULTIPLIER
+  daysStuck: number;
+  lastStageChangeDate: string; // ISO date
+  owner: string;
+};
+
 // ── SOQL helpers ─────────────────────────────────────────────────────────────
 
 function escapeSoql(v: string): string {
@@ -201,6 +212,59 @@ export async function fetchOpenBROByOriginator(
     owner: n,
     total: (byOwner.get(n) ?? 0) * BRO_AMOUNT_MULTIPLIER,
   }));
+}
+
+// ── Stuck opportunities (30+ days in stage) ──────────────────────────────────
+
+export async function fetchStuckOpportunities(
+  credentials: SfCredentials,
+  thresholdDays: number = 30,
+  limit: number = 20
+): Promise<StuckOpportunity[]> {
+  const soql =
+    `SELECT Id, Name, StageName, Amount, LastModifiedDate, Account.Name, Owner.Name ` +
+    `FROM Opportunity ` +
+    `WHERE IsClosed = false ` +
+    `AND StageName IN (${stagesClause}) ` +
+    `AND Owner.Name IN (${ownerNamesClause}) ` +
+    `ORDER BY LastModifiedDate ASC ` +
+    `LIMIT 200`;
+
+  type Row = {
+    Id: string;
+    Name: string;
+    StageName: OpportunityStage;
+    Amount: number | null;
+    LastModifiedDate: string;
+    Account?: { Name?: string } | null;
+    Owner?: { Name?: string } | null;
+  };
+
+  const rows = await runQuery<Row>(credentials, soql);
+
+  const now = Date.now();
+  const stuck: StuckOpportunity[] = [];
+
+  for (const r of rows) {
+    if (!r.LastModifiedDate) continue;
+    const changeMs = new Date(r.LastModifiedDate).getTime();
+    const daysStuck = Math.floor((now - changeMs) / (1000 * 60 * 60 * 24));
+    if (daysStuck < thresholdDays) continue;
+
+    stuck.push({
+      id: r.Id,
+      name: r.Name,
+      accountName: r.Account?.Name ?? "(no account)",
+      stage: r.StageName,
+      amount: (Number(r.Amount) || 0) * BRO_AMOUNT_MULTIPLIER,
+      daysStuck,
+      lastStageChangeDate: r.LastModifiedDate,
+      owner: r.Owner?.Name ?? "",
+    });
+  }
+
+  stuck.sort((a, b) => b.daysStuck - a.daysStuck);
+  return stuck.slice(0, limit);
 }
 
 // ── F2F This Year (always YTD, regardless of selected range) ─────────────────
