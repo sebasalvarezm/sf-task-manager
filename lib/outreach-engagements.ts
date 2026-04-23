@@ -76,6 +76,18 @@ export type MailingFetchResult = {
 };
 
 // ── Mailings (send events + per-mailing open counts) ─────────────────────────
+//
+// NOTE: We do NOT use filter[createdAt] on the Outreach query — the date
+// range syntax has been returning zero results regardless of format (with
+// Z, without Z, filter[deliveredAt], filter[createdAt]). Instead we fetch
+// mailings newest-first with no date filter and stop paginating once we
+// pass the window. This is robust to Outreach's filter-syntax quirks.
+//
+// Trade-off: if the selected range is very old and the org has a huge
+// volume of newer mailings, we could hit MAX_PAGES before reaching the
+// range. In practice 3k mailings is plenty for the CDM team.
+
+const MAX_PAGES = 30; // up to 3,000 mailings
 
 export async function fetchMailingsWithEngagement(
   start: string,   // yyyy-MM-dd
@@ -84,76 +96,68 @@ export async function fetchMailingsWithEngagement(
   const credentials = await getOutreachValidCredentials();
   if (!credentials) throw new Error("OUTREACH_NOT_CONNECTED");
 
-  // Outreach date range syntax: `start..end` with timestamps in one of:
-  // YYYY-MM-DD, YYYY-MM-DDTHH:MMZ, YYYY-MM-DDTHH:MM:SSZ, YYYY-MM-DDTHH:MM:SS.UUUZ.
-  // The trailing Z is required (not optional, despite what I assumed before).
-  // createdAt is more reliable than deliveredAt because it's always populated.
-  const startIso = `${start}T00:00:00Z`;
-  const endIso = `${end}T23:59:59Z`;
-
-  const path =
-    `/mailings?filter[createdAt]=${encodeURIComponent(`${startIso}..${endIso}`)}` +
-    `&fields[mailing]=deliveredAt,createdAt,state,openCount,clickCount` +
-    `&page[size]=100` +
-    `&sort=createdAt`;
+  const startMs = new Date(`${start}T00:00:00Z`).getTime();
+  const endMs = new Date(`${end}T23:59:59Z`).getTime();
 
   const mailings: MailingWithEngagement[] = [];
   const stateBreakdown: Record<string, number> = {};
   let rawCount = 0;
   let withDeliveredAt = 0;
+  let hitBeforeRange = false;
 
-  const rows = await paginate<{
-    id: string;
-    prospectId: string;
-    deliveredAt: string | null;
-    createdAt: string | null;
-    state: string;
-    openCount: number;
-    clickCount: number;
-  }>(credentials, path, (body) => {
-    const out: {
-      id: string;
-      prospectId: string;
-      deliveredAt: string | null;
-      createdAt: string | null;
-      state: string;
-      openCount: number;
-      clickCount: number;
-    }[] = [];
+  const initialPath =
+    `/mailings?fields[mailing]=deliveredAt,createdAt,state,openCount,clickCount` +
+    `&page[size]=100` +
+    `&sort=-createdAt`;
+
+  let next: string | null = initialPath;
+  let pages = 0;
+
+  while (next && pages < MAX_PAGES && !hitBeforeRange) {
+    const res = await outreachFetch(credentials, next);
+    if (!res.ok) {
+      if (res.status === 401) throw new Error("OUTREACH_NOT_CONNECTED");
+      throw new Error(`Outreach request failed: ${await res.text()}`);
+    }
+    const body = (await res.json()) as JsonApiBody;
+
     for (const row of body.data ?? []) {
+      rawCount++;
+      const createdAt = (row.attributes?.createdAt as string | null) ?? null;
+      if (!createdAt) continue;
+      const createdMs = new Date(createdAt).getTime();
+
+      // Newest-first sort: once we're older than start, we can stop.
+      if (createdMs < startMs) {
+        hitBeforeRange = true;
+        break;
+      }
+
+      // Skip if newer than end (shouldn't happen with sort=-createdAt from
+      // page 1, but guard anyway).
+      if (createdMs > endMs) continue;
+
+      const state = (row.attributes?.state as string) ?? "unknown";
+      stateBreakdown[state] = (stateBreakdown[state] ?? 0) + 1;
+
+      const deliveredAt = (row.attributes?.deliveredAt as string | null) ?? null;
+      if (deliveredAt) withDeliveredAt++;
+
       const prospectId = row.relationships?.prospect?.data?.id;
       if (!prospectId) continue;
-      out.push({
-        id: row.id,
+
+      mailings.push({
+        mailingId: row.id,
         prospectId,
-        deliveredAt: (row.attributes?.deliveredAt as string | null) ?? null,
-        createdAt: (row.attributes?.createdAt as string | null) ?? null,
-        state: (row.attributes?.state as string) ?? "unknown",
+        sentAt: deliveredAt ?? createdAt,
+        state,
         openCount: Number(row.attributes?.openCount) || 0,
         clickCount: Number(row.attributes?.clickCount) || 0,
       });
     }
-    return out;
-  });
 
-  for (const r of rows) {
-    rawCount++;
-    stateBreakdown[r.state] = (stateBreakdown[r.state] ?? 0) + 1;
-    if (r.deliveredAt) withDeliveredAt++;
-
-    // Accept any mailing that has either deliveredAt OR a "sent-ish" state.
-    // We prefer deliveredAt as sentAt, falling back to createdAt.
-    const sentAt = r.deliveredAt ?? r.createdAt;
-    if (!sentAt) continue;
-
-    mailings.push({
-      mailingId: r.id,
-      prospectId: r.prospectId,
-      sentAt,
-      state: r.state,
-      openCount: r.openCount,
-      clickCount: r.clickCount,
-    });
+    next = body.links?.next ?? null;
+    pages++;
   }
 
   return { mailings, rawCount, stateBreakdown, withDeliveredAt };
