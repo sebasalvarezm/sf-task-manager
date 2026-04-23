@@ -82,7 +82,7 @@ type StatsResponse = {
 type EngagementResponse = {
   heatmap: HeatmapData;
   multiOpens: EnrichedMultiOpen[];
-  totals: { sends: number; events: number; multiOpenCount: number };
+  totals: { mailings: number; multiOpenCount: number };
 };
 
 // ── Colors ───────────────────────────────────────────────────────────────────
@@ -567,7 +567,7 @@ export default function StatsPage() {
                 <p className="text-sm text-gray-500">Loading engagement data…</p>
               ) : engagementError ? (
                 <p className="text-sm text-red-700">{engagementError}</p>
-              ) : engagement && engagement.totals.sends === 0 ? (
+              ) : engagement && engagement.totals.mailings === 0 ? (
                 <p className="text-sm text-gray-500">
                   No sends in this range yet. Try a wider range.
                 </p>

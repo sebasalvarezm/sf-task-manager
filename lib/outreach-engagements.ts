@@ -55,42 +55,43 @@ type JsonApiBody = {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type MailingSend = {
+// A single delivered mailing with engagement counts already attached.
+// Outreach's /mailings resource carries openCount and replyCount as
+// first-class attributes, so we don't need the /events endpoint (which
+// needs a separate events.read scope and different filter syntax).
+export type MailingWithEngagement = {
   mailingId: string;
   prospectId: string;
-  sentAt: string;       // ISO timestamp
+  sentAt: string;       // deliveredAt, ISO timestamp
+  openCount: number;
+  replyCount: number;
+  clickCount: number;
 };
 
-export type EngagementEvent = {
-  prospectId: string;
-  mailingId: string | null;
-  type: "open" | "reply";
-  eventAt: string;      // ISO timestamp
-};
+// ── Mailings (send events + per-mailing engagement counts) ───────────────────
 
-// ── Mailings (send events) ───────────────────────────────────────────────────
-
-// Fetches every mailing whose `deliveredAt` falls within [start, end].
-// Pagination-safe. Returns only delivered mailings with a prospect attached.
-export async function fetchSendEvents(
+export async function fetchMailingsWithEngagement(
   start: string,   // yyyy-MM-dd
   end: string      // yyyy-MM-dd
-): Promise<MailingSend[]> {
+): Promise<MailingWithEngagement[]> {
   const credentials = await getOutreachValidCredentials();
   if (!credentials) throw new Error("OUTREACH_NOT_CONNECTED");
 
   const startIso = `${start}T00:00:00Z`;
   const endIso = `${end}T23:59:59Z`;
 
-  // Outreach filter syntax: filter[deliveredAt]=>=2026-01-01..<=2026-02-01
+  // filter[deliveredAt]=>=start..<=end is the Outreach range syntax.
+  // Include openCount / replyCount / clickCount in sparse fieldset to
+  // keep responses tight.
   const path =
     `/mailings?filter[deliveredAt]=${encodeURIComponent(`${startIso}..${endIso}`)}` +
     `&filter[state]=delivered` +
+    `&fields[mailing]=deliveredAt,openCount,replyCount,clickCount` +
     `&page[size]=100` +
     `&sort=deliveredAt`;
 
-  return paginate<MailingSend>(credentials, path, (body) => {
-    const out: MailingSend[] = [];
+  return paginate<MailingWithEngagement>(credentials, path, (body) => {
+    const out: MailingWithEngagement[] = [];
     for (const row of body.data ?? []) {
       const prospectId = row.relationships?.prospect?.data?.id;
       const sentAt = row.attributes?.deliveredAt as string | undefined;
@@ -99,49 +100,10 @@ export async function fetchSendEvents(
         mailingId: row.id,
         prospectId,
         sentAt,
+        openCount: Number(row.attributes?.openCount) || 0,
+        replyCount: Number(row.attributes?.replyCount) || 0,
+        clickCount: Number(row.attributes?.clickCount) || 0,
       });
-    }
-    return out;
-  });
-}
-
-// ── Engagement events (opens + replies) ──────────────────────────────────────
-
-// Pulls all open + reply events in [start, end].
-// NB: Outreach exposes these as `mailboxEvents` with `type` values like
-// "mailing_opened" and "mailing_replied_to" on some API versions. The
-// cleanest universal approach is to query `/events` with a type filter.
-export async function fetchOpenAndReplyEvents(
-  start: string,
-  end: string
-): Promise<EngagementEvent[]> {
-  const credentials = await getOutreachValidCredentials();
-  if (!credentials) throw new Error("OUTREACH_NOT_CONNECTED");
-
-  const startIso = `${start}T00:00:00Z`;
-  const endIso = `${end}T23:59:59Z`;
-
-  const path =
-    `/events?filter[eventAt]=${encodeURIComponent(`${startIso}..${endIso}`)}` +
-    `&filter[type]=${encodeURIComponent("mailing_opened,mailing_replied_to")}` +
-    `&page[size]=100` +
-    `&sort=eventAt`;
-
-  return paginate<EngagementEvent>(credentials, path, (body) => {
-    const out: EngagementEvent[] = [];
-    for (const row of body.data ?? []) {
-      const type = row.attributes?.type as string | undefined;
-      const eventAt = row.attributes?.eventAt as string | undefined;
-      const prospectId = row.relationships?.prospect?.data?.id;
-      const mailingId = row.relationships?.mailing?.data?.id ?? null;
-      if (!type || !eventAt || !prospectId) continue;
-
-      let normalized: "open" | "reply" | null = null;
-      if (type === "mailing_opened") normalized = "open";
-      else if (type === "mailing_replied_to") normalized = "reply";
-      if (!normalized) continue;
-
-      out.push({ prospectId, mailingId, type: normalized, eventAt });
     }
     return out;
   });

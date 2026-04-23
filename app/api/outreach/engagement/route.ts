@@ -1,8 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import {
-  fetchSendEvents,
-  fetchOpenAndReplyEvents,
+  fetchMailingsWithEngagement,
   fetchProspectsByIds,
 } from "@/lib/outreach-engagements";
 import {
@@ -12,8 +11,8 @@ import {
 } from "@/lib/analytics-derivations";
 
 // Returns heatmap + multi-open card data for the given date range.
-// Kept isolated from /api/salesforce/stats so the two can run in parallel
-// client-side and so one integration failing doesn't break the other.
+// Uses only the /mailings endpoint (which carries openCount/replyCount
+// on each record), so no events.read scope is needed.
 export async function GET(req: NextRequest) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -31,15 +30,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const [sends, events] = await Promise.all([
-      fetchSendEvents(start, end),
-      fetchOpenAndReplyEvents(start, end),
-    ]);
+    const mailings = await fetchMailingsWithEngagement(start, end);
 
-    const heatmap = computeHeatmap(sends, events);
-    const multiRaw = computeMultiOpens(events);
+    const heatmap = computeHeatmap(mailings);
+    const multiRaw = computeMultiOpens(mailings);
 
-    // Only resolve prospect details for the top 20 multi-openers to limit API churn.
+    // Resolve prospect details for only the top 20 multi-openers.
     const top = multiRaw.slice(0, 20);
     const prospectInfo = await fetchProspectsByIds(top.map((m) => m.prospectId));
     const multiOpens = enrichMultiOpens(top, prospectInfo);
@@ -48,8 +44,7 @@ export async function GET(req: NextRequest) {
       heatmap,
       multiOpens,
       totals: {
-        sends: sends.length,
-        events: events.length,
+        mailings: mailings.length,
         multiOpenCount: multiRaw.length,
       },
     });

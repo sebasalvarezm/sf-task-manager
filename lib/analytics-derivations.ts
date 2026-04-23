@@ -1,11 +1,11 @@
-import { MailingSend, EngagementEvent, ProspectInfo } from "./outreach-engagements";
+import { MailingWithEngagement, ProspectInfo } from "./outreach-engagements";
 
 // ── Heatmap: day-of-week (0=Sun..6=Sat) × hour (0-23) ────────────────────────
 
 export type HeatmapCell = {
   sent: number;
   replied: number;
-  rate: number;         // 0..1, replied / sent
+  rate: number;         // 0..1, replied mailings / sent mailings
 };
 
 export type HeatmapData = {
@@ -38,8 +38,7 @@ function toEtDowHour(isoUtc: string): { dow: number; hour: number } {
 }
 
 export function computeHeatmap(
-  sends: MailingSend[],
-  events: EngagementEvent[],
+  mailings: MailingWithEngagement[],
   minSendsForRate: number = 5
 ): HeatmapData {
   // Build empty 7×24 grid
@@ -47,22 +46,13 @@ export function computeHeatmap(
     Array.from({ length: 24 }, () => ({ sent: 0, replied: 0, rate: 0 }))
   );
 
-  // Index sends by mailingId so we can match reply events back to the send bucket
-  const sendByMailing = new Map<string, MailingSend>();
-  for (const s of sends) {
-    sendByMailing.set(s.mailingId, s);
-    const { dow, hour } = toEtDowHour(s.sentAt);
+  // Each mailing contributes one "sent" + (replyCount > 0 ? 1 : 0) "replied"
+  // to its send-time bucket. We count "got at least one reply" rather than
+  // total replies, which is the conventional reply-rate denominator.
+  for (const m of mailings) {
+    const { dow, hour } = toEtDowHour(m.sentAt);
     cells[dow][hour].sent++;
-  }
-
-  // For each reply event, find the mailing → get its send bucket → increment replied
-  for (const e of events) {
-    if (e.type !== "reply") continue;
-    if (!e.mailingId) continue;
-    const send = sendByMailing.get(e.mailingId);
-    if (!send) continue; // reply to an email we don't have a send record for
-    const { dow, hour } = toEtDowHour(send.sentAt);
-    cells[dow][hour].replied++;
+    if (m.replyCount > 0) cells[dow][hour].replied++;
   }
 
   // Compute rates + find peak
@@ -87,43 +77,46 @@ export function computeHeatmap(
   return { cells, peak, totalSent, totalReplied };
 }
 
-// ── Multi-open prospects (3+ opens, zero replies) ────────────────────────────
+// ── Multi-open prospects (3+ opens across all their mailings, zero replies) ─
 
 export type MultiOpenProspect = {
   prospectId: string;
-  openCount: number;
-  lastOpenedAt: string;
+  openCount: number;     // summed across all mailings in range
+  lastOpenedAt: string;  // sentAt of most-recent mailing with opens
 };
 
 export function computeMultiOpens(
-  events: EngagementEvent[],
+  mailings: MailingWithEngagement[],
   minOpens: number = 3
 ): MultiOpenProspect[] {
-  const openCounts = new Map<string, { count: number; last: string }>();
-  const repliedProspects = new Set<string>();
+  type Agg = { opens: number; replied: boolean; lastOpenedAt: string };
+  const byProspect = new Map<string, Agg>();
 
-  for (const e of events) {
-    if (e.type === "reply") {
-      repliedProspects.add(e.prospectId);
-    } else if (e.type === "open") {
-      const prev = openCounts.get(e.prospectId);
-      if (!prev) {
-        openCounts.set(e.prospectId, { count: 1, last: e.eventAt });
-      } else {
-        prev.count++;
-        if (e.eventAt > prev.last) prev.last = e.eventAt;
+  for (const m of mailings) {
+    const prev = byProspect.get(m.prospectId);
+    if (!prev) {
+      byProspect.set(m.prospectId, {
+        opens: m.openCount,
+        replied: m.replyCount > 0,
+        lastOpenedAt: m.openCount > 0 ? m.sentAt : "",
+      });
+    } else {
+      prev.opens += m.openCount;
+      if (m.replyCount > 0) prev.replied = true;
+      if (m.openCount > 0 && m.sentAt > prev.lastOpenedAt) {
+        prev.lastOpenedAt = m.sentAt;
       }
     }
   }
 
   const result: MultiOpenProspect[] = [];
-  for (const [prospectId, info] of openCounts) {
-    if (info.count < minOpens) continue;
-    if (repliedProspects.has(prospectId)) continue;
+  for (const [prospectId, info] of byProspect) {
+    if (info.opens < minOpens) continue;
+    if (info.replied) continue;
     result.push({
       prospectId,
-      openCount: info.count,
-      lastOpenedAt: info.last,
+      openCount: info.opens,
+      lastOpenedAt: info.lastOpenedAt || "",
     });
   }
 
