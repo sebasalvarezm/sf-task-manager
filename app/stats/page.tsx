@@ -448,7 +448,7 @@ export default function StatsPage() {
                   !outreachConnected
                     ? "Outreach not connected — connect to see warm leads."
                     : engagementError
-                    ? "Error loading engagement data."
+                    ? engagementError
                     : engagementLoading
                     ? "Loading..."
                     : engagement
