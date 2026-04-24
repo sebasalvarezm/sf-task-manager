@@ -74,6 +74,7 @@ export type MailingFetchResult = {
   stateBreakdown: Record<string, number>; // how many of each state
   withDeliveredAt: number; // how many had deliveredAt populated
   withProspectId: number;  // how many had a prospect relationship populated
+  countFilteredByMailbox: number; // skipped because not from an allowed mailbox
   // Date diagnostics: helps us see why records get filtered out.
   earliestCreatedAt: string | null;
   latestCreatedAt: string | null;
@@ -100,7 +101,8 @@ const MAX_PAGES = 30; // up to 3,000 mailings
 
 export async function fetchMailingsWithEngagement(
   start: string,   // yyyy-MM-dd
-  end: string      // yyyy-MM-dd
+  end: string,     // yyyy-MM-dd
+  allowedMailboxIds?: Set<string> // if provided, skip mailings not from these mailboxes
 ): Promise<MailingFetchResult> {
   const credentials = await getOutreachValidCredentials();
   if (!credentials) throw new Error("OUTREACH_NOT_CONNECTED");
@@ -113,6 +115,7 @@ export async function fetchMailingsWithEngagement(
   let rawCount = 0;
   let withDeliveredAt = 0;
   let withProspectId = 0;
+  let countFilteredByMailbox = 0;
 
   // Date diagnostics
   let earliestCreatedAt: string | null = null;
@@ -174,6 +177,16 @@ export async function fetchMailingsWithEngagement(
       }
       countInRange++;
 
+      // Restrict to mailings sent from one of the CDM team's mailboxes
+      // (if a filter set was provided). Non-CDM sends are excluded.
+      if (allowedMailboxIds && allowedMailboxIds.size > 0) {
+        const mailboxId = row.relationships?.mailbox?.data?.id;
+        if (!mailboxId || !allowedMailboxIds.has(mailboxId)) {
+          countFilteredByMailbox++;
+          continue;
+        }
+      }
+
       const prospectId = row.relationships?.prospect?.data?.id;
       if (prospectId) withProspectId++;
 
@@ -203,6 +216,7 @@ export async function fetchMailingsWithEngagement(
     stateBreakdown,
     withDeliveredAt,
     withProspectId,
+    countFilteredByMailbox,
     earliestCreatedAt,
     latestCreatedAt,
     countInRange,
@@ -211,6 +225,84 @@ export async function fetchMailingsWithEngagement(
     sampleDates,
     sampleRelationshipKeys,
   };
+}
+
+// ── CDM team mailbox lookup ──────────────────────────────────────────────────
+//
+// Fetch Outreach mailboxes and their owning users in one call, then return
+// the subset of mailbox IDs whose owning user's full name matches one of
+// the CDM owner names. Used to filter mailings to sends from the CDM team.
+
+export type CdmMailboxResult = {
+  mailboxIds: Set<string>;
+  matched: string[];    // which owner names found a mailbox
+  unmatched: string[];  // which didn't (so we can surface in debug)
+};
+
+export async function fetchCdmMailboxIds(
+  ownerNames: readonly string[]
+): Promise<CdmMailboxResult> {
+  const credentials = await getOutreachValidCredentials();
+  if (!credentials) throw new Error("OUTREACH_NOT_CONNECTED");
+
+  // `include=user` sideloads the owning user for each mailbox in the same
+  // response (JSON:API's `included` block), so we don't need a second call.
+  const mailboxIds = new Set<string>();
+  const matchedSet = new Set<string>();
+  const wantedLower = new Map(
+    ownerNames.map((n) => [n.toLowerCase(), n])
+  );
+
+  let next: string | null = "/mailboxes?include=user&page[size]=100";
+  let pages = 0;
+
+  while (next && pages < 5) {
+    const res = await outreachFetch(credentials, next);
+    if (!res.ok) {
+      if (res.status === 401) throw new Error("OUTREACH_NOT_CONNECTED");
+      throw new Error(`fetchCdmMailboxIds failed: ${await res.text()}`);
+    }
+    const body = (await res.json()) as {
+      data?: Array<{
+        id: string;
+        relationships?: { user?: { data?: { id?: string } | null } };
+      }>;
+      included?: Array<{
+        id: string;
+        type?: string;
+        attributes?: { firstName?: string; lastName?: string };
+      }>;
+      links?: { next?: string };
+    };
+
+    // Build userId -> fullName map from the included block
+    const userNameById = new Map<string, string>();
+    for (const inc of body.included ?? []) {
+      if (inc.type !== "user") continue;
+      const full = `${inc.attributes?.firstName ?? ""} ${inc.attributes?.lastName ?? ""}`
+        .trim()
+        .toLowerCase();
+      userNameById.set(inc.id, full);
+    }
+
+    for (const mb of body.data ?? []) {
+      const userId = mb.relationships?.user?.data?.id;
+      if (!userId) continue;
+      const full = userNameById.get(userId);
+      if (!full) continue;
+      if (wantedLower.has(full)) {
+        mailboxIds.add(mb.id);
+        matchedSet.add(wantedLower.get(full)!);
+      }
+    }
+
+    next = body.links?.next ?? null;
+    pages++;
+  }
+
+  const matched = Array.from(matchedSet);
+  const unmatched = ownerNames.filter((n) => !matchedSet.has(n));
+  return { mailboxIds, matched, unmatched };
 }
 
 // ── Batched prospect lookups (name + company) ────────────────────────────────

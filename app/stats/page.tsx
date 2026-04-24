@@ -83,10 +83,16 @@ type EngagementResponse = {
   heatmap: HeatmapData;
   multiOpens: EnrichedMultiOpen[];
   totals: { mailings: number; multiOpenCount: number };
+  cdm?: {
+    matchedOwners: string[];
+    unmatchedOwners: string[];
+    mailboxCount: number;
+  };
   debug?: {
     rawCount: number;
     withDeliveredAt: number;
     withProspectId: number;
+    countFilteredByMailbox: number;
     stateBreakdown: Record<string, number>;
     earliestCreatedAt: string | null;
     latestCreatedAt: string | null;
@@ -466,7 +472,10 @@ export default function StatsPage() {
                     : engagementLoading
                     ? "Loading..."
                     : engagement
-                    ? `${engagement.totals.multiOpenCount} prospect${engagement.totals.multiOpenCount === 1 ? "" : "s"} with a single email opened 3+ times`
+                    ? `${engagement.totals.multiOpenCount} prospect${engagement.totals.multiOpenCount === 1 ? "" : "s"} with a single email opened 3+ times` +
+                      (engagement.cdm && engagement.cdm.unmatchedOwners.length > 0
+                        ? ` · ⚠ couldn't find Outreach mailbox for: ${engagement.cdm.unmatchedOwners.join(", ")}`
+                        : "")
                     : undefined
                 }
               >

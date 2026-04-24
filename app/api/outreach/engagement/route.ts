@@ -3,16 +3,17 @@ import { isAuthenticated } from "@/lib/auth";
 import {
   fetchMailingsWithEngagement,
   fetchProspectsByIds,
+  fetchCdmMailboxIds,
 } from "@/lib/outreach-engagements";
 import {
   computeHeatmap,
   computeMultiOpens,
   enrichMultiOpens,
 } from "@/lib/analytics-derivations";
+import { CDM_OWNER_NAMES } from "@/lib/salesforce-stats";
 
 // Returns heatmap + multi-open card data for the given date range.
-// Uses only the /mailings endpoint (which carries openCount/clickCount
-// on each record), so no events.read scope is needed.
+// Only counts mailings sent from the CDM team's Outreach mailboxes.
 export async function GET(req: NextRequest) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -30,12 +31,17 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // First resolve CDM team's mailbox IDs (one /mailboxes call with
+    // include=user). Then fetch mailings and filter to just those mailboxes.
+    const cdm = await fetchCdmMailboxIds(CDM_OWNER_NAMES);
+
     const {
       mailings,
       rawCount,
       stateBreakdown,
       withDeliveredAt,
       withProspectId,
+      countFilteredByMailbox,
       earliestCreatedAt,
       latestCreatedAt,
       countInRange,
@@ -43,12 +49,11 @@ export async function GET(req: NextRequest) {
       countAfterRange,
       sampleDates,
       sampleRelationshipKeys,
-    } = await fetchMailingsWithEngagement(start, end);
+    } = await fetchMailingsWithEngagement(start, end, cdm.mailboxIds);
 
     const heatmap = computeHeatmap(mailings);
     const multiRaw = computeMultiOpens(mailings);
 
-    // Resolve prospect details for only the top 20 multi-openers.
     const top = multiRaw.slice(0, 20);
     const prospectInfo = await fetchProspectsByIds(top.map((m) => m.prospectId));
     const multiOpens = enrichMultiOpens(top, prospectInfo);
@@ -60,10 +65,16 @@ export async function GET(req: NextRequest) {
         mailings: mailings.length,
         multiOpenCount: multiRaw.length,
       },
+      cdm: {
+        matchedOwners: cdm.matched,
+        unmatchedOwners: cdm.unmatched,
+        mailboxCount: cdm.mailboxIds.size,
+      },
       debug: {
         rawCount,
         withDeliveredAt,
         withProspectId,
+        countFilteredByMailbox,
         stateBreakdown,
         earliestCreatedAt,
         latestCreatedAt,
