@@ -75,54 +75,41 @@ export function computeHeatmap(
   return { cells, peak, totalSent, totalOpened };
 }
 
-// ── Most-opened prospects (3+ opens across mailings in range) ────────────────
+// ── Highly engaged prospects: at least one mailing opened 3+ times ───────────
 //
-// Summed across all mailings for each prospect in the selected range.
-// Reply filter was dropped because replyCount is not on the Mailing
-// resource. The card is now a "warm signal" list rather than strict
-// "no-reply" filter — but in practice, the top of this list is still
-// where prospects needing a nudge live.
+// Outreach's openCount attribute is per-mailing — it reflects how many
+// times that one email was opened (e.g., Magda Muka's inbox shows a "9"
+// eye badge). The warm-prospect signal we want is: any single email
+// they got was opened 3 or more times. If a prospect has multiple
+// mailings, we keep the mailing with the highest open count.
 
 export type MultiOpenProspect = {
   prospectId: string;
-  openCount: number;      // summed across all mailings in range
-  mailingCount: number;   // number of mailings sent to this prospect in range
-  lastSentAt: string;     // send time of their most-recent mailing
+  openCount: number;      // peak openCount on any single mailing
+  mailingId: string;      // the mailing that was opened that many times
+  sentAt: string;
 };
 
 export function computeMultiOpens(
   mailings: MailingWithEngagement[],
   minOpens: number = 3
 ): MultiOpenProspect[] {
-  type Agg = { opens: number; mailings: number; lastSentAt: string };
-  const byProspect = new Map<string, Agg>();
+  const bestPerProspect = new Map<string, MultiOpenProspect>();
 
   for (const m of mailings) {
-    const prev = byProspect.get(m.prospectId);
-    if (!prev) {
-      byProspect.set(m.prospectId, {
-        opens: m.openCount,
-        mailings: 1,
-        lastSentAt: m.sentAt,
+    if (m.openCount < minOpens) continue;
+    const prev = bestPerProspect.get(m.prospectId);
+    if (!prev || m.openCount > prev.openCount) {
+      bestPerProspect.set(m.prospectId, {
+        prospectId: m.prospectId,
+        openCount: m.openCount,
+        mailingId: m.mailingId,
+        sentAt: m.sentAt,
       });
-    } else {
-      prev.opens += m.openCount;
-      prev.mailings += 1;
-      if (m.sentAt > prev.lastSentAt) prev.lastSentAt = m.sentAt;
     }
   }
 
-  const result: MultiOpenProspect[] = [];
-  for (const [prospectId, info] of byProspect) {
-    if (info.opens < minOpens) continue;
-    result.push({
-      prospectId,
-      openCount: info.opens,
-      mailingCount: info.mailings,
-      lastSentAt: info.lastSentAt,
-    });
-  }
-
+  const result = Array.from(bestPerProspect.values());
   result.sort((a, b) => b.openCount - a.openCount);
   return result;
 }

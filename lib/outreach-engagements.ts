@@ -73,6 +73,7 @@ export type MailingFetchResult = {
   rawCount: number;      // total mailing records returned by Outreach
   stateBreakdown: Record<string, number>; // how many of each state
   withDeliveredAt: number; // how many had deliveredAt populated
+  withProspectId: number;  // how many had a prospect relationship populated
   // Date diagnostics: helps us see why records get filtered out.
   earliestCreatedAt: string | null;
   latestCreatedAt: string | null;
@@ -80,6 +81,7 @@ export type MailingFetchResult = {
   countBeforeRange: number;
   countAfterRange: number;
   sampleDates: string[]; // first 5 createdAt values we saw
+  sampleRelationshipKeys: string[]; // keys on the first record's relationships object
 };
 
 // ── Mailings (send events + per-mailing open counts) ─────────────────────────
@@ -110,6 +112,7 @@ export async function fetchMailingsWithEngagement(
   const stateBreakdown: Record<string, number> = {};
   let rawCount = 0;
   let withDeliveredAt = 0;
+  let withProspectId = 0;
 
   // Date diagnostics
   let earliestCreatedAt: string | null = null;
@@ -118,10 +121,11 @@ export async function fetchMailingsWithEngagement(
   let countBeforeRange = 0;
   let countAfterRange = 0;
   const sampleDates: string[] = [];
+  let sampleRelationshipKeys: string[] = [];
 
+  // Drop sparse fieldset — it may be stripping the `prospect` relationship.
   const initialPath =
-    `/mailings?fields[mailing]=deliveredAt,createdAt,state,openCount,clickCount` +
-    `&page[size]=100` +
+    `/mailings?page[size]=100` +
     `&sort=-createdAt`;
 
   let next: string | null = initialPath;
@@ -146,6 +150,12 @@ export async function fetchMailingsWithEngagement(
       if (!latestCreatedAt || createdAt > latestCreatedAt)
         latestCreatedAt = createdAt;
 
+      // Capture relationship keys from the FIRST record so we can see what
+      // Outreach actually returns.
+      if (sampleRelationshipKeys.length === 0 && row.relationships) {
+        sampleRelationshipKeys = Object.keys(row.relationships);
+      }
+
       const state = (row.attributes?.state as string) ?? "unknown";
       stateBreakdown[state] = (stateBreakdown[state] ?? 0) + 1;
 
@@ -156,7 +166,6 @@ export async function fetchMailingsWithEngagement(
 
       if (createdMs < startMs) {
         countBeforeRange++;
-        // Don't break — sort may not be honored by the API. Keep scanning.
         continue;
       }
       if (createdMs > endMs) {
@@ -166,11 +175,17 @@ export async function fetchMailingsWithEngagement(
       countInRange++;
 
       const prospectId = row.relationships?.prospect?.data?.id;
-      if (!prospectId) continue;
+      if (prospectId) withProspectId++;
+
+      // Fallback prospectId: if the relationship isn't populated, use the
+      // mailing's own id as a synthetic key. Opens against the same mailing
+      // still group together, but multi-mailing prospect aggregation won't
+      // work without the real prospect relationship.
+      const effectiveProspectId = prospectId ?? `mailing:${row.id}`;
 
       mailings.push({
         mailingId: row.id,
-        prospectId,
+        prospectId: effectiveProspectId,
         sentAt: deliveredAt ?? createdAt,
         state,
         openCount: Number(row.attributes?.openCount) || 0,
@@ -187,12 +202,14 @@ export async function fetchMailingsWithEngagement(
     rawCount,
     stateBreakdown,
     withDeliveredAt,
+    withProspectId,
     earliestCreatedAt,
     latestCreatedAt,
     countInRange,
     countBeforeRange,
     countAfterRange,
     sampleDates,
+    sampleRelationshipKeys,
   };
 }
 

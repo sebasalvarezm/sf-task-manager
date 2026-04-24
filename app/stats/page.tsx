@@ -86,6 +86,7 @@ type EngagementResponse = {
   debug?: {
     rawCount: number;
     withDeliveredAt: number;
+    withProspectId: number;
     stateBreakdown: Record<string, number>;
     earliestCreatedAt: string | null;
     latestCreatedAt: string | null;
@@ -93,6 +94,7 @@ type EngagementResponse = {
     countBeforeRange: number;
     countAfterRange: number;
     sampleDates: string[];
+    sampleRelationshipKeys: string[];
     requestedRange: { start: string; end: string };
   };
 };
@@ -455,7 +457,7 @@ export default function StatsPage() {
                 value={
                   engagement ? fmtNumber(engagement.totals.multiOpenCount) : "—"
                 }
-                title="Highly engaged prospects (3+ opens)"
+                title="Highly engaged — opened an email 3+ times"
                 subtitle={
                   !outreachConnected
                     ? "Outreach not connected — connect to see warm leads."
@@ -464,7 +466,7 @@ export default function StatsPage() {
                     : engagementLoading
                     ? "Loading..."
                     : engagement
-                    ? `${engagement.totals.multiOpenCount} prospect${engagement.totals.multiOpenCount === 1 ? "" : "s"} opened 3+ emails in range`
+                    ? `${engagement.totals.multiOpenCount} prospect${engagement.totals.multiOpenCount === 1 ? "" : "s"} with a single email opened 3+ times`
                     : undefined
                 }
               >
@@ -475,7 +477,7 @@ export default function StatsPage() {
                       title={
                         `${m.firstName} ${m.lastName}`.trim() || "(unknown)"
                       }
-                      subtitle={`${m.company || "—"} · last sent ${daysAgo(m.lastSentAt)}`}
+                      subtitle={`${m.company || "—"} · sent ${daysAgo(m.sentAt)}`}
                       right={
                         <span className="text-amber-600 font-semibold">
                           {m.openCount} opens
@@ -587,10 +589,11 @@ export default function StatsPage() {
                   {engagement.debug && (
                     <pre className="text-xs text-gray-400 mt-3 bg-gray-50 rounded p-2 overflow-x-auto whitespace-pre-wrap">
                       {[
-                        `Outreach returned ${engagement.debug.rawCount} raw mailings, ${engagement.debug.withDeliveredAt} with deliveredAt.`,
+                        `Outreach returned ${engagement.debug.rawCount} raw mailings, ${engagement.debug.withDeliveredAt} with deliveredAt, ${engagement.debug.withProspectId} with prospectId.`,
                         `Requested: ${engagement.debug.requestedRange.start} → ${engagement.debug.requestedRange.end}`,
                         `createdAt span: ${engagement.debug.earliestCreatedAt ?? "—"} → ${engagement.debug.latestCreatedAt ?? "—"}`,
                         `In range: ${engagement.debug.countInRange} · Before: ${engagement.debug.countBeforeRange} · After: ${engagement.debug.countAfterRange}`,
+                        `Relationship keys on first record: ${engagement.debug.sampleRelationshipKeys.join(", ") || "(none)"}`,
                         `Sample dates: ${engagement.debug.sampleDates.join(", ")}`,
                         `States: ${JSON.stringify(engagement.debug.stateBreakdown)}`,
                       ].join("\n")}

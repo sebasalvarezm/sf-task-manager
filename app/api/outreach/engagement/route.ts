@@ -35,12 +35,14 @@ export async function GET(req: NextRequest) {
       rawCount,
       stateBreakdown,
       withDeliveredAt,
+      withProspectId,
       earliestCreatedAt,
       latestCreatedAt,
       countInRange,
       countBeforeRange,
       countAfterRange,
       sampleDates,
+      sampleRelationshipKeys,
     } = await fetchMailingsWithEngagement(start, end);
 
     const heatmap = computeHeatmap(mailings);
@@ -61,6 +63,7 @@ export async function GET(req: NextRequest) {
       debug: {
         rawCount,
         withDeliveredAt,
+        withProspectId,
         stateBreakdown,
         earliestCreatedAt,
         latestCreatedAt,
@@ -68,6 +71,7 @@ export async function GET(req: NextRequest) {
         countBeforeRange,
         countAfterRange,
         sampleDates,
+        sampleRelationshipKeys,
         requestedRange: { start, end },
       },
     });
