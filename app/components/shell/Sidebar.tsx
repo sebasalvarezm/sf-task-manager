@@ -1,14 +1,12 @@
 import { SidebarLogo } from "./SidebarLogo";
 import { SidebarNav } from "./SidebarNav";
 import { SidebarUserMenu } from "./SidebarUserMenu";
-import { NotificationBell } from "./NotificationBell";
 
 export function Sidebar() {
   return (
     <aside className="w-64 shrink-0 bg-navy text-ink-inverse flex flex-col border-r border-navy-light">
-      <div className="flex items-center justify-between gap-2 px-5 py-5">
+      <div className="px-5 py-5">
         <SidebarLogo />
-        <NotificationBell />
       </div>
 
       <div className="border-t border-navy-light/50 mx-3" />

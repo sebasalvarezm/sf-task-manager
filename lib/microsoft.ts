@@ -164,6 +164,99 @@ export async function fetchRecentEmails(
   );
 }
 
+// ── BRO Memo lookup ─────────────────────────────────────────────────────────
+// Searches the user's mailbox (all folders incl. Sent Items) for emails
+// tagged like "[BRO:CompanyName]" in the subject. Returns the most recent
+// match for a given account, or null if nothing matches.
+
+export type BroMemo = {
+  id: string;
+  subject: string;
+  from: { name: string; email: string };
+  sentDateTime: string;
+  hasAttachments: boolean;
+  webLink: string; // opens directly in Outlook on the web
+};
+
+function tagFromSubject(subject: string): string | null {
+  const m = subject.match(/\[BRO:([^\]]+)\]/i);
+  return m ? m[1].trim().toLowerCase() : null;
+}
+
+function matchesAccount(subject: string, accountName: string): boolean {
+  const tag = tagFromSubject(subject);
+  if (!tag) return false;
+  const acc = accountName.toLowerCase().trim();
+  // bidirectional substring — handles "Sisloc Softwares" account vs
+  // "[BRO:Sisloc]" memo, and the reverse.
+  return acc.includes(tag) || tag.includes(acc);
+}
+
+export async function findMemoForAccount(
+  accountName: string,
+): Promise<BroMemo | null> {
+  if (!accountName.trim()) return null;
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+
+  // Graph $search uses KQL. Quoting the tag prefix narrows to subjects
+  // that contain the [BRO: prefix; we further refine client-side.
+  const params = new URLSearchParams({
+    $search: '"[BRO:"',
+    $select: "id,subject,from,sentDateTime,hasAttachments,webLink",
+    $top: "50",
+  });
+
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        // $search results aren't sortable; we order client-side by sentDateTime.
+        ConsistencyLevel: "eventual",
+      },
+    },
+  );
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Failed to search memos: ${err}`);
+  }
+  const data = await response.json();
+  type Row = {
+    id: string;
+    subject?: string;
+    from?: { emailAddress?: { name?: string; address?: string } };
+    sentDateTime?: string;
+    hasAttachments?: boolean;
+    webLink?: string;
+  };
+  const rows = (data.value ?? []) as Row[];
+
+  const matches: BroMemo[] = rows
+    .filter((r) => r.subject && matchesAccount(r.subject, accountName))
+    .map((r) => ({
+      id: r.id,
+      subject: r.subject ?? "(No subject)",
+      from: {
+        name: r.from?.emailAddress?.name ?? "",
+        email: (r.from?.emailAddress?.address ?? "").toLowerCase(),
+      },
+      sentDateTime: r.sentDateTime ?? "",
+      hasAttachments: Boolean(r.hasAttachments),
+      webLink: r.webLink ?? "",
+    }))
+    .filter((m) => m.webLink); // can't link without webLink
+
+  if (matches.length === 0) return null;
+
+  // Most-recent first
+  matches.sort(
+    (a, b) =>
+      new Date(b.sentDateTime).getTime() - new Date(a.sentDateTime).getTime(),
+  );
+  return matches[0];
+}
+
 export async function fetchEmailThread(
   conversationId: string
 ): Promise<OutlookEmail[]> {

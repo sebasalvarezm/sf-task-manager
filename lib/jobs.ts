@@ -193,6 +193,24 @@ export async function markAllSeen(
   return data?.length ?? 0;
 }
 
+export async function markSeenByKinds(
+  kinds: JobKind[],
+  sessionId: string = DEFAULT_SESSION,
+): Promise<number> {
+  if (kinds.length === 0) return 0;
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("jobs")
+    .update({ seen_at: new Date().toISOString() })
+    .eq("session_id", sessionId)
+    .in("kind", kinds)
+    .in("status", ["succeeded", "failed"])
+    .is("seen_at", null)
+    .select("id");
+  if (error) throw new Error(`Failed to mark jobs seen: ${error.message}`);
+  return data?.length ?? 0;
+}
+
 export function summarize(jobs: Job[]): {
   inProgressCount: number;
   unreadCount: number;

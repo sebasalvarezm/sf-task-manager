@@ -483,27 +483,6 @@ export default function StatsPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-10">
               <ActionCard
-                pill="FIX"
-                tone="fix"
-                value={fmtNumber(data.stuckOpps.length)}
-                title="Stuck 30+ days in stage"
-                subtitle={
-                  data.stuckOpps.length === 0
-                    ? "No opportunities flagged — pipeline is moving."
-                    : `${data.stuckOpps.length} open opportunit${data.stuckOpps.length === 1 ? "y" : "ies"} without a stage change in 30+ days`
-                }
-              >
-                {data.stuckOpps.slice(0, 10).map((o) => (
-                  <ActionRow
-                    key={o.id}
-                    title={o.accountName}
-                    subtitle={`${o.stage} · ${fmtMoney(o.amount)} · ${firstName(o.owner)}`}
-                    right={<span className="text-red-600 font-semibold">{o.daysStuck}d</span>}
-                  />
-                ))}
-              </ActionCard>
-
-              <ActionCard
                 pill="WARM"
                 tone="warm"
                 value={
@@ -982,6 +961,240 @@ function DrillModal({
     target.dimension === "bro_by_originator" ||
     target.dimension === "bro_by_stage";
 
+  // ── Memo lookup (only for opportunity drills) ────────────────────────────
+  // For each unique account name, fire one /api/memos/find request and store
+  // the result. Outlook search is per-account; results render inline as a
+  // "See Memo" link that opens the email in Outlook on the web.
+  type MemoState =
+    | { status: "loading" }
+    | { status: "none" }
+    | {
+        status: "found";
+        webLink: string;
+        sentDateTime: string;
+        hasAttachments: boolean;
+      };
+  const [memos, setMemos] = useState<Record<string, MemoState>>({});
+
+  useEffect(() => {
+    if (!rows || !isOpps) return;
+    const uniqueAccounts = Array.from(
+      new Set(
+        rows
+          .map((r) => r.accountName)
+          .filter((n): n is string => !!n && n !== "(no account)"),
+      ),
+    );
+    if (uniqueAccounts.length === 0) return;
+
+    let cancelled = false;
+    setMemos((prev) => {
+      const next = { ...prev };
+      for (const name of uniqueAccounts) {
+        if (!next[name]) next[name] = { status: "loading" };
+      }
+      return next;
+    });
+
+    (async () => {
+      // Fire all lookups in parallel; cap to avoid hammering Graph if there
+      // are dozens of accounts.
+      const BATCH = 6;
+      for (let i = 0; i < uniqueAccounts.length; i += BATCH) {
+        if (cancelled) return;
+        const batch = uniqueAccounts.slice(i, i + BATCH);
+        await Promise.all(
+          batch.map(async (name) => {
+            try {
+              const res = await fetch(
+                `/api/memos/find?accountName=${encodeURIComponent(name)}`,
+                { cache: "no-store" },
+              );
+              if (!res.ok) {
+                if (!cancelled) {
+                  setMemos((prev) => ({
+                    ...prev,
+                    [name]: { status: "none" },
+                  }));
+                }
+                return;
+              }
+              const data = await res.json();
+              const m = data.memo;
+              if (!cancelled) {
+                setMemos((prev) => ({
+                  ...prev,
+                  [name]: m
+                    ? {
+                        status: "found",
+                        webLink: m.webLink,
+                        sentDateTime: m.sentDateTime,
+                        hasAttachments: m.hasAttachments,
+                      }
+                    : { status: "none" },
+                }));
+              }
+            } catch {
+              if (!cancelled) {
+                setMemos((prev) => ({ ...prev, [name]: { status: "none" } }));
+              }
+            }
+          }),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rows, isOpps]);
+
+  function renderMemoCell(accountName: string) {
+    const state = memos[accountName];
+    if (!state || state.status === "loading") {
+      return <span className="text-ink-muted text-xs">…</span>;
+    }
+    if (state.status === "none") {
+      return <span className="text-ink-muted">—</span>;
+    }
+    const dateStr = state.sentDateTime
+      ? new Date(state.sentDateTime).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        })
+      : "";
+    return (
+      <a
+        href={state.webLink}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 text-info hover:underline whitespace-nowrap"
+      >
+        See Memo
+        {state.hasAttachments && <span className="text-xs">📎</span>}
+        {dateStr && (
+          <span className="text-xs text-ink-muted">· {dateStr}</span>
+        )}
+      </a>
+    );
+  }
+
+  // Custom stage ordering for opportunity drills (different from the
+  // OPPORTUNITY_STAGES enum order — user preference for the stats UI).
+  const STAGE_DISPLAY_ORDER = [
+    "Incoming",
+    "Pre-DD",
+    "IOI",
+    "LOI",
+    "DD",
+    "On Ice",
+  ] as const;
+
+  // Group opps by stage in the requested order. Rows with an unknown stage
+  // bucket into "Other" at the end (rare, but defensive).
+  const grouped = (() => {
+    if (!rows || !isOpps) return null;
+    const map = new Map<string, DrillRow[]>();
+    for (const r of rows) {
+      const key = r.stage ?? "Other";
+      const arr = map.get(key) ?? [];
+      arr.push(r);
+      map.set(key, arr);
+    }
+    const sorted: Array<{ stage: string; rows: DrillRow[] }> = [];
+    for (const stage of STAGE_DISPLAY_ORDER) {
+      const arr = map.get(stage);
+      if (arr && arr.length > 0) {
+        sorted.push({ stage, rows: arr });
+        map.delete(stage);
+      }
+    }
+    // Anything left over (unknown stages)
+    for (const [stage, arr] of map) {
+      sorted.push({ stage, rows: arr });
+    }
+    return sorted;
+  })();
+
+  function renderTable(visibleRows: DrillRow[], includeStageColumn: boolean) {
+    return (
+      <Table>
+        <Table.Head>
+          <Table.HeadRow>
+            <Table.HeadCell>Company</Table.HeadCell>
+            <Table.HeadCell>URL</Table.HeadCell>
+            <Table.HeadCell className="text-right">Employees</Table.HeadCell>
+            <Table.HeadCell>Country</Table.HeadCell>
+            {includeStageColumn && <Table.HeadCell>Stage</Table.HeadCell>}
+            {isOpps && (
+              <Table.HeadCell className="text-right">Amount</Table.HeadCell>
+            )}
+            {isOpps && <Table.HeadCell>Memo</Table.HeadCell>}
+            {!isOpps && <Table.HeadCell>Last Activity</Table.HeadCell>}
+          </Table.HeadRow>
+        </Table.Head>
+        <Table.Body>
+          {visibleRows.map((r, i) => (
+            <Table.Row key={(r.opportunityId ?? r.accountId ?? "") + i}>
+              <Table.Cell className="font-medium text-ink">
+                {r.accountName}
+                {r.opportunityName && (
+                  <div className="text-xs text-ink-muted mt-0.5">
+                    {r.opportunityName}
+                  </div>
+                )}
+              </Table.Cell>
+              <Table.Cell>
+                {r.website ? (
+                  <a
+                    href={
+                      r.website.startsWith("http")
+                        ? r.website
+                        : `https://${r.website}`
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-info hover:underline"
+                  >
+                    {r.website.replace(/^https?:\/\/(www\.)?/, "")}
+                    <ExternalLink className="h-3 w-3" strokeWidth={2} />
+                  </a>
+                ) : (
+                  <span className="text-ink-muted">—</span>
+                )}
+              </Table.Cell>
+              <Table.Cell className="text-right tabular-nums">
+                {r.numberOfEmployees != null
+                  ? fmtNumber(r.numberOfEmployees)
+                  : "—"}
+              </Table.Cell>
+              <Table.Cell>
+                {r.country ?? <span className="text-ink-muted">—</span>}
+              </Table.Cell>
+              {includeStageColumn && (
+                <Table.Cell>{r.stage ?? "—"}</Table.Cell>
+              )}
+              {isOpps && (
+                <Table.Cell className="text-right tabular-nums">
+                  {r.amount != null ? fmtMoney(r.amount) : "—"}
+                </Table.Cell>
+              )}
+              {isOpps && (
+                <Table.Cell className="whitespace-nowrap">
+                  {renderMemoCell(r.accountName)}
+                </Table.Cell>
+              )}
+              {!isOpps && (
+                <Table.Cell className="text-ink-muted whitespace-nowrap">
+                  {r.lastActivityDate ?? "—"}
+                </Table.Cell>
+              )}
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+    );
+  }
+
   return (
     <Modal
       open
@@ -1003,74 +1216,24 @@ function DrillModal({
           No companies match this filter.
         </p>
       )}
-      {rows != null && rows.length > 0 && (
-        <Table>
-          <Table.Head>
-            <Table.HeadRow>
-              <Table.HeadCell>Company</Table.HeadCell>
-              <Table.HeadCell>URL</Table.HeadCell>
-              <Table.HeadCell className="text-right">Employees</Table.HeadCell>
-              <Table.HeadCell>Country</Table.HeadCell>
-              {isOpps && <Table.HeadCell>Stage</Table.HeadCell>}
-              {isOpps && (
-                <Table.HeadCell className="text-right">Amount</Table.HeadCell>
-              )}
-              {!isOpps && <Table.HeadCell>Last Activity</Table.HeadCell>}
-            </Table.HeadRow>
-          </Table.Head>
-          <Table.Body>
-            {rows.map((r, i) => (
-              <Table.Row key={(r.opportunityId ?? r.accountId ?? "") + i}>
-                <Table.Cell className="font-medium text-ink">
-                  {r.accountName}
-                  {r.opportunityName && (
-                    <div className="text-xs text-ink-muted mt-0.5">
-                      {r.opportunityName}
-                    </div>
-                  )}
-                </Table.Cell>
-                <Table.Cell>
-                  {r.website ? (
-                    <a
-                      href={
-                        r.website.startsWith("http")
-                          ? r.website
-                          : `https://${r.website}`
-                      }
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-info hover:underline"
-                    >
-                      {r.website.replace(/^https?:\/\/(www\.)?/, "")}
-                      <ExternalLink className="h-3 w-3" strokeWidth={2} />
-                    </a>
-                  ) : (
-                    <span className="text-ink-muted">—</span>
-                  )}
-                </Table.Cell>
-                <Table.Cell className="text-right tabular-nums">
-                  {r.numberOfEmployees != null
-                    ? fmtNumber(r.numberOfEmployees)
-                    : "—"}
-                </Table.Cell>
-                <Table.Cell>
-                  {r.country ?? <span className="text-ink-muted">—</span>}
-                </Table.Cell>
-                {isOpps && <Table.Cell>{r.stage ?? "—"}</Table.Cell>}
-                {isOpps && (
-                  <Table.Cell className="text-right tabular-nums">
-                    {r.amount != null ? fmtMoney(r.amount) : "—"}
-                  </Table.Cell>
-                )}
-                {!isOpps && (
-                  <Table.Cell className="text-ink-muted whitespace-nowrap">
-                    {r.lastActivityDate ?? "—"}
-                  </Table.Cell>
-                )}
-              </Table.Row>
-            ))}
-          </Table.Body>
-        </Table>
+      {rows != null && rows.length > 0 && !isOpps && renderTable(rows, false)}
+      {rows != null && rows.length > 0 && isOpps && grouped && (
+        <div className="space-y-6">
+          {grouped.map(({ stage, rows: stageRows }) => (
+            <div key={stage}>
+              <div className="flex items-baseline justify-between mb-2">
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-ink">
+                  {stage}
+                </h3>
+                <span className="text-xs text-ink-muted">
+                  {stageRows.length} opportunit
+                  {stageRows.length === 1 ? "y" : "ies"}
+                </span>
+              </div>
+              {renderTable(stageRows, false)}
+            </div>
+          ))}
+        </div>
       )}
     </Modal>
   );

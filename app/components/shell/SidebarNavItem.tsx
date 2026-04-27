@@ -6,9 +6,10 @@ type Props = {
   label: string;
   Icon: LucideIcon;
   active: boolean;
+  unread?: boolean;
 };
 
-export function SidebarNavItem({ href, label, Icon, active }: Props) {
+export function SidebarNavItem({ href, label, Icon, active, unread }: Props) {
   return (
     <Link
       href={href}
@@ -27,6 +28,12 @@ export function SidebarNavItem({ href, label, Icon, active }: Props) {
       )}
       <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
       <span className="truncate">{label}</span>
+      {unread && (
+        <span
+          aria-label="New activity"
+          className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand animate-pulse"
+        />
+      )}
     </Link>
   );
 }
