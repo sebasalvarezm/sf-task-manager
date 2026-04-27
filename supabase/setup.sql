@@ -138,6 +138,11 @@ EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
 
+-- Additional job kinds added incrementally; ALTER TYPE ADD VALUE is idempotent
+-- via IF NOT EXISTS so this section is safe to re-run.
+ALTER TYPE job_kind ADD VALUE IF NOT EXISTS 'trip_search';
+ALTER TYPE job_kind ADD VALUE IF NOT EXISTS 'calls_log';
+
 DO $$ BEGIN
   CREATE TYPE job_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled');
 EXCEPTION

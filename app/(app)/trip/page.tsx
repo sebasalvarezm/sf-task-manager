@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
+import { useJobs } from "@/app/hooks/useJobs";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -94,90 +95,136 @@ export default function TripPage() {
     })();
   }, []);
 
+  // ── Job-backed sync ────────────────────────────────────────────────────
+  // Searches and Scans now run server-side via Inngest. The local state
+  // (searching/results/etc.) is hydrated from the latest job of each kind
+  // — so closing the browser and coming back automatically re-renders the
+  // last result, and starting a job in one tab is reflected here.
+  const { jobs, refetch: refetchJobs } = useJobs();
+  const syncedTripSearchId = useRef<string | null>(null);
+  const syncedTripGeocodeId = useRef<string | null>(null);
+
+  // Trip search sync
+  useEffect(() => {
+    const latest = jobs.find((j) => j.kind === "trip_search");
+    if (!latest) return;
+
+    if (latest.status === "queued" || latest.status === "running") {
+      setSearching(true);
+      setDiscovering(true);
+      return;
+    }
+
+    if (latest.id === syncedTripSearchId.current) return;
+    syncedTripSearchId.current = latest.id;
+
+    if (latest.status === "succeeded") {
+      const r = (latest.result ?? {}) as {
+        results?: SearchResult[];
+        userLocation?: UserLocation | null;
+        geocodeStats?: { uncached?: number };
+        discovered?: DiscoveredCompany[] | null;
+        discoveryStats?: typeof discoveryStats;
+        discoveryError?: string | null;
+      };
+      setResults(r.results ?? []);
+      setUserLoc(r.userLocation ?? null);
+      setUncachedCount(r.geocodeStats?.uncached ?? 0);
+      setDiscovered(r.discovered ?? null);
+      setDiscoveryStats(r.discoveryStats ?? null);
+      setDiscoveryError(r.discoveryError ?? null);
+      setSearching(false);
+      setDiscovering(false);
+      setSearchError(null);
+    } else if (latest.status === "failed" || latest.status === "cancelled") {
+      setSearchError(latest.error || "Search failed");
+      setSearching(false);
+      setDiscovering(false);
+    }
+  }, [jobs]);
+
+  // Trip geocode (Scan) sync
+  useEffect(() => {
+    const latest = jobs.find((j) => j.kind === "trip_geocode");
+    if (!latest) return;
+
+    if (latest.status === "queued" || latest.status === "running") {
+      setScanning(true);
+      setScanDone(false);
+      const pct = latest.progress?.pct;
+      const stepLabel = latest.progress?.step;
+      // Best-effort progress: parse "N remaining" from step label
+      const remainingMatch = stepLabel?.match(/(\d+)\s+remaining/);
+      if (remainingMatch && pct != null) {
+        setScanProgress({
+          total: 0,
+          cached: 0,
+          remaining: parseInt(remainingMatch[1], 10),
+        });
+      }
+      return;
+    }
+
+    if (latest.id === syncedTripGeocodeId.current) return;
+    syncedTripGeocodeId.current = latest.id;
+
+    if (latest.status === "succeeded") {
+      const r = (latest.result ?? {}) as { total?: number };
+      setScanProgress({
+        total: r.total ?? 0,
+        cached: r.total ?? 0,
+        remaining: 0,
+      });
+      setScanDone(true);
+      setScanning(false);
+      setUncachedCount(0);
+    } else if (latest.status === "failed" || latest.status === "cancelled") {
+      setScanning(false);
+      setScanDone(false);
+    }
+  }, [jobs]);
+
   // ── Search handler ─────────────────────────────────────────────────────
 
   async function handleSearch() {
     if (!location.trim()) return;
 
     setSearching(true);
+    setDiscovering(true);
     setSearchError(null);
     setResults(null);
     setDiscovered(null);
     setDiscoveryStats(null);
     setDiscoveryError(null);
 
-    // Fire both searches: existing accounts (fast) + discovery (slow)
-    const searchPromise = (async () => {
-      try {
-        const res = await fetch("/api/trip/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+    try {
+      const res = await fetch("/api/jobs/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "trip_search",
+          input: {
             location: location.trim(),
             radiusMiles: radius,
-          }),
-        });
-        const text = await res.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          setSearchError(`Server error: ${text.slice(0, 300)}`);
-          return;
-        }
-        if (!res.ok) {
-          setSearchError(data.error || "Search failed");
-          return;
-        }
-        setResults(data.results ?? []);
-        setUserLoc(data.userLocation ?? null);
-        setUncachedCount(data.geocodeStats?.uncached ?? 0);
-      } catch (e: unknown) {
-        setSearchError(
-          e instanceof Error ? e.message : "Network error"
-        );
-      } finally {
+          },
+          label: `Trip search: ${location.trim()}`,
+          resultRoute: `/trip?jobId={jobId}`,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSearchError(data.error || "Failed to start search");
         setSearching(false);
-      }
-    })();
-
-    // Discovery runs in parallel (slower, ~1-3 min)
-    setDiscovering(true);
-    const discoverPromise = (async () => {
-      try {
-        const res = await fetch("/api/trip/discover", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            location: location.trim(),
-            radiusMiles: radius,
-          }),
-          signal: AbortSignal.timeout(300000), // 5 min timeout
-        });
-        const text = await res.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          setDiscoveryError(`Server error: ${text.slice(0, 300)}`);
-          return;
-        }
-        if (!res.ok) {
-          setDiscoveryError(data.error || "Discovery failed");
-          return;
-        }
-        setDiscovered(data.companies ?? []);
-        setDiscoveryStats(data.stats ?? null);
-      } catch (e: unknown) {
-        setDiscoveryError(
-          e instanceof Error ? e.message : "Discovery error"
-        );
-      } finally {
         setDiscovering(false);
+      } else {
+        // Force an immediate poll so the new "running" job shows up fast
+        refetchJobs();
       }
-    })();
-
-    await Promise.all([searchPromise, discoverPromise]);
+    } catch (e: unknown) {
+      setSearchError(e instanceof Error ? e.message : "Network error");
+      setSearching(false);
+      setDiscovering(false);
+    }
   }
 
   // ── Scan handler ───────────────────────────────────────────────────────
@@ -187,27 +234,25 @@ export default function TripPage() {
     setScanDone(false);
     setScanProgress(null);
 
-    // Loop: each call processes ~40 accounts, repeat until done
-    let done = false;
-    while (!done) {
-      try {
-        const res = await fetch("/api/trip/geocode-all", { method: "POST" });
-        if (!res.ok) break;
-        const data = await res.json();
-        setScanProgress({
-          total: data.total,
-          cached: data.cached,
-          remaining: data.remaining,
-        });
-        done = data.done;
-      } catch {
-        break;
+    try {
+      const res = await fetch("/api/jobs/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "trip_geocode",
+          input: {},
+          label: "Trip Planner: scan all accounts",
+          resultRoute: "/trip",
+        }),
+      });
+      if (!res.ok) {
+        setScanning(false);
+      } else {
+        refetchJobs();
       }
+    } catch {
+      setScanning(false);
     }
-
-    setScanDone(true);
-    setScanning(false);
-    setUncachedCount(0);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────

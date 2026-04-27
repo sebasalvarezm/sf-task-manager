@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import WeekSelector, {
   WeekRange,
@@ -10,6 +10,7 @@ import WeekSelector, {
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
+import { useJobs } from "@/app/hooks/useJobs";
 
 // ── One-pager localStorage cache ─────────────────────────────────────────────
 const PREP_CACHE_KEY = "call_prep_cache";
@@ -76,6 +77,9 @@ type PrepMeeting = MeetingMatch & {
   generating: boolean;
   generateError: string | null;
   downloading: boolean;
+  // Background-job id that's currently producing the one-pager for this row.
+  // Cleared once the job has been synced into local state.
+  jobId: string | null;
 };
 
 // ── Page wrapper ─────────────────────────────────────────────────────────────
@@ -200,6 +204,7 @@ function PrepPageContent() {
             generating: false,
             generateError: null,
             downloading: false,
+            jobId: null,
           };
         })
       );
@@ -211,7 +216,60 @@ function PrepPageContent() {
     }
   }
 
-  // ── Generate one-pager for a meeting ───────────────────────────────────────
+  // ── Job-backed prep generation ────────────────────────────────────────────
+  // Each meeting's "Generate" creates a `prep` job. This effect watches
+  // useJobs and hydrates the per-row state when each job lands. Multiple
+  // meetings can be generating in parallel; tracked via meeting.jobId.
+  const { jobs, refetch: refetchJobs } = useJobs();
+  const syncedPrepJobIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (jobs.length === 0) return;
+    setMeetings((prev) => {
+      let changed = false;
+      const next = prev.map((m) => {
+        if (!m.jobId) return m;
+        const job = jobs.find((j) => j.id === m.jobId);
+        if (!job) return m;
+
+        if (job.status === "queued" || job.status === "running") {
+          // Still in flight — keep generating: true
+          return m.generating ? m : { ...m, generating: true };
+        }
+
+        if (syncedPrepJobIds.current.has(job.id)) return m;
+        syncedPrepJobIds.current.add(job.id);
+
+        if (job.status === "succeeded") {
+          const r = (job.result ?? {}) as { onePager?: OnePagerContent };
+          const onePager = r.onePager ?? null;
+          const cacheKey = getCacheKey(m);
+          if (cacheKey && onePager) saveOnePagerToCache(cacheKey, onePager);
+          changed = true;
+          return {
+            ...m,
+            onePager,
+            generating: false,
+            generateError: null,
+            jobId: null,
+          };
+        }
+        if (job.status === "failed" || job.status === "cancelled") {
+          changed = true;
+          return {
+            ...m,
+            generating: false,
+            generateError: job.error ?? "Generation failed",
+            jobId: null,
+          };
+        }
+        return m;
+      });
+      return changed ? next : prev;
+    });
+  }, [jobs]);
+
+  // ── Generate one-pager for a meeting (creates a background job) ──────────
   async function handleGenerate(eventId: string) {
     const meeting = meetings.find((m) => m.eventId === eventId);
     if (!meeting) return;
@@ -225,60 +283,58 @@ function PrepPageContent() {
       )
     );
 
+    const payload: Record<string, string> = {};
+
+    // Use Salesforce account data if matched (auto or manual)
+    const sfMatch = meeting.match ?? manualMatches.get(meeting.eventId);
+    if (sfMatch) {
+      payload.accountId = sfMatch.accountId;
+      payload.accountName = sfMatch.accountName;
+    }
+
+    // Use website or domain for scraping + research
+    const matchWithWebsite = meeting.allMatches.find((m) => m.domain);
+    if (matchWithWebsite) {
+      payload.domain = matchWithWebsite.domain;
+    } else if (meeting.externalDomains.length > 0) {
+      payload.domain = meeting.externalDomains[0];
+    }
+
+    // Fallback: Salesforce account URL when no other domain available
+    if (!payload.domain && !payload.website && sfMatch?.accountUrl) {
+      payload.website = sfMatch.accountUrl;
+    }
+
+    const labelName =
+      payload.accountName || payload.domain || payload.website || "Meeting";
+
     try {
-      const payload: Record<string, string> = {};
-
-      // Use Salesforce account data if matched (auto or manual)
-      const sfMatch = meeting.match ?? manualMatches.get(meeting.eventId);
-      if (sfMatch) {
-        payload.accountId = sfMatch.accountId;
-        payload.accountName = sfMatch.accountName;
-      }
-
-      // Use website or domain for scraping + research
-      const matchWithWebsite = meeting.allMatches.find((m) => m.domain);
-      if (matchWithWebsite) {
-        payload.domain = matchWithWebsite.domain;
-      } else if (meeting.externalDomains.length > 0) {
-        payload.domain = meeting.externalDomains[0];
-      }
-
-      // Fallback: use the Salesforce account URL (needed for manually linked accounts
-      // where meeting.allMatches is empty and no domain was found above)
-      if (!payload.domain && !payload.website && sfMatch?.accountUrl) {
-        payload.website = sfMatch.accountUrl;
-      }
-
-      const res = await fetch("/api/prep/generate", {
+      const res = await fetch("/api/jobs/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          kind: "prep",
+          input: payload,
+          label: `Call prep: ${labelName}`,
+          resultRoute: `/prep`,
+        }),
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error ?? "Generation failed");
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to start generation");
       }
 
-      const data = await res.json();
-      const onePager: OnePagerContent = data.onePager;
-
+      const data = (await res.json()) as { jobId: string };
+      // Stamp the jobId on the meeting so useEffect can sync the result
       setMeetings((prev) =>
         prev.map((m) =>
-          m.eventId === eventId
-            ? { ...m, onePager, generating: false }
-            : m
-        )
+          m.eventId === eventId ? { ...m, jobId: data.jobId } : m,
+        ),
       );
-
-      // Save to localStorage cache
-      const cacheKey = getCacheKey(meeting);
-      if (cacheKey && onePager) {
-        saveOnePagerToCache(cacheKey, onePager);
-      }
-
-      // Auto-expand the row to show preview
+      // Auto-expand the row so the user sees progress
       setExpandedId(eventId);
+      refetchJobs();
     } catch (err) {
       setMeetings((prev) =>
         prev.map((m) =>

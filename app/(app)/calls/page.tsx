@@ -17,11 +17,14 @@ import CallLoggerTable, {
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
+import { useJobs } from "@/app/hooks/useJobs";
+import { useRef } from "react";
 
 type SubmitResult = {
   successCount: number;
   failCount: number;
   results: Array<{
+    eventId?: string;
     accountName: string;
     callType: string;
     success: boolean;
@@ -199,7 +202,58 @@ function CallsPageContent() {
     }
   }
 
-  // ── Submit — create Salesforce tasks ──────────────────────────────────────
+  // ── Job-backed submit sync ────────────────────────────────────────────────
+  // Submitting now creates a `calls_log` background job. The bell tracks
+  // progress; when the job completes we hydrate submitResult from the job
+  // result and dismiss the meetings that succeeded.
+  const { jobs, refetch: refetchJobs } = useJobs();
+  const syncedCallsLogId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const latest = jobs.find((j) => j.kind === "calls_log");
+    if (!latest) return;
+
+    if (latest.status === "queued" || latest.status === "running") {
+      setSubmitting(true);
+      return;
+    }
+
+    if (latest.id === syncedCallsLogId.current) return;
+    syncedCallsLogId.current = latest.id;
+
+    if (latest.status === "succeeded") {
+      const r = (latest.result ?? {}) as SubmitResult;
+      setSubmitResult(r);
+      setSubmitting(false);
+      // Dismiss meetings whose eventId succeeded
+      const successfulEventIds = new Set(
+        (r.results ?? [])
+          .filter((x) => x.success && x.eventId)
+          .map((x) => x.eventId as string),
+      );
+      if (successfulEventIds.size > 0) {
+        setDismissedIds((prev) => {
+          const next = new Set(prev);
+          successfulEventIds.forEach((id) => next.add(id));
+          return next;
+        });
+        setEntries((prev) => {
+          const next = new Map(prev);
+          successfulEventIds.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    } else if (latest.status === "failed" || latest.status === "cancelled") {
+      setSubmitResult({
+        successCount: 0,
+        failCount: 0,
+        results: [],
+      });
+      setSubmitting(false);
+    }
+  }, [jobs]);
+
+  // ── Submit — create Salesforce tasks via background job ──────────────────
   async function handleSubmit() {
     // Collect entries that have a valid type and a matched account
     const toSubmit: Array<{
@@ -244,34 +298,41 @@ function CallsPageContent() {
     setSubmitResult(null);
 
     try {
-      const res = await fetch("/api/salesforce/log-calls", {
+      const res = await fetch("/api/jobs/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entries: toSubmit }),
+        body: JSON.stringify({
+          kind: "calls_log",
+          input: { entries: toSubmit },
+          label: `Log ${toSubmit.length} call${toSubmit.length === 1 ? "" : "s"} to Salesforce`,
+          resultRoute: "/calls",
+        }),
       });
-
-      const data = await res.json();
-      setSubmitResult(data);
-
-      // Dismiss only the successfully submitted meetings (keep the rest)
-      if (data.successCount > 0) {
-        const submittedIds = new Set(toSubmit.map((e) => e.eventId));
-        setDismissedIds((prev) => {
-          const next = new Set(prev);
-          submittedIds.forEach((id) => next.add(id));
-          return next;
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSubmitResult({
+          successCount: 0,
+          failCount: toSubmit.length,
+          results: toSubmit.map((e) => ({
+            eventId: e.eventId,
+            accountName: e.accountName,
+            callType: e.callType,
+            success: false,
+            error: data.error ?? "Failed to start job",
+            followUpCreated: false,
+            noteCreated: false,
+          })),
         });
-        setEntries((prev) => {
-          const next = new Map(prev);
-          submittedIds.forEach((id) => next.delete(id));
-          return next;
-        });
+        setSubmitting(false);
+      } else {
+        refetchJobs();
       }
     } catch {
       setSubmitResult({
         successCount: 0,
         failCount: toSubmit.length,
         results: toSubmit.map((e) => ({
+          eventId: e.eventId,
           accountName: e.accountName,
           callType: e.callType,
           success: false,
@@ -280,7 +341,6 @@ function CallsPageContent() {
           noteCreated: false,
         })),
       });
-    } finally {
       setSubmitting(false);
     }
   }

@@ -4,7 +4,13 @@ import { useEffect, useRef, useState, useCallback } from "react";
 
 export type Job = {
   id: string;
-  kind: "sourcing" | "prep" | "task_bulk" | "trip_geocode";
+  kind:
+    | "sourcing"
+    | "prep"
+    | "task_bulk"
+    | "trip_geocode"
+    | "trip_search"
+    | "calls_log";
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   label: string | null;
   progress: { step?: string; pct?: number } | null;

@@ -8,6 +8,8 @@ const VALID_KINDS: ReadonlySet<JobKind> = new Set([
   "prep",
   "task_bulk",
   "trip_geocode",
+  "trip_search",
+  "calls_log",
 ]);
 
 export async function POST(req: Request) {

@@ -1,6 +1,12 @@
 import { getSupabaseAdmin } from "./supabase";
 
-export type JobKind = "sourcing" | "prep" | "task_bulk" | "trip_geocode";
+export type JobKind =
+  | "sourcing"
+  | "prep"
+  | "task_bulk"
+  | "trip_geocode"
+  | "trip_search"
+  | "calls_log";
 
 export type JobStatus =
   | "queued"

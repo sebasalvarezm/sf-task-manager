@@ -15,7 +15,9 @@ const KIND_LABEL: Record<Job["kind"], string> = {
   sourcing: "Sourcing",
   prep: "Call prep",
   task_bulk: "Task actions",
-  trip_geocode: "Trip geocode",
+  trip_geocode: "Trip scan",
+  trip_search: "Trip search",
+  calls_log: "Call log",
 };
 
 function relativeTime(iso: string): string {
