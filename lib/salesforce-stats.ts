@@ -9,12 +9,15 @@ export const CDM_OWNER_NAMES = [
 ] as const;
 
 export const TRACKED_SUBJECT_TYPES = ["E1", "RCE1", "C1", "RCC", "F2F"] as const;
+// Display order for the BRO pipeline chart and drill-down groupings.
+// IOI/LOI come before DD because that matches how the team thinks about the
+// funnel (initial offer happens before deep diligence in M&A workflow).
 export const OPPORTUNITY_STAGES = [
   "Incoming",
   "Pre-DD",
-  "DD",
   "IOI",
   "LOI",
+  "DD",
   "On Ice",
 ] as const;
 
