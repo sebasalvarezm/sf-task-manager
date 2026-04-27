@@ -13,6 +13,39 @@ import { Spinner } from "@/app/components/ui/Spinner";
 import { Alert } from "@/app/components/ui/Alert";
 import { RefreshCw } from "lucide-react";
 
+// ── Pending-actions auto-save ────────────────────────────────────────────────
+// As you fill in delete/reschedule/delay choices we mirror the actions map to
+// localStorage so that an accidental tab close doesn't wipe your work. On
+// successful Apply we clear it. Pure client-side; no server involvement.
+const PENDING_ACTIONS_KEY = "pending_task_actions_v1";
+
+function loadDraftActions(): Map<string, TaskAction> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = localStorage.getItem(PENDING_ACTIONS_KEY);
+    if (!raw) return new Map();
+    const obj = JSON.parse(raw) as Record<string, TaskAction>;
+    return new Map(Object.entries(obj));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveDraftActions(actions: Map<string, TaskAction>) {
+  if (typeof window === "undefined") return;
+  try {
+    if (actions.size === 0) {
+      localStorage.removeItem(PENDING_ACTIONS_KEY);
+      return;
+    }
+    const obj: Record<string, TaskAction> = {};
+    for (const [k, v] of actions) obj[k] = v;
+    localStorage.setItem(PENDING_ACTIONS_KEY, JSON.stringify(obj));
+  } catch {
+    // localStorage full or unavailable — non-critical
+  }
+}
+
 // ── Portfolio match localStorage cache ───────────────────────────────────────
 const PORTFOLIO_CACHE_KEY = "portfolio_matches_v7";
 
@@ -70,7 +103,17 @@ function TasksPageContent() {
   const [tasksError, setTasksError] = useState<string | null>(null);
 
   const [selectedWeek, setSelectedWeek] = useState<WeekRange | null>(null);
-  const [actions, setActions] = useState<Map<string, TaskAction>>(new Map());
+  // Initialize from any draft saved before the last unload — accidental
+  // browser/tab closes no longer wipe pending actions.
+  const [actions, setActions] = useState<Map<string, TaskAction>>(() =>
+    loadDraftActions(),
+  );
+
+  // Mirror every change to localStorage. Cleared automatically when actions
+  // becomes empty (after Apply or week switch).
+  useEffect(() => {
+    saveDraftActions(actions);
+  }, [actions]);
 
   const [portfolioMatches, setPortfolioMatches] = useState<Map<string, PortfolioMatch>>(() => getPortfolioCache());
   const fetchingAccounts = useRef<Set<string>>(new Set());
