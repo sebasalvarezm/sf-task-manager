@@ -4,10 +4,43 @@
 @tailwind utilities;
 
 :root {
+  /* ── Brand (existing — kept for backwards compat) ───────── */
   --navy: #1B2A4A;
   --navy-dark: #141f38;
   --orange: #E84C0E;
   --orange-hover: #c93d09;
+
+  /* ── Brand (new canonical names) ────────────────────────── */
+  --navy-light: #253561;
+  --brand: #E84C0E;
+  --brand-hover: #C93D09;
+  --brand-soft: #FEF1EC;
+
+  /* ── Surfaces ───────────────────────────────────────────── */
+  --surface: #F5F6F8;
+  --surface-2: #FFFFFF;
+  --surface-3: #FAFBFC;
+
+  /* ── Borders ────────────────────────────────────────────── */
+  --border: #E5E7EB;
+  --border-strong: #D1D5DB;
+
+  /* ── Text ───────────────────────────────────────────────── */
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+  --text-inverse: #F8FAFC;
+  --text-inverse-muted: #A0AEC0;
+
+  /* ── Status ─────────────────────────────────────────────── */
+  --success: #16A34A;
+  --success-soft: #DCFCE7;
+  --warning: #D97706;
+  --warning-soft: #FEF3C7;
+  --danger: #DC2626;
+  --danger-soft: #FEE2E2;
+  --info: #2563EB;
+  --info-soft: #DBEAFE;
 }
 
 * {

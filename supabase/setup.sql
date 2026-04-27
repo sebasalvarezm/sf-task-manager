@@ -123,3 +123,60 @@ CREATE TABLE IF NOT EXISTS account_geocache (
 
 CREATE INDEX IF NOT EXISTS idx_account_geocache_coords
   ON account_geocache (lat, lng);
+
+-- ============================================================
+-- Table 7: Background Jobs Queue
+-- ============================================================
+-- Tracks long-running operations (sourcing scrapes, AI prep one-pagers,
+-- bulk task actions) so the UI can show progress in the notification bell
+-- and you can navigate away while work continues. Without this, every
+-- long operation blocks the page and dies if you click somewhere else.
+
+DO $$ BEGIN
+  CREATE TYPE job_kind AS ENUM ('sourcing', 'prep', 'task_bulk', 'trip_geocode');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE job_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id TEXT NOT NULL DEFAULT 'default',
+  kind job_kind NOT NULL,
+  status job_status NOT NULL DEFAULT 'queued',
+  label TEXT,                              -- friendly name shown in the bell, e.g. "Sourcing: acme.com"
+  input JSONB NOT NULL DEFAULT '{}'::jsonb,
+  result JSONB,                            -- populated on success
+  error TEXT,                              -- populated on failure
+  progress JSONB DEFAULT '{}'::jsonb,      -- optional: {"step":"history","pct":40}
+  inngest_run_id TEXT,                     -- for debugging; ties back to Inngest dashboard
+  result_route TEXT,                       -- deep-link the bell uses, e.g. "/sourcing?domain=acme.com"
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  seen_at TIMESTAMPTZ                      -- when the user dismissed the red dot
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_session_created
+  ON jobs (session_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status_active
+  ON jobs (status) WHERE status IN ('queued', 'running');
+
+CREATE OR REPLACE FUNCTION jobs_set_updated_at() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_jobs_updated_at ON jobs;
+CREATE TRIGGER trg_jobs_updated_at
+  BEFORE UPDATE ON jobs
+  FOR EACH ROW EXECUTE FUNCTION jobs_set_updated_at();

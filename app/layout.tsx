@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Valstone — Task Manager",
-  description: "Salesforce open task manager for Valstone M&A",
+  title: "Valstone Platform",
+  description: "Valstone — Sales, sourcing, and M&A operations platform",
 };
 
 export default function RootLayout({
