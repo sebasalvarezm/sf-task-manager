@@ -33,6 +33,12 @@ type DiscoveredCompany = {
   employeesEstimate: number | null;
   ownership: "independent" | "pe_vc" | "aggregator";
   ownershipDetail: string | null;
+  lat: number | null;
+  lng: number | null;
+  straightLineMiles: number | null;
+  distanceMiles: number | null;
+  durationMinutes: number | null;
+  durationText: string | null;
 };
 
 type UserLocation = { lat: number; lng: number; formattedAddress: string };
@@ -692,8 +698,23 @@ export default function TripPage() {
                                 <p className="text-sm text-gray-600 mb-1">
                                   {c.description}
                                 </p>
-                                <p className="text-xs text-gray-400">
-                                  {[c.city, c.state].filter(Boolean).join(", ") || "Location unknown"}
+                                <p className="text-xs text-gray-400 flex items-center gap-2 flex-wrap">
+                                  <span>
+                                    {[c.city, c.state].filter(Boolean).join(", ") ||
+                                      "Location unknown"}
+                                  </span>
+                                  {c.distanceMiles != null && (
+                                    <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                                      {c.distanceMiles} mi
+                                      {c.durationText ? ` · ${c.durationText}` : ""}
+                                    </span>
+                                  )}
+                                  {c.distanceMiles == null &&
+                                    c.straightLineMiles != null && (
+                                      <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+                                        ~{c.straightLineMiles} mi
+                                      </span>
+                                    )}
                                 </p>
                               </div>
                               <div className="shrink-0">

@@ -1,5 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { CDMAccount } from "./salesforce-trip";
+import {
+  geocodeAddress,
+  haversineDistance,
+  getDrivingDistances,
+} from "./geocoding";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -13,7 +18,27 @@ export type DiscoveredCompany = {
   employeesEstimate: number | null;
   ownership: "independent" | "pe_vc" | "aggregator";
   ownershipDetail: string | null;
+  // Set after geocoding + distance computation
+  lat: number | null;
+  lng: number | null;
+  straightLineMiles: number | null;
+  distanceMiles: number | null;
+  durationMinutes: number | null;
+  durationText: string | null;
 };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const WEB_SEARCH_TOOL: any[] = [
+  { type: "web_search_20250305", name: "web_search", max_uses: 4 },
+];
+
+function extractLastText(content: Anthropic.Messages.ContentBlock[]): string {
+  const textBlocks = content.filter(
+    (b): b is Anthropic.Messages.TextBlock => b.type === "text",
+  );
+  if (textBlocks.length === 0) return "";
+  return textBlocks[textBlocks.length - 1].text.trim();
+}
 
 // ── CDM sub-verticals ────────────────────────────────────────────────────────
 
@@ -95,16 +120,15 @@ async function searchVertical(
   try {
     const resp = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 2048,
+      max_tokens: 4096,
+      tools: WEB_SEARCH_TOOL,
       messages: [
         {
           role: "user",
-          content: `Find software companies located within roughly ${radiusMiles} driving miles of ${location} that serve the ${vertical.name} industry.
+          content: `Use web search to find software companies within roughly ${radiusMiles} driving miles of ${location} that serve the ${vertical.name} industry. Real, verified, currently-operating companies — not speculation. Use the web_search tool to look them up; do not rely solely on prior knowledge.
 
 **CRITICAL GEOGRAPHIC CONSTRAINT:**
-Every company MUST be physically headquartered within ${radiusMiles} miles of ${location}. Do NOT include companies in other states or regions, even if they would otherwise fit the profile. When in doubt, exclude.
-
-If ${location} is in the USA, only return US companies in the same state or an immediately neighboring state. Do NOT return companies from across the country (e.g., if the trip is to Colorado, do NOT include Florida, Wisconsin, or Oklahoma companies).
+Every company MUST be physically headquartered within ${radiusMiles} miles of ${location}. Do NOT include companies in other states, provinces, or regions, even if they would otherwise fit the profile. The user's location may be in any country (USA, Canada, etc.) — respect that. When in doubt, exclude.
 
 Search terms to guide your research: ${vertical.searchTerms}
 
@@ -150,8 +174,7 @@ If you cannot find any relevant companies, return [].`,
       ],
     });
 
-    const text =
-      resp.content[0].type === "text" ? resp.content[0].text : "";
+    const text = extractLastText(resp.content);
     const cleaned = text
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/```\s*$/i, "")
@@ -182,6 +205,12 @@ If you cannot find any relevant companies, return [].`,
       employeesEstimate: c.employees ?? null,
       ownership: "independent" as const,
       ownershipDetail: null,
+      lat: null,
+      lng: null,
+      straightLineMiles: null,
+      distanceMiles: null,
+      durationMinutes: null,
+      durationText: null,
     }));
   } catch {
     return [];
@@ -204,31 +233,34 @@ async function checkOwnershipBatch(
   try {
     const resp = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 2048,
+      max_tokens: 4096,
+      tools: WEB_SEARCH_TOOL,
       messages: [
         {
           role: "user",
-          content: `For each company below, determine its ownership status:
-- "independent" = privately held, no known acquirer
-- "pe_vc" = backed by private equity or venture capital
+          content: `Use web search to determine the current ownership status of each company below. Search recent news (last 5 years) for each: "[Company name] acquired", "[Company name] portfolio", "[Company name] private equity". Acquisition status changes over time, so prior knowledge alone is unreliable — always verify with web search.
+
+Categories:
+- "independent" = privately held, founder/family-owned, no PE/VC backing, never acquired
+- "pe_vc" = currently backed by private equity, venture capital, or a holding company that isn't a software aggregator (e.g., Vista Equity, Thoma Bravo, KKR, family offices, growth funds)
 - "aggregator" = acquired by a buy-and-hold software aggregator
 
-Known software aggregators to check against: ${aggregatorList}
+Known software aggregators to check against (any acquisition by these = "aggregator"): ${aggregatorList}
+
+If a company has been acquired by ANY entity in the last 5 years, it is NOT independent. Bias toward marking as pe_vc or aggregator when there's evidence of an acquisition.
 
 Companies:
 ${companyList}
 
-Return a JSON array with one entry per company (same order):
-[{"index":0,"ownership":"independent","detail":null},{"index":1,"ownership":"aggregator","detail":"Acquired by Constellation Software (Volaris Group) in 2021"}]
+Return a JSON array with one entry per company (same order). Return ONLY the JSON, no markdown:
+[{"index":0,"ownership":"independent","detail":null},{"index":1,"ownership":"aggregator","detail":"Acquired by Volaris Group (Constellation Software) in 2022"}]
 
-"detail" is a short note only if ownership is "pe_vc" or "aggregator" (who owns them).
-Return [] if you cannot determine ownership for any.`,
+"detail" is a short note (1 sentence) when ownership is "pe_vc" or "aggregator" — name the parent + year if known.`,
         },
       ],
     });
 
-    const text =
-      resp.content[0].type === "text" ? resp.content[0].text : "";
+    const text = extractLastText(resp.content);
     const cleaned = text
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/```\s*$/i, "")
@@ -256,86 +288,34 @@ Return [] if you cannot determine ownership for any.`,
   return companies;
 }
 
-// ── US state adjacency map (for geographic filtering) ───────────────────────
-// Each state maps to itself + bordering states. Used to reject discovery
-// results that are clearly far from the user's trip location.
+// ── Geocoding-based distance filter ─────────────────────────────────────────
+// Replaces the old US state-adjacency filter (which broke for Canadian and
+// non-US locations). Geocodes each company's claimed city/state, computes
+// haversine distance to the user, and keeps only those within radius.
 
-const STATE_ADJACENCY: Record<string, string[]> = {
-  AL: ["AL", "FL", "GA", "MS", "TN"],
-  AK: ["AK"],
-  AZ: ["AZ", "CA", "CO", "NM", "NV", "UT"],
-  AR: ["AR", "LA", "MO", "MS", "OK", "TN", "TX"],
-  CA: ["CA", "AZ", "NV", "OR"],
-  CO: ["CO", "AZ", "KS", "NE", "NM", "OK", "UT", "WY"],
-  CT: ["CT", "MA", "NY", "RI"],
-  DE: ["DE", "MD", "NJ", "PA"],
-  FL: ["FL", "AL", "GA"],
-  GA: ["GA", "AL", "FL", "NC", "SC", "TN"],
-  HI: ["HI"],
-  ID: ["ID", "MT", "NV", "OR", "UT", "WA", "WY"],
-  IL: ["IL", "IN", "IA", "KY", "MO", "WI"],
-  IN: ["IN", "IL", "KY", "MI", "OH"],
-  IA: ["IA", "IL", "MN", "MO", "NE", "SD", "WI"],
-  KS: ["KS", "CO", "MO", "NE", "OK"],
-  KY: ["KY", "IL", "IN", "MO", "OH", "TN", "VA", "WV"],
-  LA: ["LA", "AR", "MS", "TX"],
-  ME: ["ME", "NH"],
-  MD: ["MD", "DE", "PA", "VA", "WV", "DC"],
-  MA: ["MA", "CT", "NH", "NY", "RI", "VT"],
-  MI: ["MI", "IN", "OH", "WI"],
-  MN: ["MN", "IA", "ND", "SD", "WI"],
-  MS: ["MS", "AL", "AR", "LA", "TN"],
-  MO: ["MO", "AR", "IA", "IL", "KS", "KY", "NE", "OK", "TN"],
-  MT: ["MT", "ID", "ND", "SD", "WY"],
-  NE: ["NE", "CO", "IA", "KS", "MO", "SD", "WY"],
-  NV: ["NV", "AZ", "CA", "ID", "OR", "UT"],
-  NH: ["NH", "MA", "ME", "VT"],
-  NJ: ["NJ", "DE", "NY", "PA"],
-  NM: ["NM", "AZ", "CO", "OK", "TX", "UT"],
-  NY: ["NY", "CT", "MA", "NJ", "PA", "VT"],
-  NC: ["NC", "GA", "SC", "TN", "VA"],
-  ND: ["ND", "MN", "MT", "SD"],
-  OH: ["OH", "IN", "KY", "MI", "PA", "WV"],
-  OK: ["OK", "AR", "CO", "KS", "MO", "NM", "TX"],
-  OR: ["OR", "CA", "ID", "NV", "WA"],
-  PA: ["PA", "DE", "MD", "NJ", "NY", "OH", "WV"],
-  RI: ["RI", "CT", "MA"],
-  SC: ["SC", "GA", "NC"],
-  SD: ["SD", "IA", "MN", "MT", "ND", "NE", "WY"],
-  TN: ["TN", "AL", "AR", "GA", "KY", "MO", "MS", "NC", "VA"],
-  TX: ["TX", "AR", "LA", "NM", "OK"],
-  UT: ["UT", "AZ", "CO", "ID", "NM", "NV", "WY"],
-  VT: ["VT", "MA", "NH", "NY"],
-  VA: ["VA", "KY", "MD", "NC", "TN", "WV", "DC"],
-  WA: ["WA", "ID", "OR"],
-  WV: ["WV", "KY", "MD", "OH", "PA", "VA"],
-  WI: ["WI", "IA", "IL", "MI", "MN"],
-  WY: ["WY", "CO", "ID", "MT", "NE", "SD", "UT"],
-  DC: ["DC", "MD", "VA"],
-};
-
-function stateAbbrevFromLocation(location: string): string | null {
-  // Try to extract a 2-letter state abbreviation from the user's input
-  // e.g., "Denver, CO" → "CO", "1 Lake Ave, Colorado Springs, CO 80906" → "CO"
-  const match = location.match(/\b([A-Z]{2})\b/);
-  if (match) return match[1];
-  return null;
-}
-
-function filterByGeography(
+async function filterByDistance(
   companies: DiscoveredCompany[],
-  userLocation: string
-): DiscoveredCompany[] {
-  const userState = stateAbbrevFromLocation(userLocation);
-  if (!userState || !STATE_ADJACENCY[userState]) return companies;
-
-  const allowed = new Set(STATE_ADJACENCY[userState]);
-
-  return companies.filter((c) => {
-    if (!c.state) return true; // keep if unknown — Claude might not have returned it
-    const companyState = c.state.toUpperCase().trim();
-    return allowed.has(companyState);
-  });
+  userLat: number,
+  userLng: number,
+  radiusMiles: number,
+): Promise<DiscoveredCompany[]> {
+  const enriched = await Promise.all(
+    companies.map(async (c) => {
+      if (!c.city) return null; // can't verify location → drop (was: kept)
+      const addr = c.state ? `${c.city}, ${c.state}` : c.city;
+      const geo = await geocodeAddress(addr);
+      if (!geo) return null;
+      const dist = haversineDistance(userLat, userLng, geo.lat, geo.lng);
+      if (dist > radiusMiles) return null;
+      return {
+        ...c,
+        lat: geo.lat,
+        lng: geo.lng,
+        straightLineMiles: Math.round(dist),
+      };
+    }),
+  );
+  return enriched.filter((c) => c !== null) as DiscoveredCompany[];
 }
 
 // ── Deduplicate against existing SF accounts ────────────────────────────────
@@ -381,11 +361,18 @@ function deduplicateAgainstSF(
 
 export async function discoverCompanies(
   location: string,
+  userGeo: { lat: number; lng: number },
   radiusMiles: number,
-  sfAccounts: CDMAccount[]
+  sfAccounts: CDMAccount[],
 ): Promise<{
   companies: DiscoveredCompany[];
-  stats: { searched: number; found: number; deduped: number; filteredByGeo: number; final: number };
+  stats: {
+    searched: number;
+    found: number;
+    deduped: number;
+    filteredByGeo: number;
+    final: number;
+  };
 }> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("Missing ANTHROPIC_API_KEY");
@@ -393,9 +380,9 @@ export async function discoverCompanies(
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  // Step 1: Search all 9 verticals in parallel
+  // Step 1: Search all 9 verticals in parallel (with web search grounding)
   const verticalResults = await Promise.all(
-    CDM_VERTICALS.map((v) => searchVertical(client, v, location, radiusMiles))
+    CDM_VERTICALS.map((v) => searchVertical(client, v, location, radiusMiles)),
   );
 
   // Merge and deduplicate by name (case-insensitive)
@@ -411,13 +398,18 @@ export async function discoverCompanies(
     }
   }
 
-  // Step 2: Geographic filter — drop companies outside the trip state and its neighbors
-  const afterGeo = filterByGeography(allFound, location);
+  // Step 2: Real geocoding-based distance filter (replaces state-adjacency)
+  const afterGeo = await filterByDistance(
+    allFound,
+    userGeo.lat,
+    userGeo.lng,
+    radiusMiles,
+  );
 
   // Step 3: Remove companies already in Salesforce
   const afterDedup = deduplicateAgainstSF(afterGeo, sfAccounts);
 
-  // Step 4: Check ownership in batches of 15
+  // Step 4: Check ownership in batches of 15 (with web search)
   const BATCH_SIZE = 15;
   const withOwnership: DiscoveredCompany[] = [];
   for (let i = 0; i < afterDedup.length; i += BATCH_SIZE) {
@@ -425,6 +417,34 @@ export async function discoverCompanies(
     const checked = await checkOwnershipBatch(client, batch);
     withOwnership.push(...checked);
   }
+
+  // Step 5: Driving distances (only for companies with lat/lng)
+  const withCoords = withOwnership.filter(
+    (c): c is DiscoveredCompany & { lat: number; lng: number } =>
+      c.lat != null && c.lng != null,
+  );
+  if (withCoords.length > 0) {
+    const distResults = await getDrivingDistances(
+      { lat: userGeo.lat, lng: userGeo.lng },
+      withCoords.map((c, i) => ({ id: String(i), lat: c.lat, lng: c.lng })),
+    );
+    const distMap = new Map(distResults.map((d) => [d.id, d]));
+    withCoords.forEach((c, i) => {
+      const d = distMap.get(String(i));
+      if (d) {
+        c.distanceMiles = d.distanceMiles;
+        c.durationMinutes = d.durationMinutes;
+        c.durationText = d.durationText;
+      }
+    });
+  }
+
+  // Step 6: Sort by driving time ascending (failures last)
+  withOwnership.sort(
+    (a, b) =>
+      (a.durationMinutes ?? Number.MAX_SAFE_INTEGER) -
+      (b.durationMinutes ?? Number.MAX_SAFE_INTEGER),
+  );
 
   return {
     companies: withOwnership,

@@ -149,7 +149,12 @@ export async function runTripSearch(
 
   const discoverPromise = (async () => {
     try {
-      const out = await discoverCompanies(input.location, radiusMiles, accounts);
+      const out = await discoverCompanies(
+        input.location,
+        { lat: userGeo.lat, lng: userGeo.lng },
+        radiusMiles,
+        accounts,
+      );
       return { ok: true as const, ...out };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Discovery error";

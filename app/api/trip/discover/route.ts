@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { fetchCDMAccounts } from "@/lib/salesforce-trip";
 import { discoverCompanies } from "@/lib/trip-discovery";
+import { geocodeAddress } from "@/lib/geocoding";
 
 export const maxDuration = 300; // 5 minutes — discovery is thorough
 
@@ -24,14 +25,24 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Geocode the user's location so discovery can do real distance filtering
+    const userGeo = await geocodeAddress(body.location);
+    if (!userGeo) {
+      return NextResponse.json(
+        { error: `Could not geocode "${body.location}"` },
+        { status: 400 },
+      );
+    }
+
     // Fetch existing SF accounts for deduplication
     const sfAccounts = await fetchCDMAccounts();
 
     // Run discovery
     const { companies, stats } = await discoverCompanies(
       body.location,
+      { lat: userGeo.lat, lng: userGeo.lng },
       body.radiusMiles ?? 150,
-      sfAccounts
+      sfAccounts,
     );
 
     return NextResponse.json({ companies, stats });
