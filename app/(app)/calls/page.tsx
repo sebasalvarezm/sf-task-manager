@@ -253,6 +253,24 @@ function CallsPageContent() {
     }
   }, [jobs]);
 
+  // ── Cancel an in-flight calls_log job ───────────────────────────────────
+  async function handleCancelSubmit() {
+    const stuck = jobs.find(
+      (j) =>
+        j.kind === "calls_log" &&
+        (j.status === "queued" || j.status === "running"),
+    );
+    setSubmitting(false);
+    if (stuck) {
+      try {
+        await fetch(`/api/jobs/${stuck.id}`, { method: "DELETE" });
+      } catch {
+        /* ignore */
+      }
+      refetchJobs();
+    }
+  }
+
   // ── Submit — create Salesforce tasks via background job ──────────────────
   async function handleSubmit() {
     // Collect entries that have a valid type and a matched account
@@ -606,6 +624,14 @@ function CallsPageContent() {
                       ? "Submitting..."
                       : `Log ${actionableCount} call${actionableCount !== 1 ? "s" : ""} to Salesforce`}
                   </button>
+                  {submitting && (
+                    <button
+                      onClick={handleCancelSubmit}
+                      className="text-gray-300 hover:text-red-400 text-xs underline underline-offset-2 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  )}
                 </div>
               </div>
             )}

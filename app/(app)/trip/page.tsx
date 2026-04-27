@@ -227,6 +227,45 @@ export default function TripPage() {
     }
   }
 
+  // ── Cancel handlers ────────────────────────────────────────────────────
+
+  async function handleCancelSearch() {
+    const stuck = jobs.find(
+      (j) =>
+        j.kind === "trip_search" &&
+        (j.status === "queued" || j.status === "running"),
+    );
+    setSearching(false);
+    setDiscovering(false);
+    setSearchError(null);
+    if (stuck) {
+      try {
+        await fetch(`/api/jobs/${stuck.id}`, { method: "DELETE" });
+      } catch {
+        /* ignore — local state is already unblocked */
+      }
+      refetchJobs();
+    }
+  }
+
+  async function handleCancelScan() {
+    const stuck = jobs.find(
+      (j) =>
+        j.kind === "trip_geocode" &&
+        (j.status === "queued" || j.status === "running"),
+    );
+    setScanning(false);
+    setScanDone(false);
+    if (stuck) {
+      try {
+        await fetch(`/api/jobs/${stuck.id}`, { method: "DELETE" });
+      } catch {
+        /* ignore */
+      }
+      refetchJobs();
+    }
+  }
+
   // ── Scan handler ───────────────────────────────────────────────────────
 
   async function handleScan() {
@@ -350,6 +389,28 @@ export default function TripPage() {
                 {scanning ? "Scanning…" : "Scan Accounts"}
               </button>
             </div>
+
+            {/* Cancel links — visible when a job is in flight */}
+            {(searching || scanning) && (
+              <div className="mt-2 flex items-center gap-4 text-xs text-ink-muted">
+                {searching && (
+                  <button
+                    onClick={handleCancelSearch}
+                    className="hover:text-danger underline underline-offset-2 transition-colors"
+                  >
+                    Cancel search
+                  </button>
+                )}
+                {scanning && (
+                  <button
+                    onClick={handleCancelScan}
+                    className="hover:text-danger underline underline-offset-2 transition-colors"
+                  >
+                    Cancel scan
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Scan progress */}
             {scanning && scanProgress && (

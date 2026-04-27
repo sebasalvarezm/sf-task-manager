@@ -153,6 +153,31 @@ export async function getJob(
   return (data as Job) ?? null;
 }
 
+/**
+ * Cancel a queued or running job. Only updates rows that are still in flight
+ * — already-completed jobs are not touched. Returns true if a row was
+ * cancelled.
+ */
+export async function cancelJob(
+  jobId: string,
+  sessionId: string = DEFAULT_SESSION,
+): Promise<boolean> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("jobs")
+    .update({
+      status: "cancelled",
+      error: "Cancelled by user",
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .eq("session_id", sessionId)
+    .in("status", ["queued", "running"])
+    .select("id");
+  if (error) throw new Error(`Failed to cancel job: ${error.message}`);
+  return (data?.length ?? 0) > 0;
+}
+
 export async function markAllSeen(
   sessionId: string = DEFAULT_SESSION,
 ): Promise<number> {

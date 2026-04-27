@@ -269,6 +269,29 @@ function PrepPageContent() {
     });
   }, [jobs]);
 
+  // ── Cancel an in-flight prep job for one meeting row ─────────────────────
+  async function handleCancelGenerate(eventId: string) {
+    const meeting = meetings.find((m) => m.eventId === eventId);
+    const jobId = meeting?.jobId ?? null;
+
+    setMeetings((prev) =>
+      prev.map((m) =>
+        m.eventId === eventId
+          ? { ...m, generating: false, jobId: null, generateError: null }
+          : m,
+      ),
+    );
+
+    if (jobId) {
+      try {
+        await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
+      } catch {
+        /* ignore */
+      }
+      refetchJobs();
+    }
+  }
+
   // ── Generate one-pager for a meeting (creates a background job) ──────────
   async function handleGenerate(eventId: string) {
     const meeting = meetings.find((m) => m.eventId === eventId);
@@ -619,6 +642,9 @@ function PrepPageContent() {
                               )
                             }
                             onGenerate={() => handleGenerate(meeting.eventId)}
+                            onCancelGenerate={() =>
+                              handleCancelGenerate(meeting.eventId)
+                            }
                             onDownload={() => handleDownload(meeting.eventId)}
                             manualMatch={manualMatches.get(meeting.eventId) ?? null}
                             searchInput={searchInputs.get(meeting.eventId) ?? ""}
@@ -682,6 +708,7 @@ function MeetingRow({
   expanded,
   onToggleExpand,
   onGenerate,
+  onCancelGenerate,
   onDownload,
   manualMatch,
   searchInput,
@@ -696,6 +723,7 @@ function MeetingRow({
   expanded: boolean;
   onToggleExpand: () => void;
   onGenerate: () => void;
+  onCancelGenerate: () => void;
   onDownload: () => void;
   manualMatch: { accountId: string; accountName: string; accountUrl: string } | null;
   searchInput: string;
@@ -816,11 +844,17 @@ function MeetingRow({
               </button>
             )}
 
-            {/* Generating spinner */}
+            {/* Generating spinner + Cancel link */}
             {meeting.generating && (
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-brand-orange" />
                 Generating...
+                <button
+                  onClick={onCancelGenerate}
+                  className="ml-1 text-gray-400 hover:text-red-500 underline underline-offset-2 transition-colors"
+                >
+                  Cancel
+                </button>
               </div>
             )}
 
