@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from "next/server";
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Always allow: login page, auth API, OAuth callbacks
+  // Always allow: login page, auth API, OAuth callbacks,
+  // and /api/inngest (Inngest validates requests via signing-key headers itself)
   const publicPaths = [
     "/login",
     "/api/auth/",
@@ -12,6 +13,7 @@ export function middleware(request: NextRequest) {
     "/api/microsoft/callback",
     "/api/outreach/callback",
     "/api/triage",
+    "/api/inngest",
   ];
 
   const isPublic = publicPaths.some((p) => pathname.startsWith(p));
