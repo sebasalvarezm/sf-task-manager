@@ -37,7 +37,7 @@ export default function LoginPage() {
       <div className="bg-surface-2 rounded-xl shadow-lg p-10 w-full max-w-sm border border-line">
         <div className="flex justify-center mb-8">
           <div className="text-3xl font-bold text-navy tracking-tight">
-            <span className="text-brand">VAL</span>STONE
+            <span className="text-brand">V</span>ALSTONE
           </div>
         </div>
 

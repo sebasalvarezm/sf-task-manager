@@ -8,7 +8,7 @@ export const CDM_OWNER_NAMES = [
   "Tyson Hasegawa-Foster",
 ] as const;
 
-export const TRACKED_SUBJECT_TYPES = ["E1", "RCE1", "C1", "F2F"] as const;
+export const TRACKED_SUBJECT_TYPES = ["E1", "RCE1", "C1", "RCC", "F2F"] as const;
 export const OPPORTUNITY_STAGES = [
   "Incoming",
   "Pre-DD",
@@ -37,6 +37,7 @@ export type BucketCountRow = {
   e1: number;
   rce1: number;
   c1: number;
+  rcc: number;
   f2f: number;
 };
 
@@ -146,6 +147,7 @@ export async function fetchTaskCountsByBucket(
         E1: 0,
         RCE1: 0,
         C1: 0,
+        RCC: 0,
         F2F: 0,
       };
       for (const r of rows) byType[r.stype] = Number(r.cnt) || 0;
@@ -156,6 +158,7 @@ export async function fetchTaskCountsByBucket(
         e1: byType.E1,
         rce1: byType.RCE1,
         c1: byType.C1,
+        rcc: byType.RCC,
         f2f: byType.F2F,
       };
     })
@@ -265,6 +268,152 @@ export async function fetchStuckOpportunities(
 
   stuck.sort((a, b) => b.daysStuck - a.daysStuck);
   return stuck.slice(0, limit);
+}
+
+// ── Drill helpers (per-company breakdown for chart bar clicks) ───────────────
+
+export type DrillAccountRow = {
+  accountId: string | null;
+  accountName: string;
+  website: string | null;
+  numberOfEmployees: number | null;
+  country: string | null;
+  lastActivityDate: string | null;
+  // populated only for opportunity-based drills
+  opportunityId?: string | null;
+  opportunityName?: string | null;
+  stage?: string | null;
+  amount?: number | null;
+};
+
+type RawTaskAccountRow = {
+  Id: string;
+  ActivityDate: string | null;
+  Subject_Type__c?: string | null;
+  AccountId: string | null;
+  Account: {
+    Name?: string | null;
+    Website?: string | null;
+    NumberOfEmployees?: number | null;
+    BillingCountry?: string | null;
+  } | null;
+};
+
+/**
+ * Generic task-based drill. Returns deduped accounts (most-recent activity
+ * wins) matching subject types + owner + date window.
+ */
+export async function fetchDrillAccountsForTasks(
+  credentials: SfCredentials,
+  options: {
+    types: TrackedSubjectType[];
+    ownerName: string;
+    rangeStart: string;
+    rangeEnd: string;
+    limit?: number;
+  }
+): Promise<DrillAccountRow[]> {
+  const { types, ownerName, rangeStart, rangeEnd, limit = 500 } = options;
+  if (types.length === 0) return [];
+
+  const typesClause = types.map((t) => `'${t}'`).join(",");
+  const soql =
+    `SELECT Id, ActivityDate, Subject_Type__c, AccountId, ` +
+    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
+    `FROM Task ` +
+    `WHERE Subject_Type__c IN (${typesClause}) ` +
+    `AND Status = 'Completed' ` +
+    `AND ActivityDate >= ${rangeStart} AND ActivityDate <= ${rangeEnd} ` +
+    `AND Owner.Name = '${escapeSoql(ownerName)}' ` +
+    `AND AccountId != null ` +
+    `ORDER BY ActivityDate DESC ` +
+    `LIMIT ${limit}`;
+
+  const rows = await runQuery<RawTaskAccountRow>(credentials, soql);
+
+  // Dedupe by AccountId — most recent task wins (SOQL ORDER BY ActivityDate DESC).
+  const seen = new Set<string>();
+  const out: DrillAccountRow[] = [];
+  for (const r of rows) {
+    const id = r.AccountId ?? "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      accountId: r.AccountId,
+      accountName: r.Account?.Name ?? "(no account)",
+      website: r.Account?.Website ?? null,
+      numberOfEmployees: r.Account?.NumberOfEmployees ?? null,
+      country: r.Account?.BillingCountry ?? null,
+      lastActivityDate: r.ActivityDate ?? null,
+    });
+  }
+  return out;
+}
+
+type RawOppRow = {
+  Id: string;
+  Name: string;
+  StageName: string;
+  Amount: number | null;
+  AccountId: string | null;
+  Account: {
+    Name?: string | null;
+    Website?: string | null;
+    NumberOfEmployees?: number | null;
+    BillingCountry?: string | null;
+  } | null;
+  LastModifiedDate: string;
+};
+
+function oppToDrillRow(r: RawOppRow): DrillAccountRow {
+  return {
+    accountId: r.AccountId,
+    accountName: r.Account?.Name ?? "(no account)",
+    website: r.Account?.Website ?? null,
+    numberOfEmployees: r.Account?.NumberOfEmployees ?? null,
+    country: r.Account?.BillingCountry ?? null,
+    lastActivityDate: r.LastModifiedDate,
+    opportunityId: r.Id,
+    opportunityName: r.Name,
+    stage: r.StageName,
+    amount: (Number(r.Amount) || 0) * BRO_AMOUNT_MULTIPLIER,
+  };
+}
+
+/** Open BROs originated by a specific CDM owner. */
+export async function fetchDrillOppsByOriginator(
+  credentials: SfCredentials,
+  ownerName: string
+): Promise<DrillAccountRow[]> {
+  const soql =
+    `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, ` +
+    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
+    `FROM Opportunity ` +
+    `WHERE IsClosed = false ` +
+    `AND StageName IN (${stagesClause}) ` +
+    `AND Owner.Name = '${escapeSoql(ownerName)}' ` +
+    `ORDER BY Amount DESC NULLS LAST ` +
+    `LIMIT 200`;
+  const rows = await runQuery<RawOppRow>(credentials, soql);
+  return rows.map(oppToDrillRow);
+}
+
+/** Open BROs in a specific stage (across all CDM owners). */
+export async function fetchDrillOppsByStage(
+  credentials: SfCredentials,
+  stage: string
+): Promise<DrillAccountRow[]> {
+  const soql =
+    `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, ` +
+    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
+    `FROM Opportunity ` +
+    `WHERE IsClosed = false ` +
+    `AND StageName = '${escapeSoql(stage)}' ` +
+    `AND Owner.Name IN (${ownerNamesClause}) ` +
+    `ORDER BY Amount DESC NULLS LAST ` +
+    `LIMIT 200`;
+  const rows = await runQuery<RawOppRow>(credentials, soql);
+  return rows.map(oppToDrillRow);
 }
 
 // ── F2F This Year (always YTD, regardless of selected range) ─────────────────

@@ -21,6 +21,10 @@ import ActionCard, { ActionRow } from "../../components/ActionCard";
 import Heatmap from "../../components/Heatmap";
 import { RangePreset, computeRange } from "@/lib/date-ranges";
 import { CDM_OWNER_NAMES } from "@/lib/salesforce-stats";
+import { Modal } from "@/app/components/ui/Modal";
+import { Table } from "@/app/components/ui/Table";
+import { Spinner } from "@/app/components/ui/Spinner";
+import { ExternalLink } from "lucide-react";
 import { HeatmapData, EnrichedMultiOpen } from "@/lib/analytics-derivations";
 
 // ── Types mirroring API responses ────────────────────────────────────────────
@@ -31,6 +35,7 @@ type PersonBreakdown = {
   rce1: number;
   outreach: number;
   c1: number;
+  rcc: number;
   f2f: number;
   openBRO: number;
 };
@@ -41,6 +46,7 @@ type BucketRow = {
   e1: number;
   rce1: number;
   c1: number;
+  rcc: number;
   f2f: number;
 };
 
@@ -60,12 +66,44 @@ type StuckOpp = {
 
 type ConversionBlock = { outreach: number; c1: number; rate: number };
 
+type DrillDimension =
+  | "outreach_by_person"
+  | "e1_by_person"
+  | "rce1_by_person"
+  | "calls_by_person"
+  | "conversion_by_person"
+  | "bro_by_originator"
+  | "bro_by_stage";
+
+type DrillTarget = {
+  dimension: DrillDimension;
+  title: string;
+  owner?: string;
+  stage?: string;
+  callType?: "c1" | "rcc" | "f2f";
+};
+
+type DrillRow = {
+  accountId: string | null;
+  accountName: string;
+  website: string | null;
+  numberOfEmployees: number | null;
+  country: string | null;
+  lastActivityDate: string | null;
+  opportunityId?: string | null;
+  opportunityName?: string | null;
+  stage?: string | null;
+  amount?: number | null;
+};
+
 type StatsResponse = {
   kpis: {
     totalOutreach: number;
     e1: number;
     rce1: number;
     totalCalls: number;
+    c1: number;
+    rcc: number;
     totalF2F: number;
     totalOpenBRO: number;
     f2fThisYear: number;
@@ -111,9 +149,14 @@ type EngagementResponse = {
 const BLUE = "#6FA8F0";
 const GREEN = "#8DD178";
 const ORANGE = "#F2B84B";
+const TEAL = "#5EC4C4";
 const NAVY = "#1B2A4A";
 
 // ── Formatters ───────────────────────────────────────────────────────────────
+
+function fullNameFromFirst(first: string): string | null {
+  return CDM_OWNER_NAMES.find((n) => n.startsWith(first + " ")) ?? null;
+}
 
 function firstName(full: string): string {
   return full.split(" ")[0];
@@ -158,6 +201,21 @@ export default function StatsPage() {
   const [engagementLoading, setEngagementLoading] = useState(false);
   const [engagementError, setEngagementError] = useState<string | null>(null);
   const [engagement, setEngagement] = useState<EngagementResponse | null>(null);
+
+  const [drill, setDrill] = useState<DrillTarget | null>(null);
+
+  // Open the drill modal — convert chart's first-name string to a Salesforce
+  // full owner name. If the first name doesn't match a CDM owner, no-op.
+  const openOwnerDrill = (
+    payload: Partial<{ name: string }> | null | undefined,
+    base: Omit<DrillTarget, "owner" | "title">,
+    titleFn: (firstName: string) => string,
+  ) => {
+    const first = payload?.name ?? "";
+    const full = fullNameFromFirst(first);
+    if (!full || !first) return;
+    setDrill({ ...base, owner: full, title: titleFn(first) } as DrillTarget);
+  };
 
   const range = useMemo(
     () => computeRange(preset, new Date(), trailingN),
@@ -279,7 +337,8 @@ export default function StatsPage() {
     if (!data) return [];
     return data.byPerson.map((p) => ({
       name: firstName(p.owner),
-      Calls: p.c1,
+      C1: p.c1,
+      RCC: p.rcc,
       F2F: p.f2f,
     }));
   }, [data]);
@@ -289,7 +348,7 @@ export default function StatsPage() {
     return data.byBucket.map((b) => ({
       name: b.bucketLabel,
       Outreach: b.e1 + b.rce1,
-      Calls: b.c1,
+      Calls: b.c1 + b.rcc,
       F2F: b.f2f,
     }));
   }, [data]);
@@ -398,7 +457,7 @@ export default function StatsPage() {
               />
               <KpiCard
                 label="Total Calls"
-                sublabel="C1 completed"
+                sublabel="C1 + RCC"
                 value={fmtNumber(data.kpis.totalCalls)}
               />
               <KpiCard
@@ -495,7 +554,19 @@ export default function StatsPage() {
                     <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
                     <Tooltip />
-                    <Bar dataKey="Outreach" fill={BLUE} radius={[4, 4, 0, 0]}>
+                    <Bar
+                      dataKey="Outreach"
+                      fill={BLUE}
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(d) =>
+                        openOwnerDrill(
+                          d as { name?: string },
+                          { dimension: "outreach_by_person" },
+                          (n) => `Outreach by ${n}`,
+                        )
+                      }
+                    >
                       <LabelList dataKey="Outreach" position="top" style={{ fontSize: 12, fill: NAVY }} />
                     </Bar>
                   </BarChart>
@@ -521,8 +592,32 @@ export default function StatsPage() {
                       <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
                       <Tooltip />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Bar dataKey="E1" fill={BLUE} radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="RCE1" fill={GREEN} radius={[4, 4, 0, 0]} />
+                      <Bar
+                        dataKey="E1"
+                        fill={BLUE}
+                        radius={[4, 4, 0, 0]}
+                        cursor="pointer"
+                        onClick={(d) =>
+                          openOwnerDrill(
+                            d as { name?: string },
+                            { dimension: "e1_by_person" },
+                            (n) => `E1 by ${n}`,
+                          )
+                        }
+                      />
+                      <Bar
+                        dataKey="RCE1"
+                        fill={GREEN}
+                        radius={[4, 4, 0, 0]}
+                        cursor="pointer"
+                        onClick={(d) =>
+                          openOwnerDrill(
+                            d as { name?: string },
+                            { dimension: "rce1_by_person" },
+                            (n) => `RCE1 by ${n}`,
+                          )
+                        }
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -530,7 +625,7 @@ export default function StatsPage() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
-              <ChartCard title="Calls (C1) + F2F by Person">
+              <ChartCard title="Calls + F2F by Person">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={callsF2FByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -538,8 +633,45 @@ export default function StatsPage() {
                     <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
                     <Tooltip />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="Calls" fill={BLUE} radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="F2F" fill={ORANGE} radius={[4, 4, 0, 0]} />
+                    <Bar
+                      dataKey="C1"
+                      fill={BLUE}
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(d) =>
+                        openOwnerDrill(
+                          d as { name?: string },
+                          { dimension: "calls_by_person", callType: "c1" },
+                          (n) => `C1 calls by ${n}`,
+                        )
+                      }
+                    />
+                    <Bar
+                      dataKey="RCC"
+                      fill={TEAL}
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(d) =>
+                        openOwnerDrill(
+                          d as { name?: string },
+                          { dimension: "calls_by_person", callType: "rcc" },
+                          (n) => `RCC calls by ${n}`,
+                        )
+                      }
+                    />
+                    <Bar
+                      dataKey="F2F"
+                      fill={ORANGE}
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(d) =>
+                        openOwnerDrill(
+                          d as { name?: string },
+                          { dimension: "calls_by_person", callType: "f2f" },
+                          (n) => `F2F by ${n}`,
+                        )
+                      }
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </ChartCard>
@@ -557,7 +689,19 @@ export default function StatsPage() {
                     <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}%`} />
                     <Tooltip formatter={(v) => `${v}%`} />
-                    <Bar dataKey="Rate" fill={GREEN} radius={[4, 4, 0, 0]}>
+                    <Bar
+                      dataKey="Rate"
+                      fill={GREEN}
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(d) =>
+                        openOwnerDrill(
+                          d as { name?: string },
+                          { dimension: "conversion_by_person" },
+                          (n) => `Calls converted by ${n}`,
+                        )
+                      }
+                    >
                       <LabelList dataKey="Rate" position="top" formatter={(v: number) => `${v}%`} style={{ fontSize: 12, fill: NAVY }} />
                     </Bar>
                   </BarChart>
@@ -616,7 +760,19 @@ export default function StatsPage() {
                     <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => fmtMoney(Number(v))} />
                     <Tooltip formatter={(v) => fmtMoney(Number(v))} />
-                    <Bar dataKey="Amount" fill={BLUE} radius={[4, 4, 0, 0]}>
+                    <Bar
+                      dataKey="Amount"
+                      fill={BLUE}
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(d) =>
+                        openOwnerDrill(
+                          d as { name?: string },
+                          { dimension: "bro_by_originator" },
+                          (n) => `Open BROs originated by ${n}`,
+                        )
+                      }
+                    >
                       <LabelList
                         dataKey="Amount"
                         position="top"
@@ -635,7 +791,22 @@ export default function StatsPage() {
                     <XAxis dataKey="name" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => fmtMoney(Number(v))} />
                     <Tooltip formatter={(v) => fmtMoney(Number(v))} />
-                    <Bar dataKey="Amount" fill={BLUE} radius={[4, 4, 0, 0]}>
+                    <Bar
+                      dataKey="Amount"
+                      fill={BLUE}
+                      radius={[4, 4, 0, 0]}
+                      cursor="pointer"
+                      onClick={(d) => {
+                        const stage = (d as { name?: string })?.name;
+                        if (stage) {
+                          setDrill({
+                            dimension: "bro_by_stage",
+                            stage,
+                            title: `Open BROs in ${stage}`,
+                          });
+                        }
+                      }}
+                    >
                       <LabelList
                         dataKey="Amount"
                         position="top"
@@ -648,6 +819,15 @@ export default function StatsPage() {
               </ChartCard>
             </div>
           </>
+        )}
+
+        {drill && (
+          <DrillModal
+            target={drill}
+            rangeStart={range.start}
+            rangeEnd={range.end}
+            onClose={() => setDrill(null)}
+          />
         )}
       </PageContent>
     </>
@@ -741,5 +921,157 @@ function CdmTeamBadge() {
         </ul>
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drill modal — fetches /api/salesforce/stats/drill and renders the company
+// table for the clicked bar.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DrillModal({
+  target,
+  rangeStart,
+  rangeEnd,
+  onClose,
+}: {
+  target: DrillTarget;
+  rangeStart: string;
+  rangeEnd: string;
+  onClose: () => void;
+}) {
+  const [rows, setRows] = useState<DrillRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setRows(null);
+      setError(null);
+      const params = new URLSearchParams({ dimension: target.dimension });
+      if (target.owner) params.set("owner", target.owner);
+      if (target.stage) params.set("stage", target.stage);
+      if (target.callType) params.set("callType", target.callType);
+      // BRO drills don't filter by date but the helper accepts them harmlessly.
+      params.set("start", rangeStart);
+      params.set("end", rangeEnd);
+      try {
+        const res = await fetch(
+          `/api/salesforce/stats/drill?${params.toString()}`,
+          { cache: "no-store" },
+        );
+        const body = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setError(body.error ?? "Failed to load drill data");
+        } else {
+          setRows((body.rows ?? []) as DrillRow[]);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Network error");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [target, rangeStart, rangeEnd]);
+
+  const isOpps =
+    target.dimension === "bro_by_originator" ||
+    target.dimension === "bro_by_stage";
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={target.title}
+      description={
+        rows == null
+          ? undefined
+          : `${rows.length} ${rows.length === 1 ? "company" : "companies"}`
+      }
+      size="xl"
+    >
+      {error && (
+        <p className="text-sm text-danger mb-4">{error}</p>
+      )}
+      {rows == null && !error && <Spinner center label="Loading…" />}
+      {rows != null && rows.length === 0 && (
+        <p className="text-sm text-ink-muted">
+          No companies match this filter.
+        </p>
+      )}
+      {rows != null && rows.length > 0 && (
+        <Table>
+          <Table.Head>
+            <Table.HeadRow>
+              <Table.HeadCell>Company</Table.HeadCell>
+              <Table.HeadCell>URL</Table.HeadCell>
+              <Table.HeadCell className="text-right">Employees</Table.HeadCell>
+              <Table.HeadCell>Country</Table.HeadCell>
+              {isOpps && <Table.HeadCell>Stage</Table.HeadCell>}
+              {isOpps && (
+                <Table.HeadCell className="text-right">Amount</Table.HeadCell>
+              )}
+              {!isOpps && <Table.HeadCell>Last Activity</Table.HeadCell>}
+            </Table.HeadRow>
+          </Table.Head>
+          <Table.Body>
+            {rows.map((r, i) => (
+              <Table.Row key={(r.opportunityId ?? r.accountId ?? "") + i}>
+                <Table.Cell className="font-medium text-ink">
+                  {r.accountName}
+                  {r.opportunityName && (
+                    <div className="text-xs text-ink-muted mt-0.5">
+                      {r.opportunityName}
+                    </div>
+                  )}
+                </Table.Cell>
+                <Table.Cell>
+                  {r.website ? (
+                    <a
+                      href={
+                        r.website.startsWith("http")
+                          ? r.website
+                          : `https://${r.website}`
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-info hover:underline"
+                    >
+                      {r.website.replace(/^https?:\/\/(www\.)?/, "")}
+                      <ExternalLink className="h-3 w-3" strokeWidth={2} />
+                    </a>
+                  ) : (
+                    <span className="text-ink-muted">—</span>
+                  )}
+                </Table.Cell>
+                <Table.Cell className="text-right tabular-nums">
+                  {r.numberOfEmployees != null
+                    ? fmtNumber(r.numberOfEmployees)
+                    : "—"}
+                </Table.Cell>
+                <Table.Cell>
+                  {r.country ?? <span className="text-ink-muted">—</span>}
+                </Table.Cell>
+                {isOpps && <Table.Cell>{r.stage ?? "—"}</Table.Cell>}
+                {isOpps && (
+                  <Table.Cell className="text-right tabular-nums">
+                    {r.amount != null ? fmtMoney(r.amount) : "—"}
+                  </Table.Cell>
+                )}
+                {!isOpps && (
+                  <Table.Cell className="text-ink-muted whitespace-nowrap">
+                    {r.lastActivityDate ?? "—"}
+                  </Table.Cell>
+                )}
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      )}
+    </Modal>
   );
 }

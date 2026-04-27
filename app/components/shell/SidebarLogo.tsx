@@ -17,7 +17,7 @@ export function SidebarLogo() {
         priority
       />
       <span className="text-[15px] font-semibold tracking-tight text-white truncate">
-        <span className="text-brand">Val</span>stone
+        <span className="text-brand">V</span>alstone
       </span>
     </Link>
   );
