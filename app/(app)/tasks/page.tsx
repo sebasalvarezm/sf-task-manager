@@ -103,17 +103,26 @@ function TasksPageContent() {
   const [tasksError, setTasksError] = useState<string | null>(null);
 
   const [selectedWeek, setSelectedWeek] = useState<WeekRange | null>(null);
-  // Initialize from any draft saved before the last unload — accidental
-  // browser/tab closes no longer wipe pending actions.
-  const [actions, setActions] = useState<Map<string, TaskAction>>(() =>
-    loadDraftActions(),
-  );
+  const [actions, setActions] = useState<Map<string, TaskAction>>(new Map());
 
-  // Mirror every change to localStorage. Cleared automatically when actions
-  // becomes empty (after Apply or week switch).
+  // Drafts live in the browser via localStorage. Because this is a Next.js
+  // "use client" component that still SSRs, we cannot use a lazy useState
+  // initializer for this — it would run on the server (no window) and
+  // permanently lock state to an empty Map. Restore in an effect, then gate
+  // the save effect on a flag so it can't overwrite the saved draft with the
+  // initial empty Map before restore has happened.
+  const [draftRestored, setDraftRestored] = useState(false);
+
   useEffect(() => {
+    const restored = loadDraftActions();
+    if (restored.size > 0) setActions(restored);
+    setDraftRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (!draftRestored) return;
     saveDraftActions(actions);
-  }, [actions]);
+  }, [actions, draftRestored]);
 
   const [portfolioMatches, setPortfolioMatches] = useState<Map<string, PortfolioMatch>>(() => getPortfolioCache());
   const fetchingAccounts = useRef<Set<string>>(new Set());
