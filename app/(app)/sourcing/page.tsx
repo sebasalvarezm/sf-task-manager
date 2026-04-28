@@ -178,6 +178,10 @@ function SourcingPageContent() {
           </form>
         </Card>
 
+        {/* Selected job result — rendered ABOVE the runs list so clicking a row
+            doesn't push the result below the fold. */}
+        {selectedJob && <JobResultPanel job={selectedJob} />}
+
         {/* Recent jobs list */}
         {sourcingJobs.length > 0 && (
           <div>
@@ -202,9 +206,6 @@ function SourcingPageContent() {
             </div>
           </div>
         )}
-
-        {/* Selected job result */}
-        {selectedJob && <JobResultPanel job={selectedJob} />}
       </PageContent>
     </>
   );
