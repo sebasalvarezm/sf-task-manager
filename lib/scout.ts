@@ -668,10 +668,18 @@ If you cannot find any location, return exactly: null`,
     );
     if (textBlocks.length > 0) {
       const raw = textBlocks[textBlocks.length - 1].text.trim();
+      const lower = raw.toLowerCase();
+      // Reject obvious non-answers and Claude commentary that leaked through.
+      // A real address has either a street number (digit) OR is "City, State"
+      // form (a comma + region). Reject anything else.
+      const looksLikeAddress =
+        /\d/.test(raw) || /,\s*[A-Z]{2}\b/.test(raw) || /,\s*[A-Z][a-z]+/.test(raw);
       if (
-        raw.toLowerCase() !== "null" &&
-        raw.toLowerCase() !== "none" &&
-        raw.length > 4
+        lower !== "null" &&
+        lower !== "none" &&
+        raw.length > 4 &&
+        raw.length < 200 &&
+        looksLikeAddress
       ) {
         return raw;
       }

@@ -496,7 +496,7 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
       )}
 
       {/* Restaurants */}
-      {result.address && result.restaurants.length > 0 && (
+      {result.address && (
         <div>
           <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-brand" />
@@ -505,17 +505,28 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
               — {result.address}
             </span>
           </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {result.restaurants.map((r, i) => (
-              <Card key={i} padded={false} className="p-5">
-                <p className="text-xs font-semibold text-brand uppercase tracking-widest mb-2">
-                  Business Dinner
-                </p>
-                <p className="font-semibold text-ink mb-1">{r.name}</p>
-                <p className="text-sm text-ink-secondary">{r.description}</p>
-              </Card>
-            ))}
-          </div>
+          {result.restaurants.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {result.restaurants.map((r, i) => (
+                <Card key={i} padded={false} className="p-5">
+                  <p className="text-xs font-semibold text-brand uppercase tracking-widest mb-2">
+                    Business Dinner
+                  </p>
+                  <p className="font-semibold text-ink mb-1">{r.name}</p>
+                  <p className="text-sm text-ink-secondary">{r.description}</p>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card padded={false} className="p-5">
+              <p className="text-sm text-ink-muted">
+                No restaurant suggestions available for this address. The
+                location may be too remote for the AI to find well-known
+                business-dinner spots, or the address itself may not be a
+                clean street address.
+              </p>
+            </Card>
+          )}
         </div>
       )}
 
