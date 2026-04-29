@@ -2,9 +2,15 @@ import { SidebarLogo } from "./SidebarLogo";
 import { SidebarNav } from "./SidebarNav";
 import { SidebarUserMenu } from "./SidebarUserMenu";
 
-export function Sidebar() {
+type Props = { open?: boolean };
+
+export function Sidebar({ open = false }: Props = {}) {
   return (
-    <aside className="w-64 shrink-0 bg-navy text-ink-inverse flex flex-col border-r border-navy-light">
+    <aside
+      className={`w-64 shrink-0 bg-navy text-ink-inverse flex flex-col border-r border-navy-light fixed inset-y-0 left-0 z-40 transform transition-transform duration-200 ease-out md:static md:translate-x-0 md:transition-none ${
+        open ? "translate-x-0" : "-translate-x-full"
+      }`}
+    >
       <div className="px-5 py-5">
         <SidebarLogo />
       </div>

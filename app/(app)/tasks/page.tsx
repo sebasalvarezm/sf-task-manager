@@ -441,9 +441,9 @@ function TasksPageContent() {
         )}
       </PageContent>
 
-      {/* Apply actions bar — fixed, accounts for 256px sidebar via left-64 */}
+      {/* Apply actions bar — fixed; accounts for 256px sidebar via md:left-64 (full-width on mobile) */}
       {activeActionCount > 0 && (
-        <div className="fixed bottom-0 left-64 right-0 bg-navy shadow-2xl px-8 py-4 flex items-center justify-between z-30">
+        <div className="fixed bottom-0 left-0 md:left-64 right-0 bg-navy shadow-2xl px-4 md:px-8 py-3 md:py-4 flex items-center justify-between gap-3 z-30">
           <span className="text-white text-sm">
             <strong>{activeActionCount}</strong> action
             {activeActionCount !== 1 ? "s" : ""} queued
@@ -472,7 +472,7 @@ function TasksPageContent() {
       {/* Delete Confirmation Modal */}
       {confirmDeleteCount !== null && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full">
+          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-8 max-w-md w-full">
             <div className="text-4xl mb-4 text-center">⚠️</div>
             <h2 className="text-lg font-semibold text-ink text-center mb-2">
               Confirm permanent deletion

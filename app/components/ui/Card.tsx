@@ -48,7 +48,7 @@ Card.Header = function CardHeader({
   }
   return (
     <div
-      className={`mb-4 flex items-start justify-between gap-4 ${className}`}
+      className={`mb-4 flex flex-col gap-2 md:flex-row md:items-start md:justify-between md:gap-4 ${className}`}
       {...rest}
     >
       <div className="min-w-0">

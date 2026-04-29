@@ -161,7 +161,7 @@ export default function HomePage() {
   return (
     <>
       {/* Hero */}
-      <section className="relative overflow-hidden rounded-xl bg-navy text-ink-inverse mb-8 px-8 py-10">
+      <section className="relative overflow-hidden rounded-xl bg-navy text-ink-inverse mb-6 md:mb-8 px-5 py-6 md:px-8 md:py-10">
         <div className="absolute inset-0 bg-gradient-to-br from-navy via-navy to-navy-dark opacity-90 pointer-events-none" />
         <div className="relative">
           <p className="text-xs uppercase tracking-widest text-ink-inverse-muted mb-2">
