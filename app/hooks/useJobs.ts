@@ -10,7 +10,8 @@ export type Job = {
     | "task_bulk"
     | "trip_geocode"
     | "trip_search"
-    | "calls_log";
+    | "calls_log"
+    | "accounts_enrich";
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   label: string | null;
   progress: { step?: string; pct?: number } | null;

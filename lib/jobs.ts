@@ -6,7 +6,8 @@ export type JobKind =
   | "task_bulk"
   | "trip_geocode"
   | "trip_search"
-  | "calls_log";
+  | "calls_log"
+  | "accounts_enrich";
 
 export type JobStatus =
   | "queued"

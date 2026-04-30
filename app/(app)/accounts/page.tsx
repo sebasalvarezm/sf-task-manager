@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useMemo, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
+import { useJobs, type Job } from "@/app/hooks/useJobs";
 
-// Salesforce standard Account Industry picklist values (exact)
 const INDUSTRY_OPTIONS = [
   "",
   "Agriculture",
@@ -42,7 +43,6 @@ const INDUSTRY_OPTIONS = [
   "Other",
 ];
 
-// US states + Canadian provinces (full names, matching Salesforce State/Country picklist)
 const STATE_OPTIONS = [
   "",
   "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
@@ -86,39 +86,31 @@ type DuplicateMatch = {
 
 type AccountItem = {
   url: string;
-  enriching: boolean;
   enrichError: string | null;
-  form: FormData;
-  confidence: "high" | "medium" | "low" | null;
   hasEnriched: boolean;
-  createResult: CreateResult | null;
-  creating: boolean;
+  confidence: "high" | "medium" | "low" | null;
+  form: FormData;
   duplicate: DuplicateMatch | null;
-  checkingDuplicate: boolean;
+  creating: boolean;
+  createResult: CreateResult | null;
 };
 
-const emptyForm = (): FormData => ({
-  companyName: "",
-  website: "",
-  yearEstablished: "",
-  employees: "",
-  industry: "",
-  country: "",
-  stateProvince: "",
-});
+type JobResultItem = {
+  url: string;
+  enrichError: string | null;
+  hasEnriched: boolean;
+  confidence: "high" | "medium" | "low" | null;
+  form: FormData;
+  duplicate: DuplicateMatch | null;
+};
 
-const emptyItem = (url: string): AccountItem => ({
-  url,
-  enriching: true,
-  enrichError: null,
-  form: emptyForm(),
-  confidence: null,
-  hasEnriched: false,
-  createResult: null,
-  creating: false,
-  duplicate: null,
-  checkingDuplicate: true,
-});
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h ago`;
+  return `${Math.round(ms / 86_400_000)}d ago`;
+}
 
 export default function AccountsPage() {
   return (
@@ -129,6 +121,16 @@ export default function AccountsPage() {
 }
 
 function AccountsPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const jobId = searchParams.get("jobId");
+  const { jobs, refetch } = useJobs();
+
+  const accountsJobs = useMemo(
+    () => jobs.filter((j) => j.kind === "accounts_enrich"),
+    [jobs],
+  );
+  const activeJob = jobId ? accountsJobs.find((j) => j.id === jobId) : null;
 
   // ── Connection + picklist state ───────────────────────────────────────────
   const [sfConnected, setSfConnected] = useState<boolean | null>(null);
@@ -137,18 +139,45 @@ function AccountsPageContent() {
 
   // ── Input phase state ─────────────────────────────────────────────────────
   const [urlInputs, setUrlInputs] = useState<string[]>([""]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // ── Review phase state ────────────────────────────────────────────────────
+  // ── Review phase state (hydrated from job.result) ────────────────────────
   const [items, setItems] = useState<AccountItem[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [creatingAll, setCreatingAll] = useState(false);
-
-  const isReviewPhase = items.length > 0;
 
   // ── On mount: check connection + picklists ────────────────────────────────
   useEffect(() => {
     checkConnection();
   }, []);
+
+  // ── Hydrate items from the active job's result ───────────────────────────
+  useEffect(() => {
+    if (!activeJob) {
+      setItems([]);
+      setActiveIndex(0);
+      return;
+    }
+    if (activeJob.status === "succeeded" && activeJob.result) {
+      const resultItems =
+        (activeJob.result as { items?: JobResultItem[] }).items ?? [];
+      setItems(
+        resultItems.map((it) => ({
+          ...it,
+          creating: false,
+          createResult: null,
+        })),
+      );
+      setActiveIndex(0);
+    } else {
+      // queued / running / failed → no items to show yet
+      setItems([]);
+    }
+    // We intentionally key on id+status so user edits/creates aren't clobbered
+    // by the polling refresh once the job has succeeded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeJob?.id, activeJob?.status]);
 
   async function checkConnection() {
     try {
@@ -192,89 +221,40 @@ function AccountsPageContent() {
     setUrlInputs((prev) => prev.map((u, idx) => (idx === i ? value : u)));
   }
 
-  // ── Enrich all URLs in parallel ───────────────────────────────────────────
+  // ── Start a background enrichment job ─────────────────────────────────────
   async function handleEnrichAll() {
     const validUrls = urlInputs.map((u) => u.trim()).filter(Boolean);
-    if (validUrls.length === 0) return;
+    if (validUrls.length === 0 || submitting) return;
 
-    // Initialise items array with loading state
-    const initialItems = validUrls.map(emptyItem);
-    setItems(initialItems);
-    setActiveIndex(0);
-
-    // Run enrichment + duplicate check in parallel for every URL
-    await Promise.all(
-      validUrls.map(async (url, i) => {
-        // Run both requests simultaneously
-        const [enrichRes, dupRes] = await Promise.allSettled([
-          fetch("/api/enrich", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url }),
-          }),
-          fetch(`/api/salesforce/check-duplicate?url=${encodeURIComponent(url)}`),
-        ]);
-
-        setItems((prev) => {
-          const next = [...prev];
-          const item = { ...next[i] };
-
-          // Process enrichment result
-          if (enrichRes.status === "fulfilled" && enrichRes.value.ok) {
-            enrichRes.value.json().then((data) => {
-              setItems((p2) => {
-                const n2 = [...p2];
-                n2[i] = {
-                  ...n2[i],
-                  form: {
-                    companyName: data.companyName ?? "",
-                    website: data.website ?? url,
-                    yearEstablished: data.yearEstablished ?? "",
-                    employees: data.employees != null ? String(data.employees) : "",
-                    industry: data.industry ?? "",
-                    country: data.country ?? "",
-                    stateProvince: data.stateProvince ?? "",
-                  },
-                  confidence: data.confidence ?? "medium",
-                  hasEnriched: true,
-                  enriching: false,
-                };
-                return n2;
-              });
-            });
-          } else {
-            item.enrichError = "Could not enrich this URL — you can fill in manually";
-            item.hasEnriched = true;
-            item.enriching = false;
-            item.form = { ...emptyForm(), website: url };
-          }
-
-          // Process duplicate check result
-          if (dupRes.status === "fulfilled" && dupRes.value.ok) {
-            dupRes.value.json().then((data) => {
-              setItems((p2) => {
-                const n2 = [...p2];
-                n2[i] = {
-                  ...n2[i],
-                  duplicate: data.duplicate ?? null,
-                  checkingDuplicate: false,
-                };
-                return n2;
-              });
-            });
-          } else {
-            setItems((p2) => {
-              const n2 = [...p2];
-              n2[i] = { ...n2[i], checkingDuplicate: false };
-              return n2;
-            });
-          }
-
-          next[i] = item;
-          return next;
-        });
-      })
-    );
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const label =
+        validUrls.length === 1
+          ? `Enrich: ${validUrls[0]}`
+          : `Enrich ${validUrls.length} accounts`;
+      const res = await fetch("/api/jobs/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "accounts_enrich",
+          input: { urls: validUrls },
+          label,
+          resultRoute: `/accounts?jobId={jobId}`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSubmitError(data.error ?? "Failed to start enrichment");
+      } else if (data.jobId) {
+        refetch();
+        router.push(`/accounts?jobId=${data.jobId}`);
+      }
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Network error");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   // ── Update a field in a specific item ─────────────────────────────────────
@@ -358,6 +338,8 @@ function AccountsPageContent() {
     setItems([]);
     setUrlInputs([""]);
     setActiveIndex(0);
+    setSubmitError(null);
+    router.push("/accounts");
   }
 
   // ── Disconnect / Logout ───────────────────────────────────────────────────
@@ -367,8 +349,12 @@ function AccountsPageContent() {
   }
 
   // ── Derived values ────────────────────────────────────────────────────────
-  const anyEnriching = urlInputs.some((_, i) => items[i]?.enriching);
   const canEnrichAll = urlInputs.some((u) => u.trim());
+  const isJobInFlight =
+    activeJob?.status === "queued" || activeJob?.status === "running";
+  const isJobFailed =
+    activeJob?.status === "failed" || activeJob?.status === "cancelled";
+  const isReviewPhase = items.length > 0 && activeJob?.status === "succeeded";
   const readyToCreateAll =
     items.length > 1 &&
     items.some(
@@ -384,7 +370,7 @@ function AccountsPageContent() {
     <>
       <PageHeader
         title="Account Creator"
-        subtitle="Paste a company URL to auto-fill and create a new Salesforce account"
+        subtitle="Paste a company URL — the enrichment runs in the background. Keep working in another tool while it does its thing."
         actions={
           <ConnectSalesforce
             connected={sfConnected === true}
@@ -421,18 +407,18 @@ function AccountsPageContent() {
                   Paste up to 5 company URLs to auto-fill and create Salesforce accounts
                 </p>
               </div>
-              {isReviewPhase && (
+              {(activeJob || isReviewPhase) && (
                 <button
                   onClick={handleReset}
                   className="text-sm text-gray-400 hover:text-gray-600 underline mt-1"
                 >
-                  Start over
+                  Start new run
                 </button>
               )}
             </div>
 
-            {/* ── INPUT PHASE ───────────────────────────────────────────── */}
-            {!isReviewPhase && (
+            {/* ── INPUT PHASE (no active job) ──────────────────────────── */}
+            {!activeJob && (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
                 <label className="block text-sm font-medium text-navy mb-3">
                   Company Website URLs
@@ -447,14 +433,14 @@ function AccountsPageContent() {
                         value={u}
                         onChange={(e) => handleUrlChange(i, e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" && !anyEnriching) {
+                          if (e.key === "Enter" && !submitting) {
                             e.preventDefault();
                             handleEnrichAll();
                           }
                         }}
                         placeholder="https://example.com"
                         className="flex-1 border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
-                        disabled={anyEnriching}
+                        disabled={submitting}
                       />
                       {urlInputs.length > 1 && (
                         <button
@@ -483,26 +469,82 @@ function AccountsPageContent() {
 
                   <button
                     onClick={handleEnrichAll}
-                    disabled={anyEnriching || !canEnrichAll}
+                    disabled={submitting || !canEnrichAll}
                     className="bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
                   >
-                    {anyEnriching ? "Enriching..." : urlInputs.filter((u) => u.trim()).length > 1 ? "Enrich All" : "Enrich"}
+                    {submitting ? "Starting…" : urlInputs.filter((u) => u.trim()).length > 1 ? "Enrich All" : "Enrich"}
                   </button>
+                </div>
+
+                {submitError && (
+                  <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                    {submitError}
+                  </div>
+                )}
+
+                <p className="text-xs text-gray-400 mt-4">
+                  Takes about 30–60 seconds per URL. You can navigate away — the bell will light up when it's done.
+                </p>
+              </div>
+            )}
+
+            {/* ── JOB IN FLIGHT ─────────────────────────────────────────── */}
+            {isJobInFlight && (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+                <div className="flex items-start gap-4">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-brand-orange shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-navy">
+                      {activeJob?.status === "queued"
+                        ? "Queued — waiting for a worker"
+                        : activeJob?.progress?.step
+                          ? `Running — ${activeJob.progress.step}`
+                          : "Enriching accounts…"}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      You can switch to another tool. The bell will light up when it's done.
+                    </p>
+                    {typeof activeJob?.progress?.pct === "number" &&
+                      activeJob.progress.pct > 0 && (
+                        <div className="mt-3 h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-brand-orange transition-all"
+                            style={{ width: `${Math.min(100, activeJob.progress.pct)}%` }}
+                          />
+                        </div>
+                      )}
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* ── REVIEW PHASE ──────────────────────────────────────────── */}
+            {/* ── JOB FAILED ────────────────────────────────────────────── */}
+            {isJobFailed && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-6 mb-6">
+                <p className="text-sm font-semibold text-red-800 mb-1">
+                  This run failed
+                </p>
+                <p className="text-sm text-red-700">
+                  {activeJob?.error ?? "Unknown error"}
+                </p>
+                <button
+                  onClick={handleReset}
+                  className="mt-3 text-sm text-red-700 hover:text-red-900 underline"
+                >
+                  Start a new run
+                </button>
+              </div>
+            )}
+
+            {/* ── REVIEW PHASE (job succeeded, items hydrated) ─────────── */}
             {isReviewPhase && (
               <>
-                {/* Tabs */}
                 {items.length > 1 && (
                   <div className="flex gap-2 mb-4 flex-wrap">
                     {items.map((item, i) => {
                       const isActive = i === activeIndex;
                       const isCreated = item.createResult?.success;
                       const hasDuplicate = !!item.duplicate;
-                      const isEnriching = item.enriching;
                       const hasError = !!item.enrichError;
 
                       let tabStyle = isActive
@@ -519,13 +561,7 @@ function AccountsPageContent() {
                           onClick={() => setActiveIndex(i)}
                           className={`border rounded-lg px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5 ${tabStyle}`}
                         >
-                          {isEnriching ? (
-                            <span className="animate-spin inline-block w-3 h-3 border-b-2 border-current rounded-full" />
-                          ) : isCreated ? (
-                            <span>✓</span>
-                          ) : hasDuplicate ? (
-                            <span>⚠</span>
-                          ) : null}
+                          {isCreated ? <span>✓</span> : hasDuplicate ? <span>⚠</span> : null}
                           {i + 1}
                         </button>
                       );
@@ -533,7 +569,6 @@ function AccountsPageContent() {
                   </div>
                 )}
 
-                {/* Active item card */}
                 {items[activeIndex] && (() => {
                   const item = items[activeIndex];
                   const i = activeIndex;
@@ -541,13 +576,12 @@ function AccountsPageContent() {
 
                   return (
                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
-                      {/* Card header */}
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="text-lg font-semibold text-navy">
                           {items.length > 1 ? `Account ${i + 1}` : "Review & Edit"}
                         </h3>
                         <div className="flex items-center gap-3">
-                          {item.confidence && !item.enriching && (
+                          {item.confidence && (
                             <span
                               className={`text-xs font-medium px-2.5 py-1 rounded-full ${
                                 item.confidence === "high"
@@ -567,23 +601,13 @@ function AccountsPageContent() {
                         </div>
                       </div>
 
-                      {/* Loading state */}
-                      {item.enriching && (
-                        <div className="flex items-center gap-3 py-8 text-sm text-gray-500 justify-center">
-                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-brand-orange" />
-                          Searching the web and extracting company data…
-                        </div>
-                      )}
-
-                      {/* Enrich error */}
                       {item.enrichError && (
                         <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
                           {item.enrichError} — fill in the fields below.
                         </div>
                       )}
 
-                      {/* Duplicate warning */}
-                      {!item.enriching && item.duplicate && (
+                      {item.duplicate && (
                         <div className="mb-4 bg-amber-50 border border-amber-300 rounded-lg p-3 flex items-start justify-between gap-3">
                           <div className="text-sm text-amber-800">
                             <span className="font-medium">⚠ Possible duplicate found in Salesforce:</span>{" "}
@@ -600,150 +624,141 @@ function AccountsPageContent() {
                         </div>
                       )}
 
-                      {/* Fields (hidden while enriching) */}
-                      {!item.enriching && (
-                        <>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                            <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1">Company Name *</label>
-                              <input
-                                type="text"
-                                value={item.form.companyName}
-                                onChange={(e) => updateItemField(i, "companyName", e.target.value)}
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
-                              />
-                            </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Company Name *</label>
+                          <input
+                            type="text"
+                            value={item.form.companyName}
+                            onChange={(e) => updateItemField(i, "companyName", e.target.value)}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                          />
+                        </div>
 
-                            <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1">Website</label>
-                              <input
-                                type="text"
-                                value={item.form.website}
-                                readOnly
-                                className="w-full border border-gray-100 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
-                              />
-                            </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Website</label>
+                          <input
+                            type="text"
+                            value={item.form.website}
+                            readOnly
+                            className="w-full border border-gray-100 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
+                          />
+                        </div>
 
-                            <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1">Year Established</label>
-                              <input
-                                type="text"
-                                value={item.form.yearEstablished}
-                                onChange={(e) => updateItemField(i, "yearEstablished", e.target.value)}
-                                placeholder="e.g. 2005"
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
-                              />
-                            </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Year Established</label>
+                          <input
+                            type="text"
+                            value={item.form.yearEstablished}
+                            onChange={(e) => updateItemField(i, "yearEstablished", e.target.value)}
+                            placeholder="e.g. 2005"
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                          />
+                        </div>
 
-                            <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1">Employees</label>
-                              <input
-                                type="number"
-                                value={item.form.employees}
-                                onChange={(e) => updateItemField(i, "employees", e.target.value)}
-                                placeholder="e.g. 150"
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
-                              />
-                            </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Employees</label>
+                          <input
+                            type="number"
+                            value={item.form.employees}
+                            onChange={(e) => updateItemField(i, "employees", e.target.value)}
+                            placeholder="e.g. 150"
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                          />
+                        </div>
 
-                            <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1">Industry</label>
-                              <select
-                                value={item.form.industry}
-                                onChange={(e) => updateItemField(i, "industry", e.target.value)}
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white"
-                              >
-                                {industryOptions.map((opt) => (
-                                  <option key={opt} value={opt}>{opt || "— Select industry —"}</option>
-                                ))}
-                              </select>
-                            </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Industry</label>
+                          <select
+                            value={item.form.industry}
+                            onChange={(e) => updateItemField(i, "industry", e.target.value)}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white"
+                          >
+                            {industryOptions.map((opt) => (
+                              <option key={opt} value={opt}>{opt || "— Select industry —"}</option>
+                            ))}
+                          </select>
+                        </div>
 
-                            <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1">Country</label>
-                              <input
-                                type="text"
-                                value={item.form.country}
-                                onChange={(e) => updateItemField(i, "country", e.target.value)}
-                                placeholder="e.g. United States"
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
-                              />
-                            </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">Country</label>
+                          <input
+                            type="text"
+                            value={item.form.country}
+                            onChange={(e) => updateItemField(i, "country", e.target.value)}
+                            placeholder="e.g. United States"
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                          />
+                        </div>
 
-                            <div>
-                              <label className="block text-xs font-medium text-gray-500 mb-1">State / Province</label>
-                              <select
-                                value={item.form.stateProvince}
-                                onChange={(e) => updateItemField(i, "stateProvince", e.target.value)}
-                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white"
-                              >
-                                {stateOptions.map((opt) => (
-                                  <option key={opt} value={opt}>{opt || "— Select state / province —"}</option>
-                                ))}
-                              </select>
-                            </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-500 mb-1">State / Province</label>
+                          <select
+                            value={item.form.stateProvince}
+                            onChange={(e) => updateItemField(i, "stateProvince", e.target.value)}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white"
+                          >
+                            {stateOptions.map((opt) => (
+                              <option key={opt} value={opt}>{opt || "— Select state / province —"}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                        <p className="text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">Auto-set defaults</p>
+                        <div className="flex gap-6 text-sm text-gray-600">
+                          <span>Group: <strong>CDM</strong></span>
+                          <span>Stage: <strong>Lead</strong></span>
+                          <span>Responded: <strong>No</strong></span>
+                        </div>
+                      </div>
+
+                      {item.createResult && !item.createResult.success && (
+                        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                          {item.createResult.error}
+                        </div>
+                      )}
+
+                      {item.createResult?.success && (
+                        <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-green-800">Account created!</p>
+                            <p className="text-xs text-green-700 mt-0.5">{item.form.companyName}</p>
                           </div>
-
-                          <div className="bg-gray-50 rounded-lg p-4 mb-6">
-                            <p className="text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">Auto-set defaults</p>
-                            <div className="flex gap-6 text-sm text-gray-600">
-                              <span>Group: <strong>CDM</strong></span>
-                              <span>Stage: <strong>Lead</strong></span>
-                              <span>Responded: <strong>No</strong></span>
-                            </div>
-                          </div>
-
-                          {/* Create error */}
-                          {item.createResult && !item.createResult.success && (
-                            <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
-                              {item.createResult.error}
-                            </div>
-                          )}
-
-                          {/* Success banner */}
-                          {item.createResult?.success && (
-                            <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center justify-between">
-                              <div>
-                                <p className="text-sm font-semibold text-green-800">Account created!</p>
-                                <p className="text-xs text-green-700 mt-0.5">{item.form.companyName}</p>
-                              </div>
-                              {item.createResult.accountUrl && (
-                                <a
-                                  href={item.createResult.accountUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs text-green-700 hover:text-green-900 underline"
-                                >
-                                  Open in Salesforce →
-                                </a>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Per-account create button */}
-                          {!item.createResult?.success && (
-                            <button
-                              onClick={() => handleCreateOne(i)}
-                              disabled={item.creating || !canCreate}
-                              className="w-full bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-colors text-sm"
+                          {item.createResult.accountUrl && (
+                            <a
+                              href={item.createResult.accountUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-green-700 hover:text-green-900 underline"
                             >
-                              {item.creating ? (
-                                <span className="flex items-center justify-center gap-2">
-                                  <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                                  Creating account...
-                                </span>
-                              ) : (
-                                "Create Account in Salesforce"
-                              )}
-                            </button>
+                              Open in Salesforce →
+                            </a>
                           )}
-                        </>
+                        </div>
+                      )}
+
+                      {!item.createResult?.success && (
+                        <button
+                          onClick={() => handleCreateOne(i)}
+                          disabled={item.creating || !canCreate}
+                          className="w-full bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-colors text-sm"
+                        >
+                          {item.creating ? (
+                            <span className="flex items-center justify-center gap-2">
+                              <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                              Creating account...
+                            </span>
+                          ) : (
+                            "Create Account in Salesforce"
+                          )}
+                        </button>
                       )}
                     </div>
                   );
                 })()}
 
-                {/* Create All button — only when multiple items are pending */}
                 {readyToCreateAll && (
                   <button
                     onClick={handleCreateAll}
@@ -762,9 +777,90 @@ function AccountsPageContent() {
                 )}
               </>
             )}
+
+            {/* ── RECENT RUNS ──────────────────────────────────────────── */}
+            {accountsJobs.length > 0 && (
+              <div className="mt-8">
+                <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">
+                  Recent Enrichment Runs
+                </h2>
+                <div className="space-y-2">
+                  {accountsJobs.slice(0, 10).map((job) => (
+                    <RecentRunRow
+                      key={job.id}
+                      job={job}
+                      selected={job.id === jobId}
+                      onClick={() =>
+                        router.push(
+                          job.id === jobId
+                            ? "/accounts"
+                            : `/accounts?jobId=${job.id}`,
+                        )
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         )}
       </PageContent>
     </>
+  );
+}
+
+function RecentRunRow({
+  job,
+  selected,
+  onClick,
+}: {
+  job: Job;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const status = job.status;
+  const isInFlight = status === "queued" || status === "running";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full text-left rounded-lg border bg-white px-4 py-3 transition-all hover:shadow-sm ${
+        selected
+          ? "border-brand-orange shadow-xs ring-1 ring-brand-orange/20"
+          : "border-gray-200 hover:border-gray-300"
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <div className="shrink-0">
+          {status === "succeeded" && <span className="text-green-600 text-base">✓</span>}
+          {(status === "failed" || status === "cancelled") && (
+            <span className="text-red-600 text-base">✕</span>
+          )}
+          {isInFlight && (
+            <span className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-brand-orange" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-navy truncate">
+            {job.label ?? "Enrichment run"}
+          </p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {status === "queued" && "Queued"}
+            {status === "running" &&
+              (job.progress?.step ? `Running · ${job.progress.step}` : "Running")}
+            {status === "succeeded" &&
+              `Done · ${relativeTime(job.completed_at ?? job.created_at)}`}
+            {status === "failed" && `Failed · ${job.error ?? "Unknown error"}`}
+            {status === "cancelled" && "Cancelled"}
+          </p>
+        </div>
+        {isInFlight &&
+          typeof job.progress?.pct === "number" &&
+          job.progress.pct > 0 && (
+            <span className="text-xs text-gray-400 shrink-0">{job.progress.pct}%</span>
+          )}
+      </div>
+    </button>
   );
 }

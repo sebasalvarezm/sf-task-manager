@@ -5,6 +5,7 @@ import { tripSearchJob } from "@/lib/inngest/functions/trip-search";
 import { tripGeocodeJob } from "@/lib/inngest/functions/trip-geocode";
 import { callsLogJob } from "@/lib/inngest/functions/calls-log";
 import { prepJob } from "@/lib/inngest/functions/prep";
+import { accountsEnrichJob } from "@/lib/inngest/functions/accounts-enrich";
 
 export const maxDuration = 300;
 
@@ -16,5 +17,6 @@ export const { GET, POST, PUT } = serve({
     tripGeocodeJob,
     callsLogJob,
     prepJob,
+    accountsEnrichJob,
   ],
 });

@@ -10,6 +10,7 @@ const VALID_KINDS: ReadonlySet<JobKind> = new Set([
   "trip_geocode",
   "trip_search",
   "calls_log",
+  "accounts_enrich",
 ]);
 
 export async function POST(req: Request) {
