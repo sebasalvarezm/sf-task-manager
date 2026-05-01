@@ -229,10 +229,30 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
 
 // ── Classification ───────────────────────────────────────────────────────────
 
+// Any non-E5 step completed within this window means a sequence is in flight
+// — typical Outreach cadences run E1→E5 over 2-3 weeks, so 30 days catches
+// stalled-but-not-abandoned sequences too.
+const ACTIVE_SEQUENCE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
 function classify(
-  _account: SfAccountWithETasks,
+  account: SfAccountWithETasks,
   histories: SequenceHistory[]
 ): Bucket {
+  // Account-level in-flight guard. groupSequences groups by WhoId, so when
+  // the same contact receives multiple sequences over time their tasks merge
+  // into a single history record that looks "complete" once it accumulates
+  // all five E-types — even if the latest sequence is mid-flight. Detect
+  // active work directly from the task list instead.
+  const cutoff = Date.now() - ACTIVE_SEQUENCE_LOOKBACK_MS;
+  const hasInFlightStep = account.Tasks.some((t) => {
+    if (t.Status !== "Completed") return false;
+    if (!/^E[1-4]$/.test(t.SubjectType)) return false;
+    const dateStr = t.CompletedDateTime ?? t.ActivityDate;
+    if (!dateStr) return false;
+    return new Date(dateStr).getTime() > cutoff;
+  });
+  if (hasInFlightStep) return "NOT_DUE";
+
   const completedSequences = histories.filter((h) => h.status === "complete");
   const partialSequences = histories.filter(
     (h) => h.status === "partial" && h.stepsCompleted > 0
