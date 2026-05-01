@@ -478,6 +478,26 @@ export default function StatsPage() {
               />
             </div>
 
+            {range.weeks > 1 && (
+              <div className="mb-10">
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">
+                  Weekly Averages
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <KpiCard
+                    label="Avg Outreach / Week"
+                    sublabel={`over ${range.weeks} weeks`}
+                    value={(data.kpis.totalOutreach / range.weeks).toFixed(1)}
+                  />
+                  <KpiCard
+                    label="Avg Calls / Week"
+                    sublabel={`over ${range.weeks} weeks`}
+                    value={(data.kpis.totalCalls / range.weeks).toFixed(1)}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* ── ACTION ITEMS ───────────────────────────────────────────── */}
             <SectionHeader title="Action Items" color="bg-red-500" />
 

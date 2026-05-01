@@ -35,9 +35,16 @@ export type RangeResult = {
   bucket: "week" | "month";
   buckets: Bucket[];
   label: string;        // Human-readable, e.g. "Apr 19 – Apr 25, 2026"
+  weeks: number;        // approximate calendar-week count of the range
 };
 
 const ISO = (d: Date) => format(d, "yyyy-MM-dd");
+
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+function weeksBetween(start: Date, end: Date): number {
+  const ms = end.getTime() - start.getTime();
+  return Math.max(1, Math.ceil(ms / MS_PER_WEEK));
+}
 
 function weeklyBuckets(start: Date, end: Date): Bucket[] {
   const weeks = eachWeekOfInterval({ start, end }, { weekStartsOn: 0 });
@@ -81,6 +88,7 @@ export function computeRange(
         bucket: "week",
         buckets: weeklyBuckets(start, end),
         label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")}`,
+        weeks: 1,
       };
     }
     case "last_week": {
@@ -94,6 +102,7 @@ export function computeRange(
         bucket: "week",
         buckets: weeklyBuckets(start, end),
         label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")}`,
+        weeks: 1,
       };
     }
     case "trailing": {
@@ -107,6 +116,7 @@ export function computeRange(
         bucket: "week",
         buckets: weeklyBuckets(start, end),
         label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")} (${n} weeks)`,
+        weeks: n,
       };
     }
     case "this_quarter": {
@@ -119,6 +129,7 @@ export function computeRange(
         bucket: "week",
         buckets: weeklyBuckets(start, end),
         label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")} (Q${Math.floor(today.getMonth() / 3) + 1})`,
+        weeks: weeksBetween(start, end),
       };
     }
     case "last_quarter": {
@@ -132,6 +143,7 @@ export function computeRange(
         bucket: "week",
         buckets: weeklyBuckets(start, end),
         label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")} (Q${Math.floor(prev.getMonth() / 3) + 1})`,
+        weeks: weeksBetween(start, end),
       };
     }
     case "ytd": {
@@ -145,6 +157,7 @@ export function computeRange(
         bucket: "month",
         buckets: sameDay ? [] : monthlyBuckets(start, end),
         label: `${format(start, "MMM d")} – ${format(end, "MMM d, yyyy")} (YTD)`,
+        weeks: weeksBetween(start, end),
       };
     }
   }
