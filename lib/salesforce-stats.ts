@@ -74,6 +74,11 @@ function escapeSoql(v: string): string {
 const ownerNamesClause = CDM_OWNER_NAMES.map((n) => `'${escapeSoql(n)}'`).join(",");
 const subjectTypesClause = TRACKED_SUBJECT_TYPES.map((t) => `'${t}'`).join(",");
 const stagesClause = OPPORTUNITY_STAGES.map((s) => `'${escapeSoql(s)}'`).join(",");
+// CDM owners can also own non-CDM opportunities (e.g. PE accounts), so the
+// owner filter alone leaks rows like RMB / Agro-IT into the stats. The
+// authoritative signal is Account.Group__c = 'CDM', matching the "Pipeline -
+// CDM" Salesforce list view.
+const cdmGroupClause = "Account.Group__c = 'CDM'";
 
 async function runQuery<T>(
   credentials: SfCredentials,
@@ -180,6 +185,7 @@ export async function fetchOpportunitiesByStage(
     `FROM Opportunity ` +
     `WHERE StageName IN (${stagesClause}) ` +
     `AND Owner.Name IN (${ownerNamesClause}) ` +
+    `AND ${cdmGroupClause} ` +
     `AND IsClosed = false ` +
     `GROUP BY StageName`;
 
@@ -205,6 +211,7 @@ export async function fetchOpenBROByOriginator(
     `FROM Opportunity ` +
     `WHERE StageName IN (${stagesClause}) ` +
     `AND Owner.Name IN (${ownerNamesClause}) ` +
+    `AND ${cdmGroupClause} ` +
     `AND IsClosed = false ` +
     `GROUP BY Owner.Name`;
 
@@ -233,6 +240,7 @@ export async function fetchStuckOpportunities(
     `WHERE IsClosed = false ` +
     `AND StageName IN (${stagesClause}) ` +
     `AND Owner.Name IN (${ownerNamesClause}) ` +
+    `AND ${cdmGroupClause} ` +
     `ORDER BY LastModifiedDate ASC ` +
     `LIMIT 200`;
 
@@ -395,6 +403,7 @@ export async function fetchDrillOppsByOriginator(
     `WHERE IsClosed = false ` +
     `AND StageName IN (${stagesClause}) ` +
     `AND Owner.Name = '${escapeSoql(ownerName)}' ` +
+    `AND ${cdmGroupClause} ` +
     `ORDER BY Amount DESC NULLS LAST ` +
     `LIMIT 200`;
   const rows = await runQuery<RawOppRow>(credentials, soql);
@@ -413,6 +422,7 @@ export async function fetchDrillOppsByStage(
     `WHERE IsClosed = false ` +
     `AND StageName = '${escapeSoql(stage)}' ` +
     `AND Owner.Name IN (${ownerNamesClause}) ` +
+    `AND ${cdmGroupClause} ` +
     `ORDER BY Amount DESC NULLS LAST ` +
     `LIMIT 200`;
   const rows = await runQuery<RawOppRow>(credentials, soql);
