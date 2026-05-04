@@ -451,8 +451,8 @@ export async function discoverCompanies(
     stats: {
       searched: CDM_VERTICALS.length,
       found: allFound.length,
-      deduped: allFound.length - afterDedup.length,
       filteredByGeo: allFound.length - afterGeo.length,
+      deduped: afterGeo.length - afterDedup.length,
       final: withOwnership.length,
     },
   };

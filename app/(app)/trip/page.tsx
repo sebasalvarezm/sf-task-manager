@@ -64,6 +64,7 @@ export default function TripPage() {
   const [discoveryStats, setDiscoveryStats] = useState<{
     searched: number;
     found: number;
+    filteredByGeo: number;
     deduped: number;
     final: number;
   } | null>(null);
@@ -629,6 +630,12 @@ export default function TripPage() {
                         <p className="text-xs text-gray-500 mb-3">
                           Found {discoveryStats.found} companies across{" "}
                           {discoveryStats.searched} verticals.{" "}
+                          {discoveryStats.filteredByGeo > 0 && (
+                            <span>
+                              {discoveryStats.filteredByGeo} outside radius
+                              (removed).{" "}
+                            </span>
+                          )}
                           {discoveryStats.deduped > 0 && (
                             <span>
                               {discoveryStats.deduped} already in Salesforce
@@ -746,10 +753,42 @@ export default function TripPage() {
                     </div>
                   ) : discovered && discovered.length === 0 ? (
                     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-                      <p className="text-gray-400 text-sm">
-                        No new companies found for this area. Try a larger
-                        radius or different location.
+                      <p className="text-gray-700 text-sm font-medium mb-2">
+                        No new companies to show.
                       </p>
+                      {discoveryStats ? (
+                        <>
+                          <p className="text-gray-500 text-xs mb-3">
+                            AI searched {discoveryStats.searched} verticals and
+                            returned <strong>{discoveryStats.found}</strong>{" "}
+                            companies.
+                            {discoveryStats.filteredByGeo > 0 && (
+                              <>
+                                {" "}
+                                <strong>{discoveryStats.filteredByGeo}</strong>{" "}
+                                were outside the {/* radius */}radius (or had
+                                no city to verify).
+                              </>
+                            )}
+                            {discoveryStats.deduped > 0 && (
+                              <>
+                                {" "}
+                                <strong>{discoveryStats.deduped}</strong> were
+                                already in Salesforce.
+                              </>
+                            )}
+                          </p>
+                          <p className="text-gray-400 text-xs">
+                            {discoveryStats.found === 0
+                              ? "The AI couldn't find any small software companies near this location for the CDM verticals. Try a larger radius or a different city."
+                              : "All discovered candidates were filtered out before display. Try a larger radius."}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-gray-400 text-xs">
+                          Try a larger radius or different location.
+                        </p>
+                      )}
                     </div>
                   ) : null}
                 </>
