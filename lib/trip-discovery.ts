@@ -40,6 +40,39 @@ function extractLastText(content: Anthropic.Messages.ContentBlock[]): string {
   return textBlocks[textBlocks.length - 1].text.trim();
 }
 
+// Lenient JSON-array extractor: tolerates models that wrap their answer in
+// surrounding commentary or fences. First strips markdown fences, then tries
+// a direct parse, then falls back to the first balanced [...] substring.
+// Returns null if nothing parseable is found.
+function extractJsonArray(raw: string): unknown[] | null {
+  if (!raw) return null;
+  const stripped = raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+
+  try {
+    const parsed = JSON.parse(stripped);
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    /* fall through */
+  }
+
+  // Find the outermost JSON array by scanning for [ ... ].
+  const start = stripped.indexOf("[");
+  const end = stripped.lastIndexOf("]");
+  if (start !== -1 && end !== -1 && end > start) {
+    try {
+      const parsed = JSON.parse(stripped.slice(start, end + 1));
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      /* fall through */
+    }
+  }
+
+  return null;
+}
+
 // ── CDM sub-verticals ────────────────────────────────────────────────────────
 
 const CDM_VERTICALS = [
@@ -175,12 +208,9 @@ If you cannot find any relevant companies, return [].`,
     });
 
     const text = extractLastText(resp.content);
-    const cleaned = text
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/```\s*$/i, "")
-      .trim();
-
-    const parsed = JSON.parse(cleaned) as Array<{
+    const arr = extractJsonArray(text);
+    if (!arr) return [];
+    const parsed = arr as Array<{
       name: string;
       website?: string;
       description: string;
@@ -261,12 +291,8 @@ Return a JSON array with one entry per company (same order). Return ONLY the JSO
     });
 
     const text = extractLastText(resp.content);
-    const cleaned = text
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/```\s*$/i, "")
-      .trim();
-
-    const parsed = JSON.parse(cleaned) as Array<{
+    const arr = extractJsonArray(text);
+    const parsed = (arr ?? []) as Array<{
       index: number;
       ownership: string;
       detail: string | null;
