@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Copy,
   Check,
+  Info,
 } from "lucide-react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
@@ -80,6 +81,7 @@ function SourcingPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedJobId = searchParams.get("jobId");
+  const isCachedView = searchParams.get("cached") === "1";
   const { jobs, refetch } = useJobs();
 
   const sourcingJobs = useMemo(
@@ -91,39 +93,91 @@ function SourcingPageContent() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  // The cached job we navigated to may be older than the 20-job useJobs
+  // window. Fetch it directly when not in the list.
+  const [extraJob, setExtraJob] = useState<Job | null>(null);
+  useEffect(() => {
+    if (!selectedJobId) {
+      setExtraJob(null);
+      return;
+    }
+    if (sourcingJobs.some((j) => j.id === selectedJobId)) {
+      setExtraJob(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/jobs/${selectedJobId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data.job) setExtraJob(data.job as Job);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedJobId, sourcingJobs]);
+
+  async function startSourcingJob(rawUrl: string) {
+    const cleaned = rawUrl.trim();
+    const domain = domainFromUrl(cleaned);
+    const res = await fetch("/api/jobs/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "sourcing",
+        input: { url: cleaned },
+        label: `Sourcing: ${domain}`,
+        resultRoute: `/sourcing?jobId={jobId}`,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Failed to start job");
+    return data.jobId as string;
+  }
+
+  async function handleSubmit(
+    e: React.FormEvent,
+    opts: { forceFresh?: boolean; urlOverride?: string } = {},
+  ) {
     e.preventDefault();
-    if (!url.trim() || submitting) return;
+    const rawUrl = opts.urlOverride ?? url;
+    if (!rawUrl.trim() || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
 
     try {
-      const cleaned = url.trim();
-      const domain = domainFromUrl(cleaned);
-      const res = await fetch("/api/jobs/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          kind: "sourcing",
-          input: { url: cleaned },
-          label: `Sourcing: ${domain}`,
-          resultRoute: `/sourcing?jobId={jobId}`,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setSubmitError(data.error ?? "Failed to start job");
-      } else {
-        setUrl("");
-        refetch();
-        // Auto-select the new job
-        if (data.jobId) {
-          // The useJobs hook will pick it up on next poll. To make the
-          // result_route link from the bell work, we need to fix the placeholder.
-          // We'll just navigate optimistically:
-          router.push(`/sourcing?jobId=${data.jobId}`);
+      // Cache pre-flight (skip if user explicitly asked for fresh)
+      if (!opts.forceFresh) {
+        try {
+          const cacheRes = await fetch("/api/sourcing/find-cached", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: rawUrl.trim() }),
+          });
+          if (cacheRes.ok) {
+            const cacheData = (await cacheRes.json()) as
+              | { found: false }
+              | { found: true; jobId: string; ageDays: number };
+            if (cacheData.found) {
+              setUrl("");
+              router.push(`/sourcing?jobId=${cacheData.jobId}&cached=1`);
+              return;
+            }
+          }
+        } catch {
+          // Cache lookup is best-effort. Fall through to a fresh run.
         }
       }
+
+      // No cache hit (or forced fresh) — start a new job
+      const jobId = await startSourcingJob(rawUrl);
+      setUrl("");
+      refetch();
+      router.push(`/sourcing?jobId=${jobId}`);
     } catch (err) {
       setSubmitError(
         err instanceof Error ? err.message : "Network error — try again",
@@ -133,9 +187,18 @@ function SourcingPageContent() {
     }
   }
 
-  const selectedJob = selectedJobId
-    ? sourcingJobs.find((j) => j.id === selectedJobId)
-    : null;
+  const selectedJob =
+    (selectedJobId && sourcingJobs.find((j) => j.id === selectedJobId)) ||
+    (selectedJobId && extraJob?.id === selectedJobId ? extraJob : null) ||
+    null;
+
+  const cachedAgeDays =
+    isCachedView && selectedJob
+      ? Math.floor(
+          (Date.now() - new Date(selectedJob.created_at).getTime()) /
+            (1000 * 60 * 60 * 24),
+        )
+      : null;
 
   return (
     <>
@@ -177,6 +240,42 @@ function SourcingPageContent() {
             )}
           </form>
         </Card>
+
+        {/* Cache banner — only when this view was loaded from a previous run */}
+        {selectedJob && isCachedView && cachedAgeDays != null && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-info/20 bg-info-soft px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-info">
+              <Info className="h-4 w-4 shrink-0" strokeWidth={2} />
+              <span>
+                Loaded from a previous run —{" "}
+                {cachedAgeDays === 0
+                  ? "earlier today"
+                  : cachedAgeDays === 1
+                    ? "1 day ago"
+                    : `${cachedAgeDays} days ago`}
+                .
+              </span>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={submitting}
+              onClick={(e) => {
+                const cachedUrl =
+                  typeof selectedJob.input?.url === "string"
+                    ? (selectedJob.input.url as string)
+                    : "";
+                if (!cachedUrl) return;
+                void handleSubmit(e as unknown as React.FormEvent, {
+                  forceFresh: true,
+                  urlOverride: cachedUrl,
+                });
+              }}
+            >
+              Run fresh
+            </Button>
+          </div>
+        )}
 
         {/* Selected job result — rendered ABOVE the runs list so clicking a row
             doesn't push the result below the fold. */}

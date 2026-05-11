@@ -15,6 +15,7 @@ export type Job = {
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   label: string | null;
   progress: { step?: string; pct?: number } | null;
+  input?: Record<string, unknown>;
   result: Record<string, unknown> | null;
   result_route: string | null;
   error: string | null;

@@ -212,6 +212,60 @@ export async function markSeenByKinds(
   return data?.length ?? 0;
 }
 
+// ── Sourcing URL cache lookup ────────────────────────────────────────────────
+
+/**
+ * Canonical-domain normalizer used for "have we sourced this URL before?"
+ * matching. Strips protocol, www., trailing slash, and path so all of these
+ * collapse to the same key: acme.com / www.acme.com / https://acme.com/products
+ */
+export function normalizeSourcingUrl(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/+$/, "")
+    .split("/")[0];
+}
+
+/**
+ * Look up the most recent succeeded sourcing job for a given URL within the
+ * last `maxAgeDays`. Pulls a window of recent succeeded sourcing rows and
+ * filters in JS so we don't need a generated SQL view over `input->>url`.
+ */
+export async function findRecentSourcingByUrl(
+  normalizedUrl: string,
+  maxAgeDays = 90,
+  sessionId: string = DEFAULT_SESSION,
+): Promise<Job | null> {
+  if (!normalizedUrl) return null;
+  const supabase = getSupabaseAdmin();
+  const sinceIso = new Date(
+    Date.now() - maxAgeDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("*")
+    .eq("session_id", sessionId)
+    .eq("kind", "sourcing")
+    .eq("status", "succeeded")
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) {
+    throw new Error(`Failed to look up cached sourcing run: ${error.message}`);
+  }
+  for (const row of (data ?? []) as Job[]) {
+    const inputUrl =
+      typeof row.input?.url === "string" ? (row.input.url as string) : "";
+    if (normalizeSourcingUrl(inputUrl) === normalizedUrl) {
+      return row;
+    }
+  }
+  return null;
+}
+
 export function summarize(jobs: Job[]): {
   inProgressCount: number;
   unreadCount: number;
