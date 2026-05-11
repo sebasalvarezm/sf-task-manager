@@ -401,11 +401,9 @@ export async function runFullSourcing(input: {
     }
   }
 
-  logs.push("Identifying key competitors...");
-  const competitors = await identifyCompetitors(anthropic, currentText, products);
-  if (competitors.length > 0) {
-    logs.push(`Found ${competitors.length} competitor(s).`);
-  }
+  // Competitor identification skipped (UI section removed). Keeping the
+  // field on the result shape so older jobs in Supabase still render.
+  const competitors: { name: string; differentiator: string }[] = [];
   onProgress?.("details", 100);
 
   return {

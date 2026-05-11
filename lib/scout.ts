@@ -758,27 +758,25 @@ export async function findRestaurants(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: any[] = [
-    { type: "web_search_20250305", name: "web_search", max_uses: 3 },
+    { type: "web_search_20250305", name: "web_search", max_uses: 6 },
   ];
 
   try {
     const resp = await callClaude(client, 2, {
       model: "claude-sonnet-4-6",
-      max_tokens: 500,
+      max_tokens: 1500,
       tools,
       messages: [
         {
           role: "user",
-          content: `Search for fine dining or upscale restaurants near ${cityState} that are suitable for a professional business dinner.
+          content: `Use the web_search tool to find 3 well-known restaurants near ${cityState} that are good for a professional business dinner. Try queries like "best business dinner restaurants ${cityState}", "fine dining ${cityState}", and "upscale restaurants ${cityState}". Use multiple searches if the first one is thin.
 
-Find 3 real, well-known restaurants. Prefer established restaurants — fine dining, upscale gastropubs, or hotel restaurants with private dining.
+Prefer established places — fine dining, upscale steakhouses, hotel restaurants, or notable gastropubs that come up on local food guides, TripAdvisor, Eater, or similar sources. Avoid fast food, chains, and anything obviously casual.
 
-Return a JSON array of exactly 3 objects. Each object must have:
-  "name": the actual restaurant name
-  "description": one sentence on why it suits a business dinner
+If the city is small and you cannot find 3 strong candidates, return whatever real restaurants you DO find — even 1 or 2 is fine. Only return an empty array if there are literally no restaurant search results at all.
 
-No commentary, no markdown, no explanation — only the JSON array.
-If you cannot find real restaurants for this location, return an empty array: []`,
+Respond with ONLY a JSON array. No preamble, no explanation, no markdown fences. Format:
+[{"name":"Actual Restaurant Name","description":"One short sentence on why it works for a business dinner."}, ...]`,
         },
       ],
     });
@@ -798,17 +796,23 @@ If you cannot find real restaurants for this location, return an empty array: []
 function parseRestaurantJson(
   raw: string
 ): { name: string; description: string }[] {
+  // Phrases that signal Claude refused or fell back to a placeholder rather
+  // than an actual restaurant. Match conservatively against names only — a
+  // real restaurant called "The Cannot Saint" should still pass.
   const BAD_SIGNALS = [
     "no suitable",
     "not found",
     "no restaurant",
-    "cannot",
-    "unable",
+    "unable to find",
+    "could not find",
+    "n/a",
+    "placeholder",
   ];
 
   function isReal(r: { name: string }): boolean {
     const name = r.name.toLowerCase().trim();
     if (!name) return false;
+    if (name.length < 3) return false;
     return !BAD_SIGNALS.some((sig) => name.includes(sig));
   }
 

@@ -475,26 +475,6 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
         </Card>
       </div>
 
-      {/* Competitors */}
-      {result.competitors.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            Competitor Landscape
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {result.competitors.map((c, i) => (
-              <Card key={i} padded={false} className="p-5">
-                <p className="font-semibold text-ink mb-1">{c.name}</p>
-                <p className="text-sm text-ink-secondary leading-relaxed">
-                  {c.differentiator}
-                </p>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Restaurants */}
       {result.address && (
         <div>
