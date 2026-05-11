@@ -651,14 +651,16 @@ export async function extractAddress(
       messages: [
         {
           role: "user",
-          content: `Find the headquarters street address for the company whose website is ${domain}.
+          content: `Use web search to find the headquarters location for the company whose website is ${domain}.
 
-Search for "${domain} headquarters address" or "${domain} contact address".
+Try searches like "${domain} headquarters", "${domain} contact", "${domain} about us", and "${domain} location".
 
-ONLY return an address that clearly belongs to this specific company.
-Return the full street address as a single line (e.g. '123 Main St, Denver, CO 80202').
-If no street address is found, return just the city and state/country (e.g. 'Reno, NV').
-If you cannot find any location, return exactly: null`,
+ONLY return a location that clearly belongs to this specific company.
+- Best case: full street address as a single line (e.g. '123 Main St, Denver, CO 80202').
+- If no street address is available, city + state/country is still useful (e.g. 'Reno, NV' or 'Bel Air, MD' or 'Toronto, ON').
+- Return ONLY the address/location, no commentary or preamble.
+
+If you cannot find any location for this specific company, return exactly: null`,
         },
       ],
     });
@@ -668,21 +670,8 @@ If you cannot find any location, return exactly: null`,
     );
     if (textBlocks.length > 0) {
       const raw = textBlocks[textBlocks.length - 1].text.trim();
-      const lower = raw.toLowerCase();
-      // Reject obvious non-answers and Claude commentary that leaked through.
-      // A real address has either a street number (digit) OR is "City, State"
-      // form (a comma + region). Reject anything else.
-      const looksLikeAddress =
-        /\d/.test(raw) || /,\s*[A-Z]{2}\b/.test(raw) || /,\s*[A-Z][a-z]+/.test(raw);
-      if (
-        lower !== "null" &&
-        lower !== "none" &&
-        raw.length > 4 &&
-        raw.length < 200 &&
-        looksLikeAddress
-      ) {
-        return raw;
-      }
+      const validated = validateAddress(raw);
+      if (validated) return validated;
     }
   } catch {
     // Non-critical
@@ -703,15 +692,17 @@ async function askClaudeForAddress(
     messages: [
       {
         role: "user",
-        content: `Extract the company's HEADQUARTERS or main office street address from this text.
+        content: `Extract the company's HEADQUARTERS or main office location from this text.
 If multiple addresses appear, use these priority rules:
 1. An address explicitly labeled 'headquarters', 'HQ', 'corporate office', or 'main office'
 2. The address associated with the company's home city or founding location
 3. If no label distinguishes them, return the first address listed
 
-Return only the full street address as a single line (e.g. '123 Main St, Denver, CO 80202').
+Prefer the full street address (e.g. '123 Main St, Denver, CO 80202').
+If only a city/state is shown, that's still useful — return it (e.g. 'Denver, CO' or 'Bel Air, MD').
 Do not include P.O. boxes or branch office addresses when a headquarters is identifiable.
-If no street address is present, return exactly: null
+Return ONLY the address/location as a single line — no preamble, no commentary.
+If no location at all is present, return exactly: null
 
 Text:
 ${text.slice(0, 4000)}`,
@@ -720,16 +711,37 @@ ${text.slice(0, 4000)}`,
   });
 
   const raw = resp.content[0].text.trim();
-  if (
-    raw.toLowerCase() === "null" ||
-    raw.toLowerCase() === "none" ||
-    raw.toLowerCase() === "n/a"
-  ) {
-    return null;
-  }
-  // Sanity check: must look like an address (has a digit and reasonable length)
-  if (/\d/.test(raw) && raw.length > 10) return raw;
-  return null;
+  return validateAddress(raw);
+}
+
+/**
+ * Shared sanity check. Accepts:
+ *  - "123 Main St, Denver, CO 80202" (street address with digit)
+ *  - "Denver, CO" / "Bel Air, MD" (city + 2-letter state)
+ *  - "Bel Air, Maryland" / "Wilmington, North Carolina" (city + full state)
+ * Rejects: null/none, very short, very long (likely prose), no comma & no digit.
+ */
+function validateAddress(raw: string): string | null {
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower === "null" || lower === "none" || lower === "n/a") return null;
+  if (raw.length < 4 || raw.length > 200) return null;
+
+  // Strip common preambles Claude sometimes adds
+  const cleaned = raw
+    .replace(/^(address|location|hq|headquarters)\s*[:\-]\s*/i, "")
+    .trim();
+
+  // Must look like an address: digit (street number) OR comma + capitalized region
+  const hasDigit = /\d/.test(cleaned);
+  const hasCommaRegion =
+    /,\s*[A-Z]{2}\b/.test(cleaned) || /,\s*[A-Z][a-z]+/.test(cleaned);
+  if (!hasDigit && !hasCommaRegion) return null;
+
+  // Reject obvious commentary even if it has a comma
+  if (/\bi (cannot|can't|couldn't|don't|am unable)/i.test(cleaned)) return null;
+
+  return cleaned;
 }
 
 // ---------------------------------------------------------------------------
