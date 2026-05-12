@@ -219,8 +219,19 @@ export default function TripPage() {
         }),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setSearchError(data.error || "Failed to start search");
+        const raw = await res.text().catch(() => "");
+        let parsedError: string | undefined;
+        try {
+          parsedError = (JSON.parse(raw) as { error?: string }).error;
+        } catch {
+          /* not JSON */
+        }
+        setSearchError(
+          parsedError ||
+            `Failed to start search · HTTP ${res.status}${
+              raw && raw.length < 200 ? ` · ${raw}` : ""
+            }`,
+        );
         setSearching(false);
         setDiscovering(false);
       } else {
