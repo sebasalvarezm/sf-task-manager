@@ -33,6 +33,7 @@ type PersonBreakdown = {
   owner: string;
   e1: number;
   rce1: number;
+  de1: number;
   outreach: number;
   c1: number;
   rcc: number;
@@ -45,6 +46,7 @@ type BucketRow = {
   bucketStart: string;
   e1: number;
   rce1: number;
+  de1: number;
   c1: number;
   rcc: number;
   f2f: number;
@@ -70,6 +72,7 @@ type DrillDimension =
   | "outreach_by_person"
   | "e1_by_person"
   | "rce1_by_person"
+  | "de1_by_person"
   | "calls_by_person"
   | "conversion_by_person"
   | "bro_by_originator"
@@ -101,6 +104,7 @@ type StatsResponse = {
     totalOutreach: number;
     e1: number;
     rce1: number;
+    de1: number;
     totalCalls: number;
     c1: number;
     rcc: number;
@@ -330,6 +334,7 @@ export default function StatsPage() {
       name: firstName(p.owner),
       E1: p.e1,
       RCE1: p.rce1,
+      "D-E1": p.de1,
     }));
   }, [data]);
 
@@ -347,7 +352,7 @@ export default function StatsPage() {
     if (!data) return [];
     return data.byBucket.map((b) => ({
       name: b.bucketLabel,
-      Outreach: b.e1 + b.rce1,
+      Outreach: b.e1 + b.rce1 + b.de1,
       Calls: b.c1 + b.rcc,
       F2F: b.f2f,
     }));
@@ -452,7 +457,7 @@ export default function StatsPage() {
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-10">
               <KpiCard
                 label="Total Outreach"
-                sublabel={`${fmtNumber(data.kpis.e1)} E1 · ${fmtNumber(data.kpis.rce1)} RCE1`}
+                sublabel={`${fmtNumber(data.kpis.e1)} E1 · ${fmtNumber(data.kpis.rce1)} RCE1 · ${fmtNumber(data.kpis.de1)} D-E1`}
                 value={fmtNumber(data.kpis.totalOutreach)}
               />
               <KpiCard
@@ -572,7 +577,7 @@ export default function StatsPage() {
                 </ResponsiveContainer>
               </ChartCard>
 
-              <ChartCard title={showTrend ? "Outreach Trend" : "E1 vs RCE1"}>
+              <ChartCard title={showTrend ? "Outreach Trend" : "E1 / RCE1 / D-E1"}>
                 {showTrend ? (
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={trendData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
@@ -614,6 +619,19 @@ export default function StatsPage() {
                             d as { name?: string },
                             { dimension: "rce1_by_person" },
                             (n) => `RCE1 by ${n}`,
+                          )
+                        }
+                      />
+                      <Bar
+                        dataKey="D-E1"
+                        fill={ORANGE}
+                        radius={[4, 4, 0, 0]}
+                        cursor="pointer"
+                        onClick={(d) =>
+                          openOwnerDrill(
+                            d as { name?: string },
+                            { dimension: "de1_by_person" },
+                            (n) => `D-E1 by ${n}`,
                           )
                         }
                       />

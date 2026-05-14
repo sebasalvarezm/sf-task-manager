@@ -8,7 +8,9 @@ export const CDM_OWNER_NAMES = [
   "Tyson Hasegawa-Foster",
 ] as const;
 
-export const TRACKED_SUBJECT_TYPES = ["E1", "RCE1", "C1", "RCC", "F2F"] as const;
+// "D-E1" is an E1 sent for divestment purposes — counted as outreach
+// alongside regular E1 / RCE1.
+export const TRACKED_SUBJECT_TYPES = ["E1", "RCE1", "D-E1", "C1", "RCC", "F2F"] as const;
 // Display order for the BRO pipeline chart and drill-down groupings.
 // IOI/LOI come before DD because that matches how the team thinks about the
 // funnel (initial offer happens before deep diligence in M&A workflow).
@@ -39,6 +41,7 @@ export type BucketCountRow = {
   bucketStart: string;
   e1: number;
   rce1: number;
+  de1: number;
   c1: number;
   rcc: number;
   f2f: number;
@@ -154,6 +157,7 @@ export async function fetchTaskCountsByBucket(
       const byType: Record<TrackedSubjectType, number> = {
         E1: 0,
         RCE1: 0,
+        "D-E1": 0,
         C1: 0,
         RCC: 0,
         F2F: 0,
@@ -165,6 +169,7 @@ export async function fetchTaskCountsByBucket(
         bucketStart: b.start,
         e1: byType.E1,
         rce1: byType.RCE1,
+        de1: byType["D-E1"],
         c1: byType.C1,
         rcc: byType.RCC,
         f2f: byType.F2F,

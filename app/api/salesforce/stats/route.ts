@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
         totalOutreach: kpis.totalOutreach,
         e1: kpis.e1,
         rce1: kpis.rce1,
+        de1: kpis.de1,
         totalCalls: kpis.c1 + kpis.rcc,
         c1: kpis.c1,
         rcc: kpis.rcc,
@@ -112,21 +113,23 @@ export async function GET(req: NextRequest) {
 }
 
 function computeKpis(rows: TaskCountRow[]) {
-  let e1 = 0, rce1 = 0, c1 = 0, rcc = 0, f2f = 0;
+  let e1 = 0, rce1 = 0, de1 = 0, c1 = 0, rcc = 0, f2f = 0;
   for (const r of rows) {
     if (r.type === "E1") e1 += r.count;
     else if (r.type === "RCE1") rce1 += r.count;
+    else if (r.type === "D-E1") de1 += r.count;
     else if (r.type === "C1") c1 += r.count;
     else if (r.type === "RCC") rcc += r.count;
     else if (r.type === "F2F") f2f += r.count;
   }
-  return { e1, rce1, c1, rcc, f2f, totalOutreach: e1 + rce1 };
+  return { e1, rce1, de1, c1, rcc, f2f, totalOutreach: e1 + rce1 + de1 };
 }
 
 type PersonBreakdown = {
   owner: string;
   e1: number;
   rce1: number;
+  de1: number;
   outreach: number;
   c1: number;
   rcc: number;
@@ -144,6 +147,7 @@ function computeByPerson(
       owner: name,
       e1: 0,
       rce1: 0,
+      de1: 0,
       outreach: 0,
       c1: 0,
       rcc: 0,
@@ -157,13 +161,14 @@ function computeByPerson(
     if (!p) continue;
     if (r.type === "E1") p.e1 += r.count;
     else if (r.type === "RCE1") p.rce1 += r.count;
+    else if (r.type === "D-E1") p.de1 += r.count;
     else if (r.type === "C1") p.c1 += r.count;
     else if (r.type === "RCC") p.rcc += r.count;
     else if (r.type === "F2F") p.f2f += r.count;
   }
 
   for (const p of byOwner.values()) {
-    p.outreach = p.e1 + p.rce1;
+    p.outreach = p.e1 + p.rce1 + p.de1;
   }
 
   for (const r of originatorRows) {

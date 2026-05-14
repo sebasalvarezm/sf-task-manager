@@ -12,9 +12,10 @@ import {
 export const dynamic = "force-dynamic";
 
 type Dimension =
-  | "outreach_by_person"   // E1 + RCE1 by owner
+  | "outreach_by_person"   // E1 + RCE1 + D-E1 by owner
   | "e1_by_person"          // just E1 by owner
   | "rce1_by_person"        // just RCE1 by owner
+  | "de1_by_person"         // just D-E1 (divestment E1s) by owner
   | "calls_by_person"       // C1 / RCC / F2F by owner (filter via callType)
   | "conversion_by_person"  // accounts who got C1+RCC from this owner
   | "bro_by_originator"     // open BROs by owner
@@ -24,6 +25,7 @@ const VALID: Dimension[] = [
   "outreach_by_person",
   "e1_by_person",
   "rce1_by_person",
+  "de1_by_person",
   "calls_by_person",
   "conversion_by_person",
   "bro_by_originator",
@@ -67,7 +69,7 @@ export async function GET(req: NextRequest) {
           );
         }
         rows = await fetchDrillAccountsForTasks(credentials, {
-          types: ["E1", "RCE1"],
+          types: ["E1", "RCE1", "D-E1"],
           ownerName: owner,
           rangeStart: start,
           rangeEnd: end,
@@ -98,6 +100,21 @@ export async function GET(req: NextRequest) {
         }
         rows = await fetchDrillAccountsForTasks(credentials, {
           types: ["RCE1"],
+          ownerName: owner,
+          rangeStart: start,
+          rangeEnd: end,
+        });
+        break;
+      }
+      case "de1_by_person": {
+        if (!owner || !start || !end) {
+          return NextResponse.json(
+            { error: "owner, start, end required" },
+            { status: 400 },
+          );
+        }
+        rows = await fetchDrillAccountsForTasks(credentials, {
+          types: ["D-E1"],
           ownerName: owner,
           rangeStart: start,
           rangeEnd: end,
