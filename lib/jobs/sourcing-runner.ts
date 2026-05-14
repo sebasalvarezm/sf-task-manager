@@ -19,7 +19,9 @@ import {
   findRestaurants,
   extractOutreachParagraph,
   personalizeOutreach,
+  generateEmailHook,
   findGroupFileName,
+  type WaybackStatus,
 } from "@/lib/scout";
 
 export type SourcingResult = {
@@ -35,12 +37,14 @@ export type SourcingResult = {
   archiveUrl: string | null;
   archiveYear: string | null;
   wbLabel: string;
+  waybackStatus: WaybackStatus | null;
   oldProducts: string[];
   discontinued: string | null;
   discontinuedNote: string | null;
   address: string | null;
   restaurants: { name: string; description: string }[];
   outreachParagraph: string | null;
+  emailHook: string | null;
   competitors: { name: string; differentiator: string }[];
   logs: string[];
 };
@@ -235,7 +239,25 @@ export async function runFullSourcing(input: {
   }
 
   logs.push(`Fetching Wayback Machine snapshots from ${wbLabel}...`);
-  const candidates = await getWaybackCandidates(normalized, wbFrom, wbTo);
+  const { candidates, status: waybackStatus } = await getWaybackCandidates(
+    normalized,
+    wbFrom,
+    wbTo,
+  );
+
+  if (waybackStatus === "fallback_used") {
+    logs.push(
+      "Wayback CDX returned nothing — using Availability API fallback snapshot.",
+    );
+  } else if (waybackStatus === "timeout") {
+    logs.push(
+      "Wayback Machine timed out (Wayback-side issue, not the company).",
+    );
+  } else if (waybackStatus === "http_error" || waybackStatus === "network_error") {
+    logs.push(`Wayback Machine unreachable (${waybackStatus}).`);
+  } else if (waybackStatus === "empty") {
+    logs.push("Wayback Machine has no archived snapshots in that window.");
+  }
 
   let archiveUrl: string | null = null;
   let archiveTimestamp: string | null = null;
@@ -404,6 +426,33 @@ export async function runFullSourcing(input: {
   // Competitor identification skipped (UI section removed). Keeping the
   // field on the result shape so older jobs in Supabase still render.
   const competitors: { name: string; differentiator: string }[] = [];
+
+  // ───────── Stage 4: Email opening hook (Wayback-independent) ─────────
+  logs.push("Generating email opening hook...");
+  let emailHook: string | null = null;
+  try {
+    let matchedGroupContent = "";
+    if (portfolioMatch.matched && portfolioMatch.group) {
+      const fileName = findGroupFileName(portfolioMatch.group, groups);
+      if (fileName && fileName in groups) {
+        matchedGroupContent = groups[fileName];
+      }
+    }
+    emailHook = await generateEmailHook(
+      anthropic,
+      normalized,
+      currentText,
+      products,
+      foundingYear,
+      matchedGroupContent,
+    );
+    logs.push("Email hook complete.");
+  } catch (err) {
+    logs.push(
+      `Hook generation failed: ${err instanceof Error ? err.message : "unknown error"}`,
+    );
+  }
+
   onProgress?.("details", 100);
 
   return {
@@ -415,12 +464,14 @@ export async function runFullSourcing(input: {
     archiveUrl,
     archiveYear,
     wbLabel,
+    waybackStatus,
     oldProducts,
     discontinued,
     discontinuedNote,
     address,
     restaurants,
     outreachParagraph,
+    emailHook,
     competitors,
     logs,
   };

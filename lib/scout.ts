@@ -34,6 +34,17 @@ const PARKING_SIGNALS = [
   "domain registrar",
 ];
 
+/**
+ * Headers sent with every Wayback Machine CDX / Availability API call.
+ * Wayback throttles and silently drops unidentified traffic — using a
+ * descriptive User-Agent dramatically improves reliability.
+ */
+const WAYBACK_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "ValstoneScout/1.0 (M&A research tool; contact: sebastian@valstonecorp.com)",
+  Accept: "application/json",
+};
+
 /** Sub-pages to crawl after the homepage for richer product coverage */
 const CRAWL_PATHS = [
   "/about",
@@ -402,11 +413,14 @@ export async function getEarliestSnapshotYear(
     const domain = parsed.hostname;
 
     const cdxUrl =
-      `http://web.archive.org/cdx/search/cdx` +
+      `https://web.archive.org/cdx/search/cdx` +
       `?url=${domain}&output=json&limit=1` +
       `&filter=statuscode:200&fl=timestamp`;
 
-    const res = await fetch(cdxUrl, { signal: AbortSignal.timeout(20000) });
+    const res = await fetch(cdxUrl, {
+      headers: WAYBACK_HEADERS,
+      signal: AbortSignal.timeout(20000),
+    });
     const data = await res.json();
 
     if (data.length < 2) return null;
@@ -474,38 +488,124 @@ If you cannot determine it, return exactly: null`,
 
 type WaybackCandidate = { url: string; timestamp: string };
 
+/** Diagnostic status returned alongside Wayback candidates. */
+export type WaybackStatus =
+  | "ok"
+  | "empty"
+  | "timeout"
+  | "http_error"
+  | "network_error"
+  | "fallback_used";
+
+export type WaybackLookupResult = {
+  candidates: WaybackCandidate[];
+  status: WaybackStatus;
+};
+
 /**
  * Query Wayback Machine CDX API for snapshots between fromDate and toDate.
- * Returns a list of (archive_url, timestamp) sorted oldest first.
+ * Returns { candidates, status }, where status surfaces why a lookup
+ * returned nothing (so the UI can tell "Wayback is rate-limiting us" from
+ * "this domain genuinely has no archived snapshots").
+ *
+ * If the primary CDX call returns no rows or fails, falls back once to the
+ * Availability API (a much lighter endpoint that often succeeds when CDX
+ * times out) and returns that single closest snapshot.
  */
 export async function getWaybackCandidates(
   url: string,
   fromDate: string,
   toDate: string
-): Promise<WaybackCandidate[]> {
+): Promise<WaybackLookupResult> {
+  let primaryStatus: WaybackStatus = "empty";
+  let domain = "";
   try {
     const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
-    const domain = parsed.hostname;
+    domain = parsed.hostname;
 
     const cdxUrl =
-      `http://web.archive.org/cdx/search/cdx` +
+      `https://web.archive.org/cdx/search/cdx` +
       `?url=${domain}&output=json` +
       `&from=${fromDate}&to=${toDate}` +
       `&limit=15&filter=statuscode:200` +
       `&collapse=timestamp:4&fl=timestamp,original`;
 
-    const res = await fetch(cdxUrl, { signal: AbortSignal.timeout(30000) });
-    const data = await res.json();
-
-    if (data.length < 2) return [];
-
-    return data.slice(1).map((row: string[]) => ({
-      url: `https://web.archive.org/web/${row[0]}/${row[1]}`,
-      timestamp: row[0],
-    }));
-  } catch {
-    return [];
+    const res = await fetch(cdxUrl, {
+      headers: WAYBACK_HEADERS,
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) {
+      primaryStatus = "http_error";
+    } else {
+      const data = await res.json();
+      if (data.length < 2) {
+        primaryStatus = "empty";
+      } else {
+        const candidates = data.slice(1).map((row: string[]) => ({
+          url: `https://web.archive.org/web/${row[0]}/${row[1]}`,
+          timestamp: row[0],
+        }));
+        return { candidates, status: "ok" };
+      }
+    }
+  } catch (err) {
+    primaryStatus =
+      err instanceof Error && err.name === "TimeoutError"
+        ? "timeout"
+        : "network_error";
   }
+
+  // Fallback: the Availability API is far lighter than CDX and often succeeds
+  // when CDX times out or returns nothing. Aim it at the middle of the window.
+  if (domain) {
+    const targetYear = Math.floor(
+      (parseInt(fromDate.slice(0, 4)) + parseInt(toDate.slice(0, 4))) / 2
+    );
+    const fallback = await getWaybackFallbackSnapshot(domain, targetYear);
+    if (fallback) {
+      return { candidates: [fallback], status: "fallback_used" };
+    }
+  }
+
+  return { candidates: [], status: primaryStatus };
+}
+
+/**
+ * Single-shot lookup against the Wayback Availability API. Returns the
+ * snapshot closest to targetYear, or null. Used as a fallback when CDX
+ * returns nothing or fails.
+ */
+export async function getWaybackFallbackSnapshot(
+  domain: string,
+  targetYear: number
+): Promise<WaybackCandidate | null> {
+  try {
+    const params = new URLSearchParams({
+      url: domain,
+      timestamp: String(targetYear),
+    });
+    const res = await fetch(
+      `https://archive.org/wayback/available?${params.toString()}`,
+      {
+        headers: WAYBACK_HEADERS,
+        signal: AbortSignal.timeout(15000),
+      }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const closest = data?.archived_snapshots?.closest;
+    if (
+      closest &&
+      closest.available &&
+      typeof closest.url === "string" &&
+      typeof closest.timestamp === "string"
+    ) {
+      return { url: closest.url, timestamp: closest.timestamp };
+    }
+  } catch {
+    /* silent */
+  }
+  return null;
 }
 
 /**
@@ -548,14 +648,17 @@ export async function getInteriorCandidates(
 ): Promise<WaybackCandidate[]> {
   try {
     const cdxUrl =
-      `http://web.archive.org/cdx/search/cdx` +
+      `https://web.archive.org/cdx/search/cdx` +
       `?url=${domain}/${keyword}*&matchType=prefix&output=json` +
       `&from=${fromDate}&to=${toDate}` +
       `&limit=${limit}&filter=statuscode:200` +
       `&collapse=timestamp:4` +
       `&fl=timestamp,original`;
 
-    const res = await fetch(cdxUrl, { signal: AbortSignal.timeout(15000) });
+    const res = await fetch(cdxUrl, {
+      headers: WAYBACK_HEADERS,
+      signal: AbortSignal.timeout(15000),
+    });
     const data = await res.json();
 
     if (data.length < 2) return [];
@@ -1044,6 +1147,81 @@ Return only the modified paragraph. Nothing else.`,
 
   let result = resp.content[0].text.trim();
   // Safety net: replace any em dashes with a comma
+  result = result.replace(/\s*—\s*/g, ", ");
+  return result;
+}
+
+/**
+ * Generate a 1–2 sentence personalized email opener (the "hook") that earns
+ * attention before the templated outreach paragraph kicks in.
+ *
+ * The hook combines:
+ *   - A specific detail about the target company (product, niche, customer
+ *     segment) drawn from currentText and products
+ *   - A Valstone-side angle drawn from matchedGroupContent (portfolio
+ *     adjacency or vertical thesis), when available
+ *
+ * Opens with "I've studied your business going back to {foundingYear}" when
+ * a founding year is known; otherwise falls back to a natural variation.
+ *
+ * Never calls the Wayback Machine — produces a hook even when the snapshot
+ * lookup failed entirely.
+ */
+export async function generateEmailHook(
+  client: Anthropic,
+  url: string,
+  currentText: string,
+  products: string[],
+  foundingYear: number | null,
+  matchedGroupContent: string
+): Promise<string> {
+  const openerRule = foundingYear
+    ? `- Start the hook with the exact phrase: "I've studied your business going back to ${foundingYear}". You may follow it with a comma and one short clause that names a specific company detail (a product, a niche, or a customer segment).`
+    : `- Open with a natural variation of "I've been following your work in [their space]" that names the specific space, niche, or customer segment you've observed. Do NOT invent a founding year.`;
+
+  const productsHint =
+    products.length > 0
+      ? `\nThe company's specific named products include: ${products.slice(0, 6).join(", ")}. Prefer naming one of these over generic descriptions when it fits the hook.\n`
+      : "";
+
+  const adjacencyHint = matchedGroupContent
+    ? `\nVALSTONE PORTFOLIO ANGLE (use this to add ONE concrete second sentence — either a portfolio adjacency or the vertical thesis we're building toward):\n${matchedGroupContent.slice(0, 3500)}\n`
+    : "";
+
+  const resp = await callClaude(client, 2, {
+    model: "claude-sonnet-4-6",
+    max_tokens: 300,
+    messages: [
+      {
+        role: "user",
+        content: `Write a personalized 1–2 sentence email OPENER (a "hook") for a cold outreach to the company at ${url}. The hook is the very first thing the recipient reads, before any templated value prop. Its job is to prove we did real homework on this specific company so the email feels written for them, not blasted from a template.
+
+RULES:
+${openerRule}
+- Maximum 2 sentences. Total length under 60 words.
+- The hook must reference ONE specific, verifiable company detail (product name, niche, customer segment, or distinctive positioning) — never a generic compliment.
+- If a Valstone portfolio angle is provided below, weave in ONE concrete adjacency or thesis reference as the second sentence. If none is provided, keep it to one sentence.
+- Tone: respectful, founder-to-founder, no sales jargon, no flattery.
+- Do NOT use em dashes (—) anywhere in the output.
+- Do NOT include a greeting (no "Hi", "Hello", or a name). Just the hook itself.
+- Return only the hook text. No commentary, no quotes around it.
+
+COMPANY CONTEXT:
+${currentText.slice(0, 3000)}
+${productsHint}${adjacencyHint}`,
+      },
+    ],
+  });
+
+  let result = resp.content[0].text.trim();
+  // Strip surrounding quotes if Claude wrapped the output
+  if (
+    (result.startsWith('"') && result.endsWith('"')) ||
+    (result.startsWith("'") && result.endsWith("'"))
+  ) {
+    result = result.slice(1, -1).trim();
+  }
+  // Same em-dash safety net used in personalizeOutreach
   result = result.replace(/\s*—\s*/g, ", ");
   return result;
 }

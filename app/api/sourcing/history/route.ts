@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
 
     // Query Wayback Machine for historical snapshots
     logs.push(`Fetching Wayback Machine snapshots from ${wbLabel}...`);
-    const candidates = await getWaybackCandidates(url, wbFrom, wbTo);
+    const { candidates } = await getWaybackCandidates(url, wbFrom, wbTo);
 
     if (candidates.length === 0) {
       logs.push("No archived snapshots found in that date range.");

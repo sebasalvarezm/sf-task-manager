@@ -30,6 +30,14 @@ type PortfolioMatch = {
   confidence?: number | null;
 };
 
+type WaybackStatus =
+  | "ok"
+  | "empty"
+  | "timeout"
+  | "http_error"
+  | "network_error"
+  | "fallback_used";
+
 type SourcingResult = {
   url: string;
   products: string[];
@@ -38,12 +46,14 @@ type SourcingResult = {
   archiveUrl: string | null;
   archiveYear: string | null;
   wbLabel: string;
+  waybackStatus?: WaybackStatus | null;
   oldProducts: string[];
   discontinued: string | null;
   discontinuedNote: string | null;
   address: string | null;
   restaurants: { name: string; description: string }[];
   outreachParagraph: string | null;
+  emailHook?: string | null;
   competitors: { name: string; differentiator: string }[];
   logs?: string[];
 };
@@ -56,6 +66,29 @@ function domainFromUrl(url: string): string {
     return new URL(u).hostname.replace(/^www\./, "");
   } catch {
     return url;
+  }
+}
+
+function waybackEmptyMessage(
+  status: WaybackStatus | null | undefined,
+  archiveUrl: string | null,
+  wbLabel: string,
+): string {
+  if (archiveUrl) {
+    return "Snapshot was retrieved, but no distinct discontinued product could be identified from it.";
+  }
+  switch (status) {
+    case "empty":
+      return `Wayback Machine has no archived snapshots of this domain for ${wbLabel}.`;
+    case "timeout":
+      return "Wayback Machine timed out — try re-running. (This is a Wayback-side issue, not the company.)";
+    case "http_error":
+    case "network_error":
+      return "Wayback Machine is currently unreachable. Retry later.";
+    case "ok":
+      return `Wayback returned snapshots for ${wbLabel}, but none passed validity checks (e.g. parked page or prior domain owner).`;
+    default:
+      return `No valid Wayback snapshot for ${wbLabel}.`;
   }
 }
 
@@ -444,6 +477,7 @@ function JobResultPanel({ job }: { job: Job }) {
 
 function SourcingResultDisplay({ result }: { result: SourcingResult }) {
   const [copied, setCopied] = useState(false);
+  const [copiedHook, setCopiedHook] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
 
   const copy = useCallback(async () => {
@@ -456,6 +490,17 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
       /* clipboard blocked */
     }
   }, [result.outreachParagraph]);
+
+  const copyHook = useCallback(async () => {
+    if (!result.emailHook) return;
+    try {
+      await navigator.clipboard.writeText(result.emailHook);
+      setCopiedHook(true);
+      setTimeout(() => setCopiedHook(false), 2000);
+    } catch {
+      /* clipboard blocked */
+    }
+  }, [result.emailHook]);
 
   const domain = domainFromUrl(result.url);
 
@@ -481,6 +526,34 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
           </div>
         </div>
       </div>
+
+      {/* Email Opening Hook — full width, above the 3-col grid */}
+      {result.emailHook && (
+        <Card padded={false} className="p-5">
+          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
+            Email Opening Hook
+          </h3>
+          <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">
+            {result.emailHook}
+          </p>
+          <Button
+            size="sm"
+            variant={copiedHook ? "secondary" : "primary"}
+            onClick={copyHook}
+            leftIcon={
+              copiedHook ? (
+                <Check className="h-3.5 w-3.5" strokeWidth={2} />
+              ) : (
+                <Copy className="h-3.5 w-3.5" strokeWidth={2} />
+              )
+            }
+            className="mt-3"
+          >
+            {copiedHook ? "Copied" : "Copy Hook"}
+          </Button>
+        </Card>
+      )}
 
       {/* Top 3 cards: Products / Discontinued / Outreach */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -528,12 +601,15 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
                   <ExternalLink className="h-3 w-3" strokeWidth={2} />
                 </a>
               )}
+              {result.waybackStatus === "fallback_used" && (
+                <p className="text-xs text-ink-muted mt-2">
+                  Snapshot retrieved via Wayback Availability fallback.
+                </p>
+              )}
             </div>
           ) : (
             <p className="text-sm text-ink-muted">
-              {result.archiveUrl
-                ? "None identified."
-                : `No valid Wayback snapshot for ${result.wbLabel}.`}
+              {waybackEmptyMessage(result.waybackStatus, result.archiveUrl, result.wbLabel)}
             </p>
           )}
         </Card>
