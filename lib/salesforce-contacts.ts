@@ -156,7 +156,8 @@ export async function fetchAccountsWithEHistory(): Promise<
   }
 
   // Keep only accounts whose MOST RECENT completed E5 was ACTUALLY SENT
-  // in 2026, based on CompletedDateTime only.
+  // on or after 2026-01-15 (the sourcing-strategy switch date), based on
+  // CompletedDateTime only.
   //
   // CompletedDateTime is set by SF automatically when Status flips to
   // Completed and reliably reflects the actual send timestamp for
@@ -164,7 +165,7 @@ export async function fetchAccountsWithEHistory(): Promise<
   // field that can be set to future/scheduled dates (e.g., when Outreach
   // schedules an email ahead of time) or edited manually. Falling back
   // to ActivityDate was incorrectly admitting accounts whose real emails
-  // went out in 2025 but had some 2026-dated placeholder/scheduled task.
+  // went out earlier but had some later-dated placeholder/scheduled task.
   const result: SfAccountWithETasks[] = [];
   for (const { account, tasks } of byAccount.values()) {
     const e5Dates = tasks
@@ -176,8 +177,11 @@ export async function fetchAccountsWithEHistory(): Promise<
     const mostRecentE5 = e5Dates[0];
     if (!mostRecentE5) continue;
 
-    const year = new Date(mostRecentE5).getUTCFullYear();
-    if (year !== 2026) continue;
+    // Sourcing strategy switched on 2026-01-15. Accounts whose most-recent
+    // E5 was sent before that date used the prior strategy and must not
+    // resurface (this also rejects all 2025-and-earlier sends).
+    const CUTOFF_MS = Date.UTC(2026, 0, 15); // 2026-01-15 00:00:00 UTC, inclusive
+    if (new Date(mostRecentE5).getTime() < CUTOFF_MS) continue;
 
     result.push({
       Id: account.Id,

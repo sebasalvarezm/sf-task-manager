@@ -253,6 +253,25 @@ function classify(
   });
   if (hasInFlightStep) return "NOT_DUE";
 
+  // Post-E5 activity guard: if any activity has been logged on the account
+  // (reply, manual task, event, etc.) after the most recent E5 ended, the
+  // account is no longer a clean "second hit" candidate. LastActivityDate
+  // is a Salesforce rollup that covers all task + event activity, so this
+  // catches inbound replies and manual follow-ups that the E1-E5-only SOQL
+  // query doesn't surface in account.Tasks. Strict `>` is intentional: the
+  // E5 task itself contributes to LastActivityDate, so same-day equality
+  // means "the E5 was the last activity" — exactly the state we want.
+  const lastE5End = histories
+    .filter((h) => h.status === "complete")
+    .map((h) => h.endedAt)
+    .filter((d): d is string => !!d)
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+
+  if (lastE5End && account.LastActivityDate) {
+    const e5EndDay = lastE5End.slice(0, 10); // YYYY-MM-DD
+    if (account.LastActivityDate > e5EndDay) return "NOT_DUE";
+  }
+
   const completedSequences = histories.filter((h) => h.status === "complete");
   const partialSequences = histories.filter(
     (h) => h.status === "partial" && h.stepsCompleted > 0
