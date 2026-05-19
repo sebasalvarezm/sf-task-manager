@@ -1151,77 +1151,269 @@ Return only the modified paragraph. Nothing else.`,
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Email Opening Hook — Anchor Research
+// ---------------------------------------------------------------------------
+
 /**
- * Generate a 1–2 sentence personalized email opener (the "hook") that earns
- * attention before the templated outreach paragraph kicks in.
- *
- * The hook combines:
- *   - A specific detail about the target company (product, niche, customer
- *     segment) drawn from currentText and products
- *   - A Valstone-side angle drawn from matchedGroupContent (portfolio
- *     adjacency or vertical thesis), when available
- *
- * Opens with "I've studied your business going back to {foundingYear}" when
- * a founding year is known; otherwise falls back to a natural variation.
- *
- * Never calls the Wayback Machine — produces a hook even when the snapshot
- * lookup failed entirely.
+ * A distinctive, verifiable artifact from a company's history that can be
+ * slotted into the "I have studied X going back to ${ANCHOR}" opener.
  */
-export async function generateEmailHook(
+export type CompanyAnchor = {
+  type:
+    | "former_name" // e.g. "the days operating as Resolution Systems"
+    | "product_release" // e.g. "the release of Herbst Attendance"
+    | "distinctive_moment" // rebrand, acquisition, founder anecdote
+    | "obscure_trivia" // weird artifact from old snapshots
+    | "early_niche"; // a specific named customer segment they pioneered
+  anchor: string; // exact phrase to slot after "going back to"
+  evidence: string; // 1 sentence: where this came from
+};
+
+/**
+ * Research a company for distinctive, hook-worthy anchors using Claude with
+ * web_search. Returns a canonical companyName and up to 5 anchors ranked
+ * most-specific first.
+ *
+ * Failure-tolerant: on any error returns a domain-stem fallback companyName
+ * and an empty anchors array, letting generateEmailHook() degrade to a
+ * local-data-only hook.
+ */
+export async function researchCompanyAnchors(
   client: Anthropic,
   url: string,
   currentText: string,
   products: string[],
-  foundingYear: number | null,
-  matchedGroupContent: string
-): Promise<string> {
-  const openerRule = foundingYear
-    ? `- Start the hook with the exact phrase: "I've studied your business going back to ${foundingYear}". You may follow it with a comma and one short clause that names a specific company detail (a product, a niche, or a customer segment).`
-    : `- Open with a natural variation of "I've been following your work in [their space]" that names the specific space, niche, or customer segment you've observed. Do NOT invent a founding year.`;
+  oldProducts: string[],
+  discontinued: string | null,
+  archiveYear: string | null
+): Promise<{ companyName: string; anchors: CompanyAnchor[] }> {
+  const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
+  const stem = parsed.hostname.replace("www.", "").split(".")[0];
+  const fallbackName = stem.charAt(0).toUpperCase() + stem.slice(1);
 
-  const productsHint =
-    products.length > 0
-      ? `\nThe company's specific named products include: ${products.slice(0, 6).join(", ")}. Prefer naming one of these over generic descriptions when it fits the hook.\n`
+  try {
+    const productsHint =
+      products.length > 0
+        ? `\nCurrent products: ${products.slice(0, 8).join(", ")}`
+        : "";
+    const oldProductsHint =
+      oldProducts.length > 0
+        ? `\nHistorical product names (from Wayback Machine${archiveYear ? `, ${archiveYear}` : ""}): ${oldProducts.slice(0, 8).join(", ")}`
+        : "";
+    const discontinuedHint = discontinued
+      ? `\nDiscontinued product (appeared on an old snapshot but absent today): ${discontinued}`
       : "";
 
-  const adjacencyHint = matchedGroupContent
-    ? `\nVALSTONE PORTFOLIO ANGLE (use this to add ONE concrete second sentence — either a portfolio adjacency or the vertical thesis we're building toward):\n${matchedGroupContent.slice(0, 3500)}\n`
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tools: any[] = [
+      { type: "web_search_20250305", name: "web_search", max_uses: 4 },
+    ];
+
+    const resp = await callClaude(client, 2, {
+      model: "claude-sonnet-4-6",
+      max_tokens: 1500,
+      tools,
+      messages: [
+        {
+          role: "user",
+          content: `You are helping write a personal cold-outreach hook. The hook will start "I have studied {Company} going back to {ANCHOR}." where ANCHOR is a SPECIFIC, VERIFIABLE artifact from the company's history. Generic descriptions of current products are unusable.
+
+Examples of great anchors (these came from real research, not the homepage):
+- "the days operating as Resolution Systems" (a former company name)
+- "the release of Herbst Attendance" (a specific named product launch)
+- "the release of ArcMiner" (a specific named product launch)
+- "the days when the Okappy mascot would appear on the Team page of the website" (obscure trivia from old snapshots)
+
+TARGET COMPANY: ${url}${productsHint}${oldProductsHint}${discontinuedHint}
+
+Excerpt from the company's current website:
+${currentText.slice(0, 1500)}
+
+YOUR TASK:
+1. Identify the company's canonical brand name (e.g. "MaxMine", not "maxmine.com").
+2. Use web_search to research the company's history. Look for:
+   - A FORMER NAME (rebrand, prior LLC, predecessor entity, acquired-from name).
+   - A SPECIFIC PRODUCT LAUNCH from their early years (with the actual product name).
+   - A DISTINCTIVE MOMENT (acquisition, merger, milestone press release).
+   - OBSCURE TRIVIA (something only a careful researcher would know).
+   - An EARLY NICHE they pioneered (a specific named customer segment, not "the construction industry").
+3. Return up to 5 candidate anchors, ranked most-specific first.
+
+ANCHOR FORMAT:
+- The "anchor" string is the EXACT phrase that goes after "going back to". Examples:
+  - "the days operating as Resolution Systems"
+  - "the release of Herbst Attendance in 2008"
+  - "the Okappy mascot's appearance on your early Team page"
+- Never use a bare year. Never use a generic descriptor of what they do now.
+- Each anchor must be falsifiable: a reader could in principle look it up.
+
+Return STRICT JSON only, no markdown fences, no commentary:
+{
+  "companyName": "MaxMine",
+  "anchors": [
+    {"type": "former_name", "anchor": "the days operating as Resolution Systems", "evidence": "one sentence: where you found this"}
+  ]
+}
+
+If you genuinely cannot find anything specific via web search, still return the companyName and an empty anchors array. Do not invent.`,
+        },
+      ],
+    });
+
+    const textBlocks = resp.content.filter(
+      (b: { type: string }) => b.type === "text"
+    );
+    if (textBlocks.length === 0) return { companyName: fallbackName, anchors: [] };
+    const raw = textBlocks[textBlocks.length - 1].text.trim();
+    const cleaned = raw
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/i, "")
+      .trim();
+
+    const parsedJson = JSON.parse(cleaned) as {
+      companyName?: string;
+      anchors?: CompanyAnchor[];
+    };
+
+    const companyName =
+      typeof parsedJson.companyName === "string" && parsedJson.companyName.trim()
+        ? parsedJson.companyName.trim()
+        : fallbackName;
+    const anchors = Array.isArray(parsedJson.anchors)
+      ? parsedJson.anchors
+          .slice(0, 5)
+          .filter(
+            (a) =>
+              a &&
+              typeof a.anchor === "string" &&
+              a.anchor.trim().length > 0 &&
+              typeof a.type === "string"
+          )
+      : [];
+
+    return { companyName, anchors };
+  } catch {
+    return { companyName: fallbackName, anchors: [] };
+  }
+}
+
+/**
+ * Generate a 1-2 sentence personalized email opener (the "hook").
+ *
+ * Selects the most-specific anchor available, in this priority order:
+ *   1. Researched anchors (web_search results from researchCompanyAnchors)
+ *   2. A discontinued product from a Wayback snapshot
+ *   3. A specific historical product name from oldProducts
+ *   4. An early niche they pioneered, named specifically
+ *   5. (Last resort) a founding year + ONE specific clause about what they
+ *      were doing at that moment. Never a bare year.
+ *
+ * Generic descriptors of current product/positioning are explicitly banned.
+ */
+export async function generateEmailHook(
+  client: Anthropic,
+  companyName: string,
+  url: string,
+  currentText: string,
+  products: string[],
+  foundingYear: number | null,
+  oldProducts: string[],
+  discontinued: string | null,
+  archiveYear: string | null,
+  anchors: CompanyAnchor[],
+  matchedGroupContent: string
+): Promise<string> {
+  const anchorsBlock =
+    anchors.length > 0
+      ? `\nRESEARCHED ANCHORS (highest-signal — prefer these):\n${anchors
+          .map(
+            (a, i) =>
+              `${i + 1}. [${a.type}] "${a.anchor}" (${a.evidence ?? "no evidence"})`
+          )
+          .join("\n")}\n`
+      : "";
+
+  const oldProductsBlock =
+    oldProducts.length > 0
+      ? `\nHISTORICAL PRODUCTS${archiveYear ? ` (from ${archiveYear} Wayback snapshot)` : ""}: ${oldProducts.slice(0, 8).join(", ")}\n`
+      : "";
+
+  const discontinuedBlock = discontinued
+    ? `\nDISCONTINUED PRODUCT (appeared on an old snapshot but absent today): ${discontinued}\n`
+    : "";
+
+  const productsBlock =
+    products.length > 0
+      ? `\nCURRENT PRODUCTS: ${products.slice(0, 8).join(", ")}\n`
+      : "";
+
+  const foundingYearBlock = foundingYear
+    ? `\nFOUNDING YEAR (use only as last resort, and only when attached to a specific clause): ${foundingYear}\n`
+    : "";
+
+  const adjacencyBlock = matchedGroupContent
+    ? `\nVALSTONE PORTFOLIO ANGLE (use this for ONE concrete second sentence — a portfolio adjacency or the vertical thesis we're building toward):\n${matchedGroupContent.slice(0, 3500)}\n`
     : "";
 
   const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
-    max_tokens: 300,
+    max_tokens: 400,
     messages: [
       {
         role: "user",
-        content: `Write a personalized 1–2 sentence email OPENER (a "hook") for a cold outreach to the company at ${url}. The hook is the very first thing the recipient reads, before any templated value prop. Its job is to prove we did real homework on this specific company so the email feels written for them, not blasted from a template.
+        content: `Write a personalized 1-2 sentence cold-email OPENER (a "hook") for the company "${companyName}" (${url}). The hook is the very first thing the recipient reads. Its job is to prove we did real homework on this specific company so the email feels written for them, not blasted from a template.
 
-RULES:
-${openerRule}
+GOLDEN EXAMPLES (target style — specific, falsifiable, written-not-templated):
+- "I have studied MaxMine going back to the days operating as Resolution Systems."
+- "I have followed Herbst going back to the release of Herbst Attendance."
+- "I have studied Pacific GeoTech going back to the release of ArcMiner."
+- "I have studied Okappy going back to the days when the Okappy mascot would appear on the Team page of the website."
+
+OPENER FORMULA:
+  "I have [studied|followed] ${companyName} going back to {ANCHOR}."
+- "studied" for observational angles (product releases, former names, trivia).
+- "followed" for relational / longitudinal angles.
+- {ANCHOR} must point to a SPECIFIC, VERIFIABLE artifact, not a generic descriptor.
+
+ANCHOR HIERARCHY (pick the most specific available — do NOT skip past a stronger tier when one is in the inputs):
+  1. Former company name (e.g. "the days operating as Resolution Systems")
+  2. Specific product release/launch with the product NAMED (e.g. "the release of ArcMiner")
+  3. Distinctive historical moment (rebrand, acquisition, milestone press)
+  4. Obscure trivia from old snapshots (e.g. "the Okappy mascot on the Team page")
+  5. EARLY NICHE they pioneered, named specifically (e.g. "the days you were the only option for Australian iron-ore haul-truck operators")
+  6. LAST RESORT: founding year + ONE specific clause about what they were doing at that moment. Never a bare year. Never a generic positioning statement.
+
+HARD BANS:
+- Generic descriptions of current products/positioning ("their focus on real-time worksite intelligence", "Smart Maintenance Management CMMS built for industrial asset-heavy environments"). If a reader could have written it after a 5-second glance at the homepage, it is banned.
+- Bare-year openers like "I've studied your business going back to 2002." with no specific clause after.
+- Hype words: "leading", "innovative", "cutting-edge", "world-class", flattery of any kind.
+- Em dashes anywhere in the output.
+- A greeting ("Hi", "Hello", or a name).
+- Wrapping quotes around the hook.
+
+LENGTH & SHAPE:
 - Maximum 2 sentences. Total length under 60 words.
-- The hook must reference ONE specific, verifiable company detail (product name, niche, customer segment, or distinctive positioning) — never a generic compliment.
 - If a Valstone portfolio angle is provided below, weave in ONE concrete adjacency or thesis reference as the second sentence. If none is provided, keep it to one sentence.
-- Tone: respectful, founder-to-founder, no sales jargon, no flattery.
-- Do NOT use em dashes (—) anywhere in the output.
-- Do NOT include a greeting (no "Hi", "Hello", or a name). Just the hook itself.
-- Return only the hook text. No commentary, no quotes around it.
+- Tone: respectful, founder-to-founder, no sales jargon.
 
-COMPANY CONTEXT:
-${currentText.slice(0, 3000)}
-${productsHint}${adjacencyHint}`,
+INPUTS:
+${anchorsBlock}${discontinuedBlock}${oldProductsBlock}${productsBlock}${foundingYearBlock}
+CURRENT WEBSITE COPY:
+${currentText.slice(0, 2500)}
+${adjacencyBlock}
+Return only the hook text. No commentary.`,
       },
     ],
   });
 
   let result = resp.content[0].text.trim();
-  // Strip surrounding quotes if Claude wrapped the output
   if (
     (result.startsWith('"') && result.endsWith('"')) ||
     (result.startsWith("'") && result.endsWith("'"))
   ) {
     result = result.slice(1, -1).trim();
   }
-  // Same em-dash safety net used in personalizeOutreach
   result = result.replace(/\s*—\s*/g, ", ");
   return result;
 }

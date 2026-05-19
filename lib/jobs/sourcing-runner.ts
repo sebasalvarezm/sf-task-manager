@@ -20,8 +20,10 @@ import {
   extractOutreachParagraph,
   personalizeOutreach,
   generateEmailHook,
+  researchCompanyAnchors,
   findGroupFileName,
   type WaybackStatus,
+  type CompanyAnchor,
 } from "@/lib/scout";
 
 export type SourcingResult = {
@@ -427,7 +429,29 @@ export async function runFullSourcing(input: {
   // field on the result shape so older jobs in Supabase still render.
   const competitors: { name: string; differentiator: string }[] = [];
 
-  // ───────── Stage 4: Email opening hook (Wayback-independent) ─────────
+  // ───────── Stage 4: Email opening hook ─────────
+  logs.push("Researching company anchors for hook...");
+  let companyName = "";
+  let anchors: CompanyAnchor[] = [];
+  try {
+    const r = await researchCompanyAnchors(
+      anthropic,
+      normalized,
+      currentText,
+      products,
+      oldProducts,
+      discontinued,
+      archiveYear,
+    );
+    companyName = r.companyName;
+    anchors = r.anchors;
+    logs.push(`Found ${anchors.length} candidate anchor(s).`);
+  } catch (err) {
+    logs.push(
+      `Anchor research failed: ${err instanceof Error ? err.message : "unknown error"}.`,
+    );
+  }
+
   logs.push("Generating email opening hook...");
   let emailHook: string | null = null;
   try {
@@ -440,10 +464,15 @@ export async function runFullSourcing(input: {
     }
     emailHook = await generateEmailHook(
       anthropic,
+      companyName,
       normalized,
       currentText,
       products,
       foundingYear,
+      oldProducts,
+      discontinued,
+      archiveYear,
+      anchors,
       matchedGroupContent,
     );
     logs.push("Email hook complete.");
