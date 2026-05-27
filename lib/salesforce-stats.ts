@@ -83,13 +83,10 @@ const stagesClause = OPPORTUNITY_STAGES.map((s) => `'${escapeSoql(s)}'`).join(",
 // CDM" Salesforce list view.
 const cdmGroupClause = "Account.Group__c = 'CDM'";
 
-// An opportunity belongs to the CDM BRO pipeline if EITHER it's owned by a CDM
-// team member OR its account is in the CDM group. (Group alone misses trio-
-// owned deals on non-CDM accounts; owner alone misses CDM-group deals owned by
-// people outside the trio — e.g. Buildxact. The OR keeps both.)
-const broMembershipClause = `(Owner.Name IN (${ownerNamesClause}) OR ${cdmGroupClause})`;
-
-// Bar label for CDM-group BROs owned by someone outside the trio.
+// Membership in the CDM BRO pipeline is decided SOLELY by Account.Group__c =
+// 'CDM' — regardless of owner. A trio member's deal on a non-CDM account does
+// NOT count. The owner only drives the by-originator breakdown below (trio
+// members get their own bar; everyone else rolls into "Other").
 export const OTHER_ORIGINATOR = "Other";
 
 async function runQuery<T>(
@@ -198,7 +195,7 @@ export async function fetchOpportunitiesByStage(
     `SELECT StageName stage, SUM(Amount) total ` +
     `FROM Opportunity ` +
     `WHERE StageName IN (${stagesClause}) ` +
-    `AND ${broMembershipClause} ` +
+    `AND ${cdmGroupClause} ` +
     `AND IsClosed = false ` +
     `GROUP BY StageName`;
 
@@ -223,7 +220,7 @@ export async function fetchOpenBROByOriginator(
     `SELECT Owner.Name ownerName, SUM(Amount) total ` +
     `FROM Opportunity ` +
     `WHERE StageName IN (${stagesClause}) ` +
-    `AND ${broMembershipClause} ` +
+    `AND ${cdmGroupClause} ` +
     `AND IsClosed = false ` +
     `GROUP BY Owner.Name`;
 
@@ -266,7 +263,7 @@ export async function fetchStuckOpportunities(
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName IN (${stagesClause}) ` +
-    `AND ${broMembershipClause} ` +
+    `AND ${cdmGroupClause} ` +
     `ORDER BY LastModifiedDate ASC ` +
     `LIMIT 200`;
 
@@ -422,13 +419,13 @@ export async function fetchDrillOppsByOriginator(
   credentials: SfCredentials,
   ownerName: string
 ): Promise<DrillAccountRow[]> {
-  // "Other" = CDM-group BROs owned by someone outside the trio. A named trio
-  // owner = all their open BROs (owner satisfies membership on its own, so no
-  // group filter — matching how their by-originator bar total is summed).
+  // Both branches are scoped to CDM-group accounts (membership = group). "Other"
+  // = CDM-group BROs owned outside the trio; a named owner = that person's
+  // CDM-group BROs only.
   const ownerClause =
     ownerName === OTHER_ORIGINATOR
       ? `Owner.Name NOT IN (${ownerNamesClause}) AND ${cdmGroupClause}`
-      : `Owner.Name = '${escapeSoql(ownerName)}'`;
+      : `Owner.Name = '${escapeSoql(ownerName)}' AND ${cdmGroupClause}`;
   const soql =
     `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, ` +
     `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
@@ -453,7 +450,7 @@ export async function fetchDrillOppsByStage(
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName = '${escapeSoql(stage)}' ` +
-    `AND ${broMembershipClause} ` +
+    `AND ${cdmGroupClause} ` +
     `ORDER BY Amount DESC NULLS LAST ` +
     `LIMIT 200`;
   const rows = await runQuery<RawOppRow>(credentials, soql);
