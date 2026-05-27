@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BarChart,
@@ -24,8 +24,11 @@ import { CDM_OWNER_NAMES } from "@/lib/salesforce-stats";
 import { Modal } from "@/app/components/ui/Modal";
 import { Table } from "@/app/components/ui/Table";
 import { Spinner } from "@/app/components/ui/Spinner";
-import { ExternalLink } from "lucide-react";
+import { Input } from "@/app/components/ui/Input";
+import { Button } from "@/app/components/ui/Button";
+import { ExternalLink, Loader2, ChevronDown } from "lucide-react";
 import { HeatmapData, EnrichedMultiOpen } from "@/lib/analytics-derivations";
+import type { DealDoc } from "@/lib/deal-docs";
 
 // ── Types mirroring API responses ────────────────────────────────────────────
 
@@ -946,6 +949,52 @@ function CdmTeamBadge() {
 // table for the clicked bar.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Deal Doc state (uploaded memo/teaser + AI metrics) ───────────────────────
+
+type DocState =
+  | { status: "loading" }
+  | { status: "uploading" }
+  | { status: "none" }
+  | { status: "found"; doc: DealDoc }
+  | { status: "error"; message: string };
+
+type EditableMetrics = {
+  hq: string;
+  revUsd: string;
+  arrUsd: string;
+  ebitda: string;
+  numCustomers: string;
+  growthRate: string;
+  churn: string;
+};
+
+const METRIC_FIELDS: { key: keyof EditableMetrics; label: string }[] = [
+  { key: "hq", label: "HQ" },
+  { key: "revUsd", label: "Rev (USD)" },
+  { key: "arrUsd", label: "ARR (USD)" },
+  { key: "ebitda", label: "EBITDA" },
+  { key: "numCustomers", label: "# Customers" },
+  { key: "growthRate", label: "Growth rate" },
+  { key: "churn", label: "Churn" },
+];
+
+const DOC_ACCEPT =
+  ".pdf,.docx,.pptx,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+const EXT_TO_MIME: Record<string, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+// Prefer the file extension for the MIME (more reliable across browsers than
+// File.type, which is sometimes empty), falling back to the browser's value.
+function resolveMime(file: File): string {
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return EXT_TO_MIME[ext] ?? file.type ?? "";
+}
+
 function DrillModal({
   target,
   rangeStart,
@@ -1116,6 +1165,306 @@ function DrillModal({
     );
   }
 
+  // ── Deal Docs (uploaded memo/teaser + AI metrics) ────────────────────────
+  // Mirrors the memo machinery above, but keyed by accountId and fetched in a
+  // single batched request. Lets the user upload/open/replace a stored PDF or
+  // Office doc and view/edit the 7 auto-extracted metrics inline.
+  const [docs, setDocs] = useState<Record<string, DocState>>({});
+  const [expandedAcct, setExpandedAcct] = useState<string | null>(null);
+  const [draft, setDraft] = useState<EditableMetrics | null>(null);
+  const [savingMetrics, setSavingMetrics] = useState(false);
+
+  useEffect(() => {
+    if (!rows || !isOpps) return;
+    const ids = Array.from(
+      new Set(rows.map((r) => r.accountId).filter((x): x is string => !!x)),
+    );
+    if (ids.length === 0) return;
+
+    let cancelled = false;
+    setDocs((prev) => {
+      const next = { ...prev };
+      for (const id of ids) if (!next[id]) next[id] = { status: "loading" };
+      return next;
+    });
+
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/deal-docs/list?accountIds=${encodeURIComponent(ids.join(","))}`,
+          { cache: "no-store" },
+        );
+        const body = res.ok ? await res.json() : { docs: {} };
+        const found: Record<string, DealDoc> = body.docs ?? {};
+        if (cancelled) return;
+        setDocs((prev) => {
+          const next = { ...prev };
+          for (const id of ids) {
+            // Don't clobber a row that's mid-upload.
+            if (next[id]?.status === "uploading") continue;
+            next[id] = found[id]
+              ? { status: "found", doc: found[id] }
+              : { status: "none" };
+          }
+          return next;
+        });
+      } catch {
+        if (cancelled) return;
+        setDocs((prev) => {
+          const next = { ...prev };
+          for (const id of ids) {
+            if (next[id]?.status === "loading") next[id] = { status: "none" };
+          }
+          return next;
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rows, isOpps]);
+
+  async function uploadDoc(accountId: string, accountName: string, file: File) {
+    const mimeType = resolveMime(file);
+    setDocs((p) => ({ ...p, [accountId]: { status: "uploading" } }));
+    try {
+      const signRes = await fetch("/api/deal-docs/sign-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, mimeType }),
+      });
+      const signBody = await signRes.json();
+      if (!signRes.ok) {
+        throw new Error(signBody.error ?? "Could not start upload");
+      }
+
+      // PUT the file straight to Supabase Storage (multipart form, mirroring
+      // the Supabase JS uploadToSignedUrl format) — never through our route,
+      // so it bypasses Vercel's ~4.5MB request body limit.
+      const form = new FormData();
+      form.append("cacheControl", "3600");
+      const typed =
+        file.type === mimeType ? file : new Blob([file], { type: mimeType });
+      form.append("", typed, file.name);
+      const putRes = await fetch(signBody.signedUrl, {
+        method: "PUT",
+        headers: { "x-upsert": "true" },
+        body: form,
+      });
+      if (!putRes.ok) throw new Error("Upload to storage failed");
+
+      const saveRes = await fetch("/api/deal-docs/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountId,
+          accountName,
+          path: signBody.path,
+          filename: file.name,
+          mimeType,
+          fileSize: file.size,
+        }),
+      });
+      const saveBody = await saveRes.json();
+      if (!saveRes.ok) throw new Error(saveBody.error ?? "Could not save");
+
+      setDocs((p) => ({
+        ...p,
+        [accountId]: { status: "found", doc: saveBody.doc },
+      }));
+    } catch (err) {
+      setDocs((p) => ({
+        ...p,
+        [accountId]: {
+          status: "error",
+          message: err instanceof Error ? err.message : "Upload failed",
+        },
+      }));
+    }
+  }
+
+  function openMetrics(accountId: string) {
+    if (expandedAcct === accountId) {
+      setExpandedAcct(null);
+      setDraft(null);
+      return;
+    }
+    const state = docs[accountId];
+    const doc = state?.status === "found" ? state.doc : null;
+    setDraft({
+      hq: doc?.hq ?? "",
+      revUsd: doc?.revUsd ?? "",
+      arrUsd: doc?.arrUsd ?? "",
+      ebitda: doc?.ebitda ?? "",
+      numCustomers: doc?.numCustomers ?? "",
+      growthRate: doc?.growthRate ?? "",
+      churn: doc?.churn ?? "",
+    });
+    setExpandedAcct(accountId);
+  }
+
+  async function saveMetrics(accountId: string) {
+    if (!draft) return;
+    setSavingMetrics(true);
+    try {
+      const res = await fetch("/api/deal-docs/metrics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, metrics: draft }),
+      });
+      const body = await res.json();
+      if (res.ok && body.doc) {
+        setDocs((p) => ({
+          ...p,
+          [accountId]: { status: "found", doc: body.doc },
+        }));
+        setExpandedAcct(null);
+        setDraft(null);
+      }
+    } finally {
+      setSavingMetrics(false);
+    }
+  }
+
+  function fileInputLabel(
+    accountId: string,
+    accountName: string,
+    label: string,
+  ) {
+    return (
+      <label className="cursor-pointer text-info hover:underline">
+        {label}
+        <input
+          type="file"
+          accept={DOC_ACCEPT}
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) uploadDoc(accountId, accountName, f);
+          }}
+        />
+      </label>
+    );
+  }
+
+  function renderFileCell(accountId: string | null, accountName: string) {
+    if (!accountId) return <span className="text-ink-muted">—</span>;
+    const state = docs[accountId];
+    if (!state || state.status === "loading") {
+      return <span className="text-ink-muted text-xs">…</span>;
+    }
+    if (state.status === "uploading") {
+      return (
+        <span className="inline-flex items-center gap-1 text-ink-muted text-xs">
+          <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+          Uploading…
+        </span>
+      );
+    }
+    if (state.status === "error") {
+      return (
+        <span className="inline-flex items-center gap-2 text-xs">
+          <span className="text-danger">{state.message}</span>
+          {fileInputLabel(accountId, accountName, "Retry")}
+        </span>
+      );
+    }
+    if (state.status === "none") {
+      return fileInputLabel(accountId, accountName, "Upload");
+    }
+    // found
+    return (
+      <div className="inline-flex items-center gap-3 whitespace-nowrap">
+        <a
+          href={`/api/deal-docs/open?accountId=${encodeURIComponent(accountId)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-info hover:underline"
+        >
+          Open
+          <ExternalLink className="h-3 w-3" strokeWidth={2} />
+        </a>
+        <button
+          type="button"
+          onClick={() => openMetrics(accountId)}
+          className="inline-flex items-center gap-0.5 text-xs text-ink-muted hover:text-ink"
+        >
+          metrics
+          <ChevronDown
+            className={`h-3 w-3 transition-transform ${
+              expandedAcct === accountId ? "rotate-180" : ""
+            }`}
+            strokeWidth={2}
+          />
+        </button>
+        {fileInputLabel(accountId, accountName, "Replace")}
+      </div>
+    );
+  }
+
+  function renderMetricsEditor(accountId: string) {
+    if (!draft) return null;
+    const state = docs[accountId];
+    const status =
+      state?.status === "found" ? state.doc.extractionStatus : undefined;
+    return (
+      <div className="py-1">
+        <div className="mb-2 flex items-center gap-3">
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted">
+            Key metrics
+          </h4>
+          {status === "failed" && (
+            <span className="text-xs text-ink-muted">
+              Couldn’t auto-read this file — enter manually
+            </span>
+          )}
+          {status === "skipped" && (
+            <span className="text-xs text-ink-muted">
+              Auto-summary runs on PDFs — enter manually
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {METRIC_FIELDS.map((f) => (
+            <label key={f.key} className="block">
+              <span className="mb-1 block text-xs text-ink-muted">
+                {f.label}
+              </span>
+              <Input
+                value={draft[f.key]}
+                onChange={(e) =>
+                  setDraft((d) => (d ? { ...d, [f.key]: e.target.value } : d))
+                }
+                placeholder="—"
+              />
+            </label>
+          ))}
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={savingMetrics}
+            onClick={() => saveMetrics(accountId)}
+          >
+            Save
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setExpandedAcct(null);
+              setDraft(null);
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   // Custom stage ordering for opportunity drills (different from the
   // OPPORTUNITY_STAGES enum order — user preference for the stats UI).
   const STAGE_DISPLAY_ORDER = [
@@ -1154,6 +1503,9 @@ function DrillModal({
   })();
 
   function renderTable(visibleRows: DrillRow[], includeStageColumn: boolean) {
+    // Base 4 cols (Company, URL, Employees, Country) + optional Stage; opps add
+    // Amount/Memo/File, non-opps add Last Activity. Used for the expander span.
+    const colCount = 4 + (includeStageColumn ? 1 : 0) + (isOpps ? 3 : 1);
     return (
       <Table>
         <Table.Head>
@@ -1167,67 +1519,86 @@ function DrillModal({
               <Table.HeadCell className="text-right">Amount</Table.HeadCell>
             )}
             {isOpps && <Table.HeadCell>Memo</Table.HeadCell>}
+            {isOpps && <Table.HeadCell>File</Table.HeadCell>}
             {!isOpps && <Table.HeadCell>Last Activity</Table.HeadCell>}
           </Table.HeadRow>
         </Table.Head>
         <Table.Body>
-          {visibleRows.map((r, i) => (
-            <Table.Row key={(r.opportunityId ?? r.accountId ?? "") + i}>
-              <Table.Cell className="font-medium text-ink">
-                {r.accountName}
-                {r.opportunityName && (
-                  <div className="text-xs text-ink-muted mt-0.5">
-                    {r.opportunityName}
-                  </div>
+          {visibleRows.map((r, i) => {
+            const expanded =
+              isOpps && !!r.accountId && expandedAcct === r.accountId;
+            return (
+              <Fragment key={(r.opportunityId ?? r.accountId ?? "") + i}>
+                <Table.Row>
+                  <Table.Cell className="font-medium text-ink">
+                    {r.accountName}
+                    {r.opportunityName && (
+                      <div className="text-xs text-ink-muted mt-0.5">
+                        {r.opportunityName}
+                      </div>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell>
+                    {r.website ? (
+                      <a
+                        href={
+                          r.website.startsWith("http")
+                            ? r.website
+                            : `https://${r.website}`
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-info hover:underline"
+                      >
+                        {r.website.replace(/^https?:\/\/(www\.)?/, "")}
+                        <ExternalLink className="h-3 w-3" strokeWidth={2} />
+                      </a>
+                    ) : (
+                      <span className="text-ink-muted">—</span>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell className="text-right tabular-nums">
+                    {r.numberOfEmployees != null
+                      ? fmtNumber(r.numberOfEmployees)
+                      : "—"}
+                  </Table.Cell>
+                  <Table.Cell>
+                    {r.country ?? <span className="text-ink-muted">—</span>}
+                  </Table.Cell>
+                  {includeStageColumn && (
+                    <Table.Cell>{r.stage ?? "—"}</Table.Cell>
+                  )}
+                  {isOpps && (
+                    <Table.Cell className="text-right tabular-nums">
+                      {r.amount != null ? fmtMoney(r.amount) : "—"}
+                    </Table.Cell>
+                  )}
+                  {isOpps && (
+                    <Table.Cell className="whitespace-nowrap">
+                      {renderMemoCell(r.accountName)}
+                    </Table.Cell>
+                  )}
+                  {isOpps && (
+                    <Table.Cell className="whitespace-nowrap">
+                      {renderFileCell(r.accountId, r.accountName)}
+                    </Table.Cell>
+                  )}
+                  {!isOpps && (
+                    <Table.Cell className="text-ink-muted whitespace-nowrap">
+                      {r.lastActivityDate ?? "—"}
+                    </Table.Cell>
+                  )}
+                </Table.Row>
+                {expanded && r.accountId && (
+                  <Table.Row className="bg-surface-2">
+                    <Table.Cell colSpan={colCount}>
+                      {renderMetricsEditor(r.accountId)}
+                    </Table.Cell>
+                  </Table.Row>
                 )}
-              </Table.Cell>
-              <Table.Cell>
-                {r.website ? (
-                  <a
-                    href={
-                      r.website.startsWith("http")
-                        ? r.website
-                        : `https://${r.website}`
-                    }
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-info hover:underline"
-                  >
-                    {r.website.replace(/^https?:\/\/(www\.)?/, "")}
-                    <ExternalLink className="h-3 w-3" strokeWidth={2} />
-                  </a>
-                ) : (
-                  <span className="text-ink-muted">—</span>
-                )}
-              </Table.Cell>
-              <Table.Cell className="text-right tabular-nums">
-                {r.numberOfEmployees != null
-                  ? fmtNumber(r.numberOfEmployees)
-                  : "—"}
-              </Table.Cell>
-              <Table.Cell>
-                {r.country ?? <span className="text-ink-muted">—</span>}
-              </Table.Cell>
-              {includeStageColumn && (
-                <Table.Cell>{r.stage ?? "—"}</Table.Cell>
-              )}
-              {isOpps && (
-                <Table.Cell className="text-right tabular-nums">
-                  {r.amount != null ? fmtMoney(r.amount) : "—"}
-                </Table.Cell>
-              )}
-              {isOpps && (
-                <Table.Cell className="whitespace-nowrap">
-                  {renderMemoCell(r.accountName)}
-                </Table.Cell>
-              )}
-              {!isOpps && (
-                <Table.Cell className="text-ink-muted whitespace-nowrap">
-                  {r.lastActivityDate ?? "—"}
-                </Table.Cell>
-              )}
-            </Table.Row>
-          ))}
+              </Fragment>
+            );
+          })}
         </Table.Body>
       </Table>
     );

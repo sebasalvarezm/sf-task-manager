@@ -186,3 +186,49 @@ DROP TRIGGER IF EXISTS trg_jobs_updated_at ON jobs;
 CREATE TRIGGER trg_jobs_updated_at
   BEFORE UPDATE ON jobs
   FOR EACH ROW EXECUTE FUNCTION jobs_set_updated_at();
+
+-- ============================================================
+-- Table 8: Deal Docs (uploaded memo/teaser per company + AI metrics)
+-- ============================================================
+-- Stores ONE current document per Salesforce account (replace-only — a new
+-- upload overwrites the old). The Stats pipeline drill-down shows a "File"
+-- column to upload, open, replace, and view 7 AI-extracted metrics.
+--
+-- IMPORTANT — one-time Storage setup (do this once, separate from this SQL):
+--   Supabase Dashboard → Storage → New bucket
+--     • Name:   deal-docs
+--     • Public: OFF  (keep it private — files are served via short-lived
+--                     signed URLs minted server-side)
+--   (Or run:  insert into storage.buckets (id, name, public)
+--             values ('deal-docs','deal-docs', false) on conflict do nothing;)
+-- No Storage RLS policies are needed: all access goes through the
+-- service-role client (getSupabaseAdmin), which bypasses RLS.
+
+CREATE TABLE IF NOT EXISTS deal_docs (
+  sf_account_id     TEXT PRIMARY KEY,
+  account_name      TEXT,
+  storage_path      TEXT NOT NULL,          -- e.g. "001xx.../current.pdf"
+  filename          TEXT NOT NULL,          -- original upload name (display + download)
+  mime_type         TEXT NOT NULL,
+  file_size         BIGINT,
+
+  -- 7 AI/manual metrics — all free-text (values may be ranges, "~$5M", "N/A")
+  hq                TEXT,
+  rev_usd           TEXT,
+  arr_usd           TEXT,
+  ebitda            TEXT,
+  num_customers     TEXT,
+  growth_rate       TEXT,
+  churn             TEXT,
+
+  extraction_status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (extraction_status IN ('pending', 'done', 'failed', 'skipped')),
+  uploaded_at       TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Bump updated_at on every change (reuses the jobs trigger function)
+DROP TRIGGER IF EXISTS trg_deal_docs_updated_at ON deal_docs;
+CREATE TRIGGER trg_deal_docs_updated_at
+  BEFORE UPDATE ON deal_docs
+  FOR EACH ROW EXECUTE FUNCTION jobs_set_updated_at();

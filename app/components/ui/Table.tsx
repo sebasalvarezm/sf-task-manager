@@ -1,4 +1,4 @@
-import type { ReactNode, HTMLAttributes } from "react";
+import type { ReactNode, HTMLAttributes, TdHTMLAttributes } from "react";
 
 export function Table({
   className = "",
@@ -68,7 +68,7 @@ Table.Cell = function TableCell({
   className = "",
   children,
   ...rest
-}: HTMLAttributes<HTMLTableCellElement>) {
+}: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
     <td className={`px-4 py-3 align-top ${className}`} {...rest}>
       {children}
