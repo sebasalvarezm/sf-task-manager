@@ -20,7 +20,7 @@ import ConnectSalesforce from "../../components/ConnectSalesforce";
 import ActionCard, { ActionRow } from "../../components/ActionCard";
 import Heatmap from "../../components/Heatmap";
 import { RangePreset, computeRange } from "@/lib/date-ranges";
-import { CDM_OWNER_NAMES } from "@/lib/salesforce-stats";
+import { CDM_OWNER_NAMES, OTHER_ORIGINATOR } from "@/lib/salesforce-stats";
 import { Modal } from "@/app/components/ui/Modal";
 import { Table } from "@/app/components/ui/Table";
 import { Spinner } from "@/app/components/ui/Spinner";
@@ -395,6 +395,14 @@ export default function StatsPage() {
   const originatorDrills = useMemo<DrillTarget[]>(() => {
     const out: DrillTarget[] = [];
     for (const o of originatorData) {
+      if (o.name === OTHER_ORIGINATOR) {
+        out.push({
+          dimension: "bro_by_originator",
+          owner: OTHER_ORIGINATOR,
+          title: "Open BROs — other originators",
+        });
+        continue;
+      }
       const full = fullNameFromFirst(o.name);
       if (!full) continue;
       out.push({
@@ -817,13 +825,22 @@ export default function StatsPage() {
                       fill={BLUE}
                       radius={[4, 4, 0, 0]}
                       cursor="pointer"
-                      onClick={(d) =>
+                      onClick={(d) => {
+                        const name = (d as { name?: string })?.name;
+                        if (name === OTHER_ORIGINATOR) {
+                          setDrill({
+                            dimension: "bro_by_originator",
+                            owner: OTHER_ORIGINATOR,
+                            title: "Open BROs — other originators",
+                          });
+                          return;
+                        }
                         openOwnerDrill(
                           d as { name?: string },
                           { dimension: "bro_by_originator" },
                           (n) => `Open BROs originated by ${n}`,
-                        )
-                      }
+                        );
+                      }}
                     >
                       <LabelList
                         dataKey="Amount"

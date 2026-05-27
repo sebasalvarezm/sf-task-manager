@@ -83,6 +83,15 @@ const stagesClause = OPPORTUNITY_STAGES.map((s) => `'${escapeSoql(s)}'`).join(",
 // CDM" Salesforce list view.
 const cdmGroupClause = "Account.Group__c = 'CDM'";
 
+// An opportunity belongs to the CDM BRO pipeline if EITHER it's owned by a CDM
+// team member OR its account is in the CDM group. (Group alone misses trio-
+// owned deals on non-CDM accounts; owner alone misses CDM-group deals owned by
+// people outside the trio — e.g. Buildxact. The OR keeps both.)
+const broMembershipClause = `(Owner.Name IN (${ownerNamesClause}) OR ${cdmGroupClause})`;
+
+// Bar label for CDM-group BROs owned by someone outside the trio.
+export const OTHER_ORIGINATOR = "Other";
+
 async function runQuery<T>(
   credentials: SfCredentials,
   soql: string
@@ -189,8 +198,7 @@ export async function fetchOpportunitiesByStage(
     `SELECT StageName stage, SUM(Amount) total ` +
     `FROM Opportunity ` +
     `WHERE StageName IN (${stagesClause}) ` +
-    `AND Owner.Name IN (${ownerNamesClause}) ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${broMembershipClause} ` +
     `AND IsClosed = false ` +
     `GROUP BY StageName`;
 
@@ -215,21 +223,35 @@ export async function fetchOpenBROByOriginator(
     `SELECT Owner.Name ownerName, SUM(Amount) total ` +
     `FROM Opportunity ` +
     `WHERE StageName IN (${stagesClause}) ` +
-    `AND Owner.Name IN (${ownerNamesClause}) ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${broMembershipClause} ` +
     `AND IsClosed = false ` +
     `GROUP BY Owner.Name`;
 
   type Row = { ownerName: string; total: number | null };
   const rows = await runQuery<Row>(credentials, soql);
 
+  // Trio owners get their own bar; everyone else (CDM-group deals owned outside
+  // the trio) rolls into a single "Other" bar so the totals still reconcile.
+  const trio = new Set<string>(CDM_OWNER_NAMES);
   const byOwner = new Map<string, number>();
-  for (const r of rows) byOwner.set(r.ownerName, Number(r.total) || 0);
+  let otherTotal = 0;
+  for (const r of rows) {
+    const amt = Number(r.total) || 0;
+    if (trio.has(r.ownerName)) byOwner.set(r.ownerName, amt);
+    else otherTotal += amt;
+  }
 
-  return CDM_OWNER_NAMES.map((n) => ({
+  const result: OriginatorTotalRow[] = CDM_OWNER_NAMES.map((n) => ({
     owner: n,
     total: (byOwner.get(n) ?? 0) * BRO_AMOUNT_MULTIPLIER,
   }));
+  if (otherTotal > 0) {
+    result.push({
+      owner: OTHER_ORIGINATOR,
+      total: otherTotal * BRO_AMOUNT_MULTIPLIER,
+    });
+  }
+  return result;
 }
 
 // ── Stuck opportunities (30+ days in stage) ──────────────────────────────────
@@ -244,8 +266,7 @@ export async function fetchStuckOpportunities(
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName IN (${stagesClause}) ` +
-    `AND Owner.Name IN (${ownerNamesClause}) ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${broMembershipClause} ` +
     `ORDER BY LastModifiedDate ASC ` +
     `LIMIT 200`;
 
@@ -401,14 +422,20 @@ export async function fetchDrillOppsByOriginator(
   credentials: SfCredentials,
   ownerName: string
 ): Promise<DrillAccountRow[]> {
+  // "Other" = CDM-group BROs owned by someone outside the trio. A named trio
+  // owner = all their open BROs (owner satisfies membership on its own, so no
+  // group filter — matching how their by-originator bar total is summed).
+  const ownerClause =
+    ownerName === OTHER_ORIGINATOR
+      ? `Owner.Name NOT IN (${ownerNamesClause}) AND ${cdmGroupClause}`
+      : `Owner.Name = '${escapeSoql(ownerName)}'`;
   const soql =
     `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, ` +
     `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName IN (${stagesClause}) ` +
-    `AND Owner.Name = '${escapeSoql(ownerName)}' ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${ownerClause} ` +
     `ORDER BY Amount DESC NULLS LAST ` +
     `LIMIT 200`;
   const rows = await runQuery<RawOppRow>(credentials, soql);
@@ -426,8 +453,7 @@ export async function fetchDrillOppsByStage(
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName = '${escapeSoql(stage)}' ` +
-    `AND Owner.Name IN (${ownerNamesClause}) ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${broMembershipClause} ` +
     `ORDER BY Amount DESC NULLS LAST ` +
     `LIMIT 200`;
   const rows = await runQuery<RawOppRow>(credentials, soql);
