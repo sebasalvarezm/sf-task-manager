@@ -26,7 +26,13 @@ import { Table } from "@/app/components/ui/Table";
 import { Spinner } from "@/app/components/ui/Spinner";
 import { Input } from "@/app/components/ui/Input";
 import { Button } from "@/app/components/ui/Button";
-import { ExternalLink, Loader2, ChevronDown } from "lucide-react";
+import {
+  ExternalLink,
+  Loader2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { HeatmapData, EnrichedMultiOpen } from "@/lib/analytics-derivations";
 import type { DealDoc } from "@/lib/deal-docs";
 
@@ -373,6 +379,32 @@ export default function StatsPage() {
     if (!data) return [];
     return data.byStage.map((s) => ({ name: s.stage, Amount: s.total }));
   }, [data]);
+
+  // Ordered drill targets matching the chart bars — power the modal's prev/next
+  // arrows so the user can step between stages/originators without re-clicking.
+  const stageDrills = useMemo<DrillTarget[]>(
+    () =>
+      stageData.map((s) => ({
+        dimension: "bro_by_stage",
+        stage: s.name,
+        title: `Open BROs in ${s.name}`,
+      })),
+    [stageData],
+  );
+
+  const originatorDrills = useMemo<DrillTarget[]>(() => {
+    const out: DrillTarget[] = [];
+    for (const o of originatorData) {
+      const full = fullNameFromFirst(o.name);
+      if (!full) continue;
+      out.push({
+        dimension: "bro_by_originator",
+        owner: full,
+        title: `Open BROs originated by ${o.name}`,
+      });
+    }
+    return out;
+  }, [originatorData]);
 
   const showTrend = range.buckets.length > 1;
 
@@ -844,6 +876,14 @@ export default function StatsPage() {
         {drill && (
           <DrillModal
             target={drill}
+            siblings={
+              drill.dimension === "bro_by_stage"
+                ? stageDrills
+                : drill.dimension === "bro_by_originator"
+                  ? originatorDrills
+                  : []
+            }
+            onNavigate={setDrill}
             rangeStart={range.start}
             rangeEnd={range.end}
             onClose={() => setDrill(null)}
@@ -997,11 +1037,15 @@ function resolveMime(file: File): string {
 
 function DrillModal({
   target,
+  siblings = [],
+  onNavigate,
   rangeStart,
   rangeEnd,
   onClose,
 }: {
   target: DrillTarget;
+  siblings?: DrillTarget[];
+  onNavigate?: (t: DrillTarget) => void;
   rangeStart: string;
   rangeEnd: string;
   onClose: () => void;
@@ -1173,6 +1217,13 @@ function DrillModal({
   const [expandedAcct, setExpandedAcct] = useState<string | null>(null);
   const [draft, setDraft] = useState<EditableMetrics | null>(null);
   const [savingMetrics, setSavingMetrics] = useState(false);
+
+  // Stepping to another stage/originator swaps `target`; close any open metrics
+  // panel so it doesn't linger over a row that isn't in the new table.
+  useEffect(() => {
+    setExpandedAcct(null);
+    setDraft(null);
+  }, [target]);
 
   useEffect(() => {
     if (!rows || !isOpps) return;
@@ -1604,11 +1655,52 @@ function DrillModal({
     );
   }
 
+  // Title with optional prev/next arrows to step through sibling drills (the
+  // BRO-by-stage / BRO-by-originator bars, in chart order). No wrap-around.
+  function renderTitleWithNav() {
+    const idx = siblings.findIndex(
+      (sib) =>
+        sib.dimension === target.dimension &&
+        (sib.stage ?? null) === (target.stage ?? null) &&
+        (sib.owner ?? null) === (target.owner ?? null),
+    );
+    if (idx < 0 || siblings.length <= 1) return target.title;
+    const go = (delta: number) => {
+      const next = siblings[idx + delta];
+      if (next) onNavigate?.(next);
+    };
+    const arrowCls =
+      "shrink-0 rounded-md p-0.5 text-ink-muted hover:text-ink hover:bg-surface-3 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors";
+    return (
+      <span className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => go(-1)}
+          disabled={idx <= 0}
+          aria-label="Previous"
+          className={arrowCls}
+        >
+          <ChevronLeft className="h-5 w-5" strokeWidth={2} />
+        </button>
+        <span>{target.title}</span>
+        <button
+          type="button"
+          onClick={() => go(1)}
+          disabled={idx >= siblings.length - 1}
+          aria-label="Next"
+          className={arrowCls}
+        >
+          <ChevronRight className="h-5 w-5" strokeWidth={2} />
+        </button>
+      </span>
+    );
+  }
+
   return (
     <Modal
       open
       onClose={onClose}
-      title={target.title}
+      title={renderTitleWithNav()}
       description={
         rows == null
           ? undefined
