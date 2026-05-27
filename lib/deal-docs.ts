@@ -288,9 +288,10 @@ const EXTRACTION_PROMPT = `You are reading a company teaser / investment memo. E
   "churn": "Customer or revenue churn rate (%)"
 }
 Rules for rev, arr, ebitda:
-- "amount" is the primary figure as a plain number in its ORIGINAL currency units (e.g. £2,193k → 2193000, $4.2M → 4200000). No symbols, commas, or text.
+- PERIOD PREFERENCE: if the document gives a FY2026 forecast/projected/budgeted figure (e.g. "FY26E", "2026 forecast", "2026 budget", "FY2026 projected"), use THAT figure. Only fall back to the most recent actual/historical figure (e.g. FY2025 full-year) when no 2026 forecast is provided.
+- "amount" is that chosen figure as a plain number in its ORIGINAL currency units (e.g. £2,193k → 2193000, $4.2M → 4200000). No symbols, commas, or text.
 - "currency" is the 3-letter ISO code as stated in the document (e.g. "GBP", "AUD", "EUR", "USD"). If the document never states a currency, use "USD".
-- "note" is a very short qualifier if relevant (e.g. "YE25 statutory", "adjusted", "targeted"); otherwise "".
+- "note" MUST state the period/basis of the figure you chose (e.g. "FY26 forecast", "FY25 actual", "FY26E adjusted"); use "" only if the document states no period at all.
 - If a figure is genuinely not in the document, set "amount" to null and "note" to "N/A".
 Rules for hq, num_customers, growth_rate, churn:
 - Plain text. Keep ranges/approximations verbatim (e.g. "~5%", "20% targeted"). If absent, use "N/A".
