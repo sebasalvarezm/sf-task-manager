@@ -36,6 +36,51 @@ function saveOnePagerToCache(key: string, onePager: OnePagerContent) {
   }
 }
 
+// ── Meetings list localStorage cache (per-week) ──────────────────────────────
+// Persists the loaded meetings list keyed by the WeekSelector's start date so
+// revisiting /prep mid-week doesn't require a manual "Load" every time. The
+// user controls freshness via the "Reload" button; no auto-refresh, no TTL.
+const MEETINGS_CACHE_KEY = "call_prep_meetings_cache";
+type CachedMeetings = { meetings: MeetingMatch[]; loadedAt: string };
+
+function getMeetingsCache(): Record<string, CachedMeetings> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(MEETINGS_CACHE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMeetingsToCache(
+  weekKey: string,
+  meetings: MeetingMatch[],
+  loadedAt: string,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const cache = getMeetingsCache();
+    cache[weekKey] = { meetings, loadedAt };
+    localStorage.setItem(MEETINGS_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // localStorage full or unavailable — non-critical
+  }
+}
+
+// "Loaded 10:42 AM" if today; "Loaded Mon 10:42 AM" otherwise. No new deps.
+function formatLoadedAt(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const time = d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  if (d.toDateString() === now.toDateString()) return `Loaded ${time}`;
+  const day = d.toLocaleDateString(undefined, { weekday: "short" });
+  return `Loaded ${day} ${time}`;
+}
+
 function getCacheKey(meeting: MeetingMatch): string | null {
   if (meeting.match) return meeting.match.accountId;
   if (meeting.externalDomains.length > 0) return meeting.externalDomains[0];
@@ -110,6 +155,9 @@ function PrepPageContent() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [hasLoaded, setHasLoaded] = useState(false);
+  // ISO timestamp of when the currently-shown meetings list was last fetched
+  // from Outlook — feeds the "Loaded …" label next to the Reload button.
+  const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
 
   // Expanded row (to show one-pager preview)
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -166,6 +214,39 @@ function PrepPageContent() {
   }
 
   // ── Load meetings for selected week ────────────────────────────────────────
+  // ── Cache hydration ───────────────────────────────────────────────────────
+  // On mount and whenever the user picks a different week, restore that week's
+  // meetings from localStorage so they don't have to click "Load" again. If
+  // there's no cached entry for this week, fall through to the empty state.
+  useEffect(() => {
+    if (!selectedWeek) return;
+    const cached = getMeetingsCache()[selectedWeek.start];
+    if (cached) {
+      const oneCache = getOnePagerCache();
+      setMeetings(
+        cached.meetings.map((m) => {
+          const key = getCacheKey(m);
+          const onePager = key ? (oneCache[key] ?? null) : null;
+          return {
+            ...m,
+            onePager,
+            generating: false,
+            generateError: null,
+            downloading: false,
+            jobId: null,
+          };
+        }),
+      );
+      setHasLoaded(true);
+      setLastLoadedAt(cached.loadedAt);
+    } else {
+      setMeetings([]);
+      setHasLoaded(false);
+      setLastLoadedAt(null);
+    }
+    setExpandedId(null);
+  }, [selectedWeek]);
+
   async function handleLoad() {
     if (!selectedWeek) return;
 
@@ -192,6 +273,11 @@ function PrepPageContent() {
       const data = await res.json();
       const raw: MeetingMatch[] = data.meetings ?? [];
       const cache = getOnePagerCache();
+
+      // Persist for next visit — the same week now hydrates instantly.
+      const loadedAt = new Date().toISOString();
+      saveMeetingsToCache(selectedWeek.start, raw, loadedAt);
+      setLastLoadedAt(loadedAt);
 
       // Wrap each meeting with prep-specific state, restoring cached one-pagers
       setMeetings(
@@ -425,6 +511,15 @@ function PrepPageContent() {
     setMsConnected(false);
     setMeetings([]);
     setHasLoaded(false);
+    setLastLoadedAt(null);
+    // Wipe cached meetings so a fresh Outlook connection starts clean.
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.removeItem(MEETINGS_CACHE_KEY);
+      } catch {
+        /* non-critical */
+      }
+    }
   }
 
   // ── Manual Salesforce account search ──────────────────────────────────────
@@ -561,18 +656,26 @@ function PrepPageContent() {
                 <WeekSelector
                   selected={selectedWeek}
                   onChange={(week) => {
+                    // The cache-hydration effect (keyed on selectedWeek) handles
+                    // meetings / hasLoaded / lastLoadedAt for the new week.
                     setSelectedWeek(week);
-                    setMeetings([]);
-                    setHasLoaded(false);
-                    setExpandedId(null);
                   }}
                 />
+                {hasLoaded && lastLoadedAt && (
+                  <span className="text-xs text-gray-400">
+                    {formatLoadedAt(lastLoadedAt)}
+                  </span>
+                )}
                 <button
                   onClick={handleLoad}
                   disabled={loading}
                   className="bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg transition-colors text-sm"
                 >
-                  {loading ? "Loading..." : "Load Meetings"}
+                  {loading
+                    ? "Loading..."
+                    : hasLoaded
+                      ? "Reload meetings"
+                      : "Load Meetings"}
                 </button>
               </div>
             </div>
