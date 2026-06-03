@@ -394,24 +394,33 @@ function PrepPageContent() {
 
     const payload: Record<string, string> = {};
 
-    // Use Salesforce account data if matched (auto or manual)
-    const sfMatch = meeting.match ?? manualMatches.get(meeting.eventId);
+    // Manual link ALWAYS wins over the auto-detected match — otherwise the
+    // research/scrape would target the email's original domain instead of the
+    // company the user just chose (e.g. PE Norvestor's email manually relinked
+    // to Pinja must research Pinja, not Norvestor).
+    const manualMatch = manualMatches.get(meeting.eventId) ?? null;
+    const sfMatch = manualMatch ?? meeting.match;
     if (sfMatch) {
       payload.accountId = sfMatch.accountId;
       payload.accountName = sfMatch.accountName;
     }
 
-    // Use website or domain for scraping + research
-    const matchWithWebsite = meeting.allMatches.find((m) => m.domain);
-    if (matchWithWebsite) {
-      payload.domain = matchWithWebsite.domain;
-    } else if (meeting.externalDomains.length > 0) {
-      payload.domain = meeting.externalDomains[0];
-    }
-
-    // Fallback: Salesforce account URL when no other domain available
-    if (!payload.domain && !payload.website && sfMatch?.accountUrl) {
-      payload.website = sfMatch.accountUrl;
+    if (manualMatch) {
+      // Manual override: scrape the linked Salesforce account's website. Email-
+      // derived domains/matches come from the wrong company and must be ignored.
+      if (manualMatch.accountUrl) payload.website = manualMatch.accountUrl;
+    } else {
+      // Auto path: prefer a domain from the email's external matches.
+      const matchWithWebsite = meeting.allMatches.find((m) => m.domain);
+      if (matchWithWebsite) {
+        payload.domain = matchWithWebsite.domain;
+      } else if (meeting.externalDomains.length > 0) {
+        payload.domain = meeting.externalDomains[0];
+      }
+      // Fallback: Salesforce account URL when no other domain is available.
+      if (!payload.domain && !payload.website && sfMatch?.accountUrl) {
+        payload.website = sfMatch.accountUrl;
+      }
     }
 
     const labelName =
