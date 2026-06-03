@@ -151,7 +151,17 @@ export async function runPrepGenerate(
   }
 
   // Step 3: Build prompt
-  const prompt = `${siteUrl || companyIdentifier}
+  // The TARGET is the company the user selected (manual link or auto-match).
+  // We anchor the prompt on that name explicitly so the model does NOT pivot to
+  // a parent / acquirer / investor / sister company that may appear in the
+  // Salesforce description or the scraped page (the real bug that produced a
+  // "Valstone Corporation" one-pager for a meeting linked to WMC Technologies).
+  const targetCompany = input.accountName || siteUrl || "Unknown";
+  const prompt = `Target company: ${targetCompany}${
+    siteUrl ? `\nWebsite: ${siteUrl}` : ""
+  }
+
+You MUST write the one-pager about THIS exact target company. If the Salesforce data, the website, the scraped content, or any web search result references a different entity — a parent company, acquirer, investor, sister/portfolio company, or unrelated namesake — do NOT pivot to writing about them. They are NOT the subject. If you genuinely cannot find information about the target company, fill the fields with "Not available" rather than substituting another company.
 
 What does this company do, what type of companies would be customers, and give a use case example. Use everyday language that a non-industry expert can understand. Give me a one pager on the company and its history ahead of an M&A call.
 
@@ -166,11 +176,11 @@ ${sfContext}${scrapedContext}${
 
 Return ONLY valid JSON, no explanation, no markdown fences. Use this exact structure:
 {
-  "companyName": "The company's common/short name",
-  "whatTheyDo": "2-4 sentences in plain language explaining what the company does. A non-industry expert should be able to understand.",
-  "customers": "2-4 sentences describing what types of companies are their customers, followed by a concrete use case example. Start the use case with 'For example, ...'",
-  "companyHistory": "3-5 sentences covering when the company was founded, key milestones, leadership, growth, and any M&A activity (acquisitions made or investment received).",
-  "recentNews": ["News item 1 — brief description with approximate date", "News item 2 — brief description with approximate date", "News item 3 — brief description with approximate date"]
+  "companyName": "The common/short name of the target company (must be the target, not a parent/acquirer)",
+  "whatTheyDo": "2-4 sentences in plain language explaining what the TARGET company does. A non-industry expert should be able to understand.",
+  "customers": "2-4 sentences describing what types of companies are the TARGET's customers, followed by a concrete use case example. Start the use case with 'For example, ...'",
+  "companyHistory": "3-5 sentences covering when the TARGET company was founded, key milestones, leadership, growth, and any M&A activity (acquisitions made or investment received).",
+  "recentNews": ["News item 1 about the target — brief description with approximate date", "News item 2 about the target — brief description with approximate date", "News item 3 about the target — brief description with approximate date"]
 }`;
 
   // Step 4: Claude with web search enabled
