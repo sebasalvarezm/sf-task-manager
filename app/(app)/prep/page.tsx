@@ -181,6 +181,9 @@ function PrepPageContent() {
     >
   >(new Map());
   const [searchLoading, setSearchLoading] = useState<Set<string>>(new Set());
+  // Rows whose (already-matched) account the user is currently re-picking. An
+  // eventId in this set forces the search UI to show even though a match exists.
+  const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
 
   // ── On mount: check connections ────────────────────────────────────────────
   useEffect(() => {
@@ -571,6 +574,38 @@ function PrepPageContent() {
       next.delete(eventId);
       return next;
     });
+    // Picking a result also exits "change" mode for an already-matched row.
+    setEditingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(eventId);
+      return next;
+    });
+  }
+
+  // Enter "change account" mode for an already-matched row. Pre-fills the search
+  // box with the current name so the user can tweak it.
+  function handleStartEdit(eventId: string, currentName: string) {
+    setEditingIds((prev) => new Set(prev).add(eventId));
+    setSearchInputs((prev) => new Map(prev).set(eventId, currentName));
+  }
+
+  // Exit "change account" mode, keeping whatever match was already in place.
+  function handleCancelEdit(eventId: string) {
+    setEditingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(eventId);
+      return next;
+    });
+    setSearchResults((prev) => {
+      const next = new Map(prev);
+      next.delete(eventId);
+      return next;
+    });
+    setSearchInputs((prev) => {
+      const next = new Map(prev);
+      next.delete(eventId);
+      return next;
+    });
   }
 
   const msReady = msConnected === true;
@@ -762,6 +797,7 @@ function PrepPageContent() {
                             searchInput={searchInputs.get(meeting.eventId) ?? ""}
                             searchResult={searchResults.get(meeting.eventId) ?? null}
                             isSearchLoading={searchLoading.has(meeting.eventId)}
+                            isEditing={editingIds.has(meeting.eventId)}
                             onSearchInputChange={(val) =>
                               setSearchInputs((prev) => new Map(prev).set(meeting.eventId, val))
                             }
@@ -769,6 +805,10 @@ function PrepPageContent() {
                             onSelectResult={(account) =>
                               handleSelectSearchResult(meeting.eventId, account)
                             }
+                            onStartEdit={(currentName) =>
+                              handleStartEdit(meeting.eventId, currentName)
+                            }
+                            onCancelEdit={() => handleCancelEdit(meeting.eventId)}
                           />
                         ))}
                       </tbody>
@@ -826,9 +866,12 @@ function MeetingRow({
   searchInput,
   searchResult,
   isSearchLoading,
+  isEditing,
   onSearchInputChange,
   onSearch,
   onSelectResult,
+  onStartEdit,
+  onCancelEdit,
 }: {
   meeting: PrepMeeting;
   index: number;
@@ -841,14 +884,22 @@ function MeetingRow({
   searchInput: string;
   searchResult: Array<{ accountId: string; accountName: string; accountUrl: string; website: string | null }> | null;
   isSearchLoading: boolean;
+  isEditing: boolean;
   onSearchInputChange: (val: string) => void;
   onSearch: () => void;
   onSelectResult: (account: { accountId: string; accountName: string; accountUrl: string }) => void;
+  onStartEdit: (currentName: string) => void;
+  onCancelEdit: () => void;
 }) {
   const hasOnePager = meeting.onePager !== null;
-  const effectiveMatch = meeting.match ?? manualMatch;
+  // Manual pick wins over the auto-detected match — consistent with how
+  // handleGenerate resolves which account to research.
+  const effectiveMatch = manualMatch ?? meeting.match;
   const accountName =
     effectiveMatch?.accountName || meeting.externalDomains[0] || "Unknown";
+  // Show the search UI when there's nothing matched yet, OR the user clicked
+  // "Change" to re-pick an already-matched account.
+  const showSearch = !effectiveMatch || isEditing;
 
   return (
     <>
@@ -867,20 +918,27 @@ function MeetingRow({
         </td>
         <td className="px-4 py-3 text-gray-600">{meeting.meetingDate}</td>
         <td className="px-4 py-3">
-          {meeting.match ? (
-            /* Auto-matched account */
-            <span className="font-medium text-navy">{meeting.match.accountName}</span>
-          ) : manualMatch ? (
-            /* Manually linked account */
+          {!showSearch && effectiveMatch ? (
+            /* Matched account (auto or manually linked) */
             <div>
-              <span className="font-medium text-navy">{manualMatch.accountName}</span>
-              <span className="ml-2 inline-flex items-center gap-1 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
-                Manually linked
+              <span className="font-medium text-navy">
+                {effectiveMatch.accountName}
               </span>
+              {manualMatch && (
+                <span className="ml-2 inline-flex items-center gap-1 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                  Manually linked
+                </span>
+              )}
+              <button
+                onClick={() => onStartEdit(effectiveMatch.accountName)}
+                className="ml-2 text-xs text-gray-400 hover:text-brand-orange underline underline-offset-2 transition-colors"
+              >
+                Change
+              </button>
             </div>
           ) : (
-            /* No match — show search UI */
+            /* No match yet, or user is re-picking — show search UI */
             <div className="space-y-1">
               <div className="flex items-center gap-1">
                 <input
@@ -894,6 +952,7 @@ function MeetingRow({
                       onSearch();
                     }
                   }}
+                  autoFocus={isEditing}
                   className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
                 />
                 <button
@@ -903,6 +962,14 @@ function MeetingRow({
                 >
                   {isSearchLoading ? "..." : "Search"}
                 </button>
+                {isEditing && effectiveMatch && (
+                  <button
+                    onClick={onCancelEdit}
+                    className="shrink-0 text-xs text-gray-400 hover:text-red-500 underline underline-offset-2 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                )}
               </div>
               {meeting.externalDomains.length > 0 && !searchInput && (
                 <span className="text-xs text-gray-300">
