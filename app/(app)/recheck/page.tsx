@@ -48,6 +48,9 @@ export default function RecheckPage() {
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<RecheckRow[] | null>(null);
   const [thresholdDays, setThresholdDays] = useState(60);
+  // How the results table is ordered. "input" = as pasted; "oldest" = most
+  // overdue (longest since last contact) first; "newest" = most recent first.
+  const [sortMode, setSortMode] = useState<"input" | "oldest" | "newest">("input");
 
   useEffect(() => {
     fetch("/api/salesforce/status")
@@ -75,6 +78,34 @@ export default function RecheckPage() {
     () => (rows ?? []).filter((r) => r.readyToRecontact).length,
     [rows]
   );
+
+  // Rows ordered for display. "Days quiet" drives the sort: a matched account
+  // with no logged task is the most overdue (Infinity); not-found rows have no
+  // date so they always sink to the bottom regardless of direction.
+  const sortedRows = useMemo(() => {
+    if (!rows) return [];
+    if (sortMode === "input") return rows;
+
+    const daysQuiet = (r: RecheckRow): number | null => {
+      if (r.status === "not_found") return null;
+      if (r.lastTaskDate === null) return Number.POSITIVE_INFINITY;
+      return r.daysSince ?? 0;
+    };
+
+    return rows
+      .map((r, i) => ({ r, i }))
+      .sort((a, b) => {
+        const da = daysQuiet(a.r);
+        const db = daysQuiet(b.r);
+        // Not-found (null) always last.
+        if (da === null && db === null) return a.i - b.i;
+        if (da === null) return 1;
+        if (db === null) return -1;
+        if (da === db) return a.i - b.i; // stable tiebreak on original order
+        return sortMode === "oldest" ? db - da : da - db;
+      })
+      .map((x) => x.r);
+  }, [rows, sortMode]);
 
   async function handleCheck() {
     if (parsedNames.length === 0 || loading) return;
@@ -166,13 +197,40 @@ export default function RecheckPage() {
             {rows && (
               <Card>
                 <div className="flex flex-col gap-4">
-                  <div className="flex items-center gap-2 text-sm text-ink-secondary">
-                    <Badge variant="warn" dot>
-                      {readyCount} ready to re-contact
-                    </Badge>
-                    <span className="text-ink-muted">
-                      of {rows.length} checked
-                    </span>
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 text-sm text-ink-secondary">
+                      <Badge variant="warn" dot>
+                        {readyCount} ready to re-contact
+                      </Badge>
+                      <span className="text-ink-muted">
+                        of {rows.length} checked
+                      </span>
+                    </div>
+                    {/* Sort toggle — orders by how long since last contact */}
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-ink-muted">Sort:</span>
+                      <div className="inline-flex rounded-md border border-line overflow-hidden">
+                        {(
+                          [
+                            { key: "input", label: "As pasted" },
+                            { key: "oldest", label: "Oldest first" },
+                            { key: "newest", label: "Newest first" },
+                          ] as const
+                        ).map((opt) => (
+                          <button
+                            key={opt.key}
+                            onClick={() => setSortMode(opt.key)}
+                            className={`px-2.5 py-1 font-medium transition-colors ${
+                              sortMode === opt.key
+                                ? "bg-navy text-white"
+                                : "bg-white text-ink-secondary hover:bg-surface-3"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -188,7 +246,7 @@ export default function RecheckPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {rows.map((r, i) => (
+                        {sortedRows.map((r, i) => (
                           <tr
                             key={`${r.input}-${i}`}
                             className="border-b border-line/60 last:border-0 align-top"
