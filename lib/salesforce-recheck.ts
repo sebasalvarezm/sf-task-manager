@@ -131,26 +131,66 @@ async function matchAccountsByNames(names: string[]): Promise<NameMatch[]> {
   return results;
 }
 
-// One aggregate query for the last logged-Task date across all matched accounts.
-// WhatId ties a Task to its Account. Returns accountId -> ISO date.
+// Last logged-Task date per matched account. WhatId ties a Task to its Account.
+// Returns accountId -> ISO date.
+//
+// Salesforce won't allow MAX(ActivityDate) (that field rejects aggregate
+// operators in this org), so instead we pull tasks newest-first and keep the
+// first (= latest) one we see per account. Results are paginated; we follow
+// nextRecordsUrl and stop early once every account has a date.
 async function lastTaskDatesForAccounts(
   accountIds: string[]
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (accountIds.length === 0) return map;
 
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("NOT_CONNECTED");
+
   const idList = accountIds.map((id) => `'${escapeSoql(id)}'`).join(",");
   const soql =
-    `SELECT WhatId, MAX(ActivityDate) lastTask ` +
+    `SELECT WhatId, ActivityDate ` +
     `FROM Task ` +
-    `WHERE WhatId IN (${idList}) ` +
-    `GROUP BY WhatId`;
+    `WHERE WhatId IN (${idList}) AND ActivityDate != null ` +
+    `ORDER BY ActivityDate DESC`;
 
-  type Row = { WhatId: string; lastTask: string | null };
-  const rows = await sfQuery<Row>(soql);
-  for (const r of rows) {
-    if (r.WhatId && r.lastTask) map.set(r.WhatId, r.lastTask);
+  type Row = { WhatId: string; ActivityDate: string };
+  type QueryResponse = {
+    records?: Row[];
+    done?: boolean;
+    nextRecordsUrl?: string;
+  };
+
+  let url: string | null =
+    `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`;
+
+  while (url) {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`Salesforce query failed: ${err}`);
+    }
+
+    const data = (await response.json()) as QueryResponse;
+    for (const r of data.records ?? []) {
+      // Ordered DESC, so the first time we see an account is its latest task.
+      if (r.WhatId && r.ActivityDate && !map.has(r.WhatId)) {
+        map.set(r.WhatId, r.ActivityDate);
+      }
+    }
+
+    // Stop once every account has a date, or there are no more pages.
+    if (map.size >= accountIds.length || data.done || !data.nextRecordsUrl) {
+      break;
+    }
+    url = `${credentials.instance_url}${data.nextRecordsUrl}`;
   }
+
   return map;
 }
 
