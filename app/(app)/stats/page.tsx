@@ -736,7 +736,7 @@ export default function StatsPage() {
                 </ResponsiveContainer>
               </ChartCard>
 
-              <ChartCard title="Conversion Rate by Person">
+              <ChartCard title="C1 to Outreach">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart
                     data={data.conversion.byPerson.map((p) => ({
