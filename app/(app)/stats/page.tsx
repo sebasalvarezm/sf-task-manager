@@ -1655,7 +1655,7 @@ function DrillModal({
               <Fragment key={(r.opportunityId ?? r.accountId ?? "") + i}>
                 <Table.Row
                   className={
-                    starred ? "bg-yellow-50 hover:bg-yellow-100" : ""
+                    starred ? "bg-yellow-100 hover:bg-yellow-200" : ""
                   }
                 >
                   <Table.Cell className="font-medium text-ink">
