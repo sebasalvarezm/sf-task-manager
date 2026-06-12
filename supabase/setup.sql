@@ -232,3 +232,15 @@ DROP TRIGGER IF EXISTS trg_deal_docs_updated_at ON deal_docs;
 CREATE TRIGGER trg_deal_docs_updated_at
   BEFORE UPDATE ON deal_docs
   FOR EACH ROW EXECUTE FUNCTION jobs_set_updated_at();
+
+-- ============================================================
+-- Table 9: Starred Opportunities ("star leads")
+-- ============================================================
+-- Tracks which BRO opportunities the user has flagged as important. Presence
+-- of a row = starred; deleted row = un-starred. Used by the Stats drill-down
+-- to highlight starred rows in yellow. Single-tenant app, so no user_id.
+
+CREATE TABLE IF NOT EXISTS starred_opportunities (
+  sf_opportunity_id TEXT PRIMARY KEY,
+  created_at        TIMESTAMPTZ DEFAULT NOW()
+);

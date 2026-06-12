@@ -32,6 +32,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Star,
 } from "lucide-react";
 import { HeatmapData, EnrichedMultiOpen } from "@/lib/analytics-derivations";
 import type { DealDoc } from "@/lib/deal-docs";
@@ -216,6 +217,53 @@ export default function StatsPage() {
   const [engagement, setEngagement] = useState<EngagementResponse | null>(null);
 
   const [drill, setDrill] = useState<DrillTarget | null>(null);
+
+  // ── Star leads (BRO highlights) ────────────────────────────────────────────
+  // Stars are per Salesforce OpportunityId, synced via Supabase so they follow
+  // the user across browsers. Fetched once on mount; clicks update local set
+  // optimistically and POST in the background (revert on failure).
+  const [starredIds, setStarredIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/stars/list", { cache: "no-store" });
+        if (!res.ok) return;
+        const body = await res.json();
+        const ids: string[] = Array.isArray(body?.ids) ? body.ids : [];
+        setStarredIds(new Set(ids));
+      } catch {
+        /* non-critical — stars just won't show until next reload */
+      }
+    })();
+  }, []);
+
+  async function toggleStar(opportunityId: string) {
+    const isStarred = starredIds.has(opportunityId);
+    // Optimistic flip.
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      if (isStarred) next.delete(opportunityId);
+      else next.add(opportunityId);
+      return next;
+    });
+    try {
+      const res = await fetch("/api/stars/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opportunityId, starred: !isStarred }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch {
+      // Revert on failure.
+      setStarredIds((prev) => {
+        const next = new Set(prev);
+        if (isStarred) next.add(opportunityId);
+        else next.delete(opportunityId);
+        return next;
+      });
+    }
+  }
 
   // Open the drill modal — convert chart's first-name string to a Salesforce
   // full owner name. If the first name doesn't match a CDM owner, no-op.
@@ -901,6 +949,8 @@ export default function StatsPage() {
                   : []
             }
             onNavigate={setDrill}
+            starredIds={starredIds}
+            onToggleStar={toggleStar}
             rangeStart={range.start}
             rangeEnd={range.end}
             onClose={() => setDrill(null)}
@@ -1056,6 +1106,8 @@ function DrillModal({
   target,
   siblings = [],
   onNavigate,
+  starredIds,
+  onToggleStar,
   rangeStart,
   rangeEnd,
   onClose,
@@ -1063,6 +1115,8 @@ function DrillModal({
   target: DrillTarget;
   siblings?: DrillTarget[];
   onNavigate?: (t: DrillTarget) => void;
+  starredIds?: Set<string>;
+  onToggleStar?: (opportunityId: string) => void;
   rangeStart: string;
   rangeEnd: string;
   onClose: () => void;
@@ -1595,16 +1649,48 @@ function DrillModal({
           {visibleRows.map((r, i) => {
             const expanded =
               isOpps && !!r.accountId && expandedAcct === r.accountId;
+            const oppId = r.opportunityId;
+            const starred = !!(isOpps && oppId && starredIds?.has(oppId));
             return (
               <Fragment key={(r.opportunityId ?? r.accountId ?? "") + i}>
-                <Table.Row>
+                <Table.Row
+                  className={
+                    starred ? "bg-yellow-50 hover:bg-yellow-100" : ""
+                  }
+                >
                   <Table.Cell className="font-medium text-ink">
-                    {r.accountName}
-                    {r.opportunityName && (
-                      <div className="text-xs text-ink-muted mt-0.5">
-                        {r.opportunityName}
+                    <div className="flex items-start gap-2">
+                      {isOpps && oppId && (
+                        <button
+                          type="button"
+                          onClick={() => onToggleStar?.(oppId)}
+                          aria-label={
+                            starred ? "Unstar this lead" : "Star this lead"
+                          }
+                          title={
+                            starred ? "Unstar this lead" : "Star this lead"
+                          }
+                          className="mt-0.5 shrink-0 text-ink-muted hover:text-yellow-500 transition-colors"
+                        >
+                          <Star
+                            className={`h-3.5 w-3.5 ${
+                              starred
+                                ? "fill-yellow-400 text-yellow-500"
+                                : ""
+                            }`}
+                            strokeWidth={2}
+                          />
+                        </button>
+                      )}
+                      <div className="min-w-0">
+                        {r.accountName}
+                        {r.opportunityName && (
+                          <div className="text-xs text-ink-muted mt-0.5">
+                            {r.opportunityName}
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </Table.Cell>
                   <Table.Cell>
                     {r.website ? (
