@@ -150,6 +150,51 @@ export default function TaskTable({
     });
   }
 
+  // ── Quick-action buttons (mobile cards) ───────────────────────────────────────
+  // Shared writer so taps and the text box stay perfectly in sync.
+  function writeAction(
+    task: SalesforceTask,
+    code: string,
+    actionType: TaskAction["actionType"],
+    days: number
+  ) {
+    setInputValues((prev) => {
+      const next = new Map(prev);
+      next.set(task.Id, code);
+      return next;
+    });
+    onActionChange(task.Id, {
+      taskId: task.Id,
+      accountId: task.AccountId,
+      accountName: task.AccountName,
+      subject: task.Subject,
+      currentDate: task.ActivityDate,
+      actionType,
+      days,
+    });
+  }
+
+  // Tapping +7 / +30 accumulates into a "push" (delay). +7 twice → P14.
+  function bumpDelay(task: SalesforceTask, delta: number) {
+    const current = getAction(task.Id);
+    const base = current.actionType === "delay" ? current.days : 0;
+    const days = base + delta;
+    writeAction(task, `P${days}`, "delay", days);
+  }
+
+  // Delete toggles: tap once to arm, tap again to clear.
+  function toggleDelete(task: SalesforceTask) {
+    if (getAction(task.Id).actionType === "hard_delete") {
+      clearAction(task);
+    } else {
+      writeAction(task, "D", "hard_delete", 0);
+    }
+  }
+
+  function clearAction(task: SalesforceTask) {
+    writeAction(task, "", "none", 0);
+  }
+
   // ── Portfolio display ─────────────────────────────────────────────────────────
 
   function renderPortfolio(task: SalesforceTask) {
@@ -208,7 +253,9 @@ export default function TaskTable({
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
+    <>
+    {/* ── Desktop: full table (unchanged) ─────────────────────────────────────── */}
+    <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
       <table
         className="task-table w-full bg-white"
         onKeyDown={handleKeyDown}
@@ -387,5 +434,120 @@ export default function TaskTable({
         </tbody>
       </table>
     </div>
+
+    {/* ── Mobile: one card per task (no horizontal scroll) ─────────────────────── */}
+    <div className="md:hidden space-y-3">
+      {tasks.map((task, rowIdx) => {
+        const action = getAction(task.Id);
+        const website = task.AccountWebsite
+          ? task.AccountWebsite.startsWith("http")
+            ? task.AccountWebsite
+            : `https://${task.AccountWebsite}`
+          : null;
+        const portfolio = task.AccountId ? portfolioMatches.get(task.AccountId) : undefined;
+
+        return (
+          <div
+            key={task.Id}
+            className="rounded-xl border border-gray-200 bg-white shadow-sm p-4"
+          >
+            {/* Company name */}
+            <div className="flex items-start justify-between gap-2">
+              <span className="font-semibold text-navy text-base leading-snug">
+                {task.AccountName ?? (
+                  <span className="text-gray-400 italic font-normal">No account</span>
+                )}
+              </span>
+              <span className="text-xs text-gray-300 font-mono shrink-0 mt-0.5">
+                #{rowIdx + 1}
+              </span>
+            </div>
+
+            {/* Meta chips: due date, SF link, portfolio */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-sm">
+              {task.ActivityDate &&
+                (website ? (
+                  <a
+                    href={website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-brand-orange hover:text-brand-orange-hover underline underline-offset-2 font-mono"
+                  >
+                    {task.ActivityDate}
+                  </a>
+                ) : (
+                  <span className="text-gray-500 font-mono">{task.ActivityDate}</span>
+                ))}
+              {task.AccountUrl && (
+                <a
+                  href={task.AccountUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-brand-orange hover:text-brand-orange-hover font-medium underline underline-offset-2"
+                >
+                  Open in Salesforce ↗
+                </a>
+              )}
+              {portfolio?.matched && portfolio.group && (
+                <span className="text-green-600 text-xs font-medium">
+                  ✅ {portfolio.group}
+                </span>
+              )}
+            </div>
+
+            {/* Quick-action buttons — taps accumulate into the box below */}
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                type="button"
+                onClick={() => toggleDelete(task)}
+                className={`flex-1 min-h-[44px] rounded-lg border text-sm font-semibold transition-colors ${
+                  action.actionType === "hard_delete"
+                    ? "border-red-500 bg-red-500 text-white"
+                    : "border-red-200 bg-red-50 text-red-700 active:bg-red-100"
+                }`}
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => bumpDelay(task, 7)}
+                className="flex-1 min-h-[44px] rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold active:bg-blue-100 transition-colors"
+              >
+                +7d
+              </button>
+              <button
+                type="button"
+                onClick={() => bumpDelay(task, 30)}
+                className="flex-1 min-h-[44px] rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold active:bg-blue-100 transition-colors"
+              >
+                +30d
+              </button>
+              {action.actionType !== "none" && (
+                <button
+                  type="button"
+                  onClick={() => clearAction(task)}
+                  aria-label="Clear action"
+                  className="min-h-[44px] w-11 shrink-0 rounded-lg border border-gray-200 bg-white text-gray-400 text-lg active:bg-gray-100 transition-colors"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {/* Text box for custom codes (D / RCE14 / P30) */}
+            <input
+              type="text"
+              inputMode="text"
+              value={inputValues.get(task.Id) ?? ""}
+              placeholder="Or type: D / RCE14 / P30"
+              onChange={(e) => handleInputChange(task, e.target.value)}
+              className={`w-full border rounded-lg px-3 min-h-[44px] text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors mt-2 ${getInputBorderClass(task.Id)}`}
+            />
+            <div className="mt-1">{renderBadge(task.Id)}</div>
+          </div>
+        );
+      })}
+    </div>
+    </>
   );
 }
