@@ -17,6 +17,7 @@ import {
   findDiscontinued,
   extractAddress,
   findRestaurants,
+  quickCompanyName,
   extractOutreachParagraph,
   personalizeOutreach,
   generateEmailHook,
@@ -34,6 +35,8 @@ export type SourcingResult = {
   portfolioMatch: {
     matched: boolean;
     group: string | null;
+    /** Main industry group folder, e.g. "Manufacturing" */
+    mainGroup?: string | null;
     confidence?: number | null;
   };
   archiveUrl: string | null;
@@ -44,6 +47,9 @@ export type SourcingResult = {
   discontinued: string | null;
   discontinuedNote: string | null;
   address: string | null;
+  addressSource: string | null;
+  addressSourceUrl: string | null;
+  locationConfidence: "exact" | "city" | "none";
   restaurants: { name: string; description: string }[];
   outreachParagraph: string | null;
   emailHook: string | null;
@@ -216,7 +222,10 @@ export async function runFullSourcing(input: {
     const conf = portfolioMatch.confidence != null
       ? ` (${portfolioMatch.confidence}% confidence)`
       : "";
-    logs.push(`Best match: ${portfolioMatch.group}${conf}`);
+    const groupLabel = portfolioMatch.mainGroup
+      ? `${portfolioMatch.mainGroup} → ${portfolioMatch.group}`
+      : portfolioMatch.group;
+    logs.push(`Best match: ${groupLabel}${conf}`);
   } else {
     logs.push("No portfolio group is a strong fit for this company.");
   }
@@ -401,8 +410,9 @@ export async function runFullSourcing(input: {
   // ───────── Stage 3: Address + outreach + competitors + restaurants ─────────
   logs.push("Finding company address...");
   const outreachLogs: string[] = [];
-  const [address, outreachParagraph] = await Promise.all([
-    extractAddress(anthropic, currentText, normalized),
+  const sourceCompanyName = quickCompanyName(normalized);
+  const [addressInfo, outreachParagraph] = await Promise.all([
+    extractAddress(anthropic, currentText, normalized, sourceCompanyName),
     generateOutreach(
       anthropic,
       normalized,
@@ -412,17 +422,53 @@ export async function runFullSourcing(input: {
       outreachLogs,
     ),
   ]);
-  if (address) logs.push(`Address found: ${address}`);
-  else logs.push("Company address not found.");
+  let address = addressInfo.address;
+  let addressSource = addressInfo.source;
+  let addressSourceUrl = addressInfo.sourceUrl;
+  let locationConfidence = addressInfo.confidence;
+  if (address) {
+    const via =
+      addressInfo.source === "company website"
+        ? "from the website"
+        : addressInfo.source === "web search (company name)"
+          ? "via web search by company name"
+          : "via web search";
+    logs.push(`Address found (${via}): ${address}`);
+  } else {
+    logs.push(
+      "Company address not found yet — the restaurant search will also try to locate the city.",
+    );
+  }
   logs.push(...outreachLogs);
 
-  let restaurants: { name: string; description: string }[] = [];
-  if (address) {
-    logs.push(`Searching for business dinner restaurants near ${address}...`);
-    restaurants = await findRestaurants(anthropic, address);
-    if (restaurants.length > 0) {
-      logs.push(`Found ${restaurants.length} restaurant recommendation(s).`);
-    }
+  // Always attempt a restaurant search — pass the company name so it can find
+  // a city even when no address was resolved.
+  logs.push("Searching for business dinner restaurants...");
+  const restaurantResult = await findRestaurants(
+    anthropic,
+    address,
+    sourceCompanyName,
+  );
+  const restaurants = restaurantResult.restaurants;
+  if (restaurants.length > 0) {
+    logs.push(`Found ${restaurants.length} restaurant recommendation(s).`);
+  } else {
+    logs.push("Could not retrieve restaurant recommendations.");
+  }
+
+  // Address rescue: if address extraction failed but the restaurant search
+  // located the company's city, keep that city as the location so the result
+  // always shows at least "City, ST".
+  if (!address && restaurantResult.city) {
+    address = restaurantResult.city;
+    addressSource = "web search (restaurant lookup)";
+    addressSourceUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+      restaurantResult.city,
+    )}`;
+    locationConfidence = "city";
+    logs.push(`City located via restaurant search: ${address}`);
+  } else if (!address) {
+    logs.push("Company location not found — even after all web searches.");
   }
 
   // Competitor identification skipped (UI section removed). Keeping the
@@ -498,6 +544,9 @@ export async function runFullSourcing(input: {
     discontinued,
     discontinuedNote,
     address,
+    addressSource,
+    addressSourceUrl,
+    locationConfidence,
     restaurants,
     outreachParagraph,
     emailHook,

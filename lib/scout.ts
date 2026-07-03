@@ -69,7 +69,11 @@ export type ScrapeResult = {
   currentText: string;
   products: string[];
   foundingYear: number | null;
-  portfolioMatch: { matched: boolean; group: string | null };
+  portfolioMatch: {
+    matched: boolean;
+    group: string | null;
+    mainGroup?: string | null;
+  };
 };
 
 export type HistoryResult = {
@@ -725,17 +729,96 @@ Return only the product/service name from the OLD list. No explanation.`,
 // ---------------------------------------------------------------------------
 
 /**
- * Extract company address using Claude + web search.
- * Tries scraped text first, then falls back to web search.
+ * Where the company's address/location came from, plus a link the user can
+ * click to verify it. `sourceUrl` is the real web page the address was found on
+ * when we can capture it, otherwise a Google Maps link for the location.
+ */
+export type AddressResolution = {
+  address: string | null; // "123 Main St, Reno, NV" | "Reno, NV" | null
+  source: string | null; // "company website" | "web search (domain)" | "web search (company name)"
+  sourceUrl: string | null; // real source page URL, else a Google Maps link, else null
+  confidence: "exact" | "city" | "none";
+};
+
+/**
+ * Pull the first real http(s) source URL out of a Claude web-search response.
+ * Web search returns `web_search_tool_result` blocks (a list of results, each
+ * with a `url`) and text blocks may carry a `citations` array with `url`s. The
+ * block shapes are loosely typed, so this is fully defensive — any miss just
+ * returns null and the caller falls back to a Google Maps link.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractFirstCitationUrl(resp: any): string | null {
+  const isHttp = (u: unknown): u is string =>
+    typeof u === "string" && /^https?:\/\//i.test(u);
+
+  const blocks = Array.isArray(resp?.content) ? resp.content : [];
+  for (const block of blocks) {
+    // web_search_tool_result → content is a list of results, each with a url
+    if (block?.type === "web_search_tool_result") {
+      const results = Array.isArray(block.content) ? block.content : [];
+      for (const r of results) {
+        if (isHttp(r?.url)) return r.url;
+      }
+    }
+    // text blocks can carry citations with urls
+    const citations = Array.isArray(block?.citations) ? block.citations : [];
+    for (const c of citations) {
+      if (isHttp(c?.url)) return c.url;
+    }
+  }
+  return null;
+}
+
+/** A Google Maps search link for an address/city — the guaranteed fallback. */
+function buildMapsLink(address: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    address
+  )}`;
+}
+
+/**
+ * Derive a search-quality company name from the domain stem (e.g.
+ * "acme-software.com" → "Acme-software"). Not a perfect legal name — it only
+ * needs to qualify a web search like "<name> headquarters address". Mirrors the
+ * fallback-name logic used in researchCompanyAnchors.
+ */
+export function quickCompanyName(url: string): string {
+  try {
+    const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
+    const stem = parsed.hostname.replace("www.", "").split(".")[0];
+    return stem.charAt(0).toUpperCase() + stem.slice(1);
+  } catch {
+    return "";
+  }
+}
+
+/** street number present → "exact", comma + region only → "city". */
+function addressConfidence(address: string): "exact" | "city" {
+  return /\d/.test(address) ? "exact" : "city";
+}
+
+/**
+ * Resolve the company's address/location and record where it came from.
+ * Tries scraped page text, then web search by domain, then web search by
+ * company name (city-level is acceptable) so we almost always land a location.
  */
 export async function extractAddress(
   client: Anthropic,
   currentText: string,
-  url: string
-): Promise<string | null> {
+  url: string,
+  companyName?: string
+): Promise<AddressResolution> {
   // Attempt 1: Extract from already-scraped text
   const fromText = await askClaudeForAddress(client, currentText);
-  if (fromText) return fromText;
+  if (fromText) {
+    return {
+      address: fromText,
+      source: "company website",
+      sourceUrl: url.startsWith("http") ? url : `https://${url}`,
+      confidence: addressConfidence(fromText),
+    };
+  }
 
   // Attempt 2: Use Claude web search to find the headquarters address
   try {
@@ -774,13 +857,72 @@ If you cannot find any location for this specific company, return exactly: null`
     if (textBlocks.length > 0) {
       const raw = textBlocks[textBlocks.length - 1].text.trim();
       const validated = validateAddress(raw);
-      if (validated) return validated;
+      if (validated) {
+        return {
+          address: validated,
+          source: "web search (domain)",
+          sourceUrl: extractFirstCitationUrl(resp) ?? buildMapsLink(validated),
+          confidence: addressConfidence(validated),
+        };
+      }
     }
   } catch {
     // Non-critical
   }
 
-  return null;
+  // Attempt 3: Web search by COMPANY NAME (city-level is acceptable).
+  // This is the fallback when the site has no address and the domain search
+  // came up empty — e.g. "<name> software headquarters address".
+  const name = companyName || quickCompanyName(url);
+  if (name) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tools: any[] = [
+        { type: "web_search_20250305", name: "web_search", max_uses: 3 },
+      ];
+
+      const resp = await callClaude(client, 2, {
+        model: "claude-sonnet-4-6",
+        max_tokens: 150,
+        tools,
+        messages: [
+          {
+            role: "user",
+            content: `Use web search to find where the software company "${name}" is based.
+
+Try searches like "${name} software headquarters address", "${name} head office", "${name} company location", and "${name} contact".
+
+ONLY return a location that clearly belongs to this specific company.
+- Best case: full street address as a single line (e.g. '123 Main St, Denver, CO 80202').
+- A city + state/country alone is perfectly fine and expected here (e.g. 'Reno, NV' or 'Bel Air, MD' or 'Toronto, ON').
+- Return ONLY the address/location, no commentary or preamble.
+
+If you cannot find any location for this specific company, return exactly: null`,
+          },
+        ],
+      });
+
+      const textBlocks = resp.content.filter(
+        (b: { type: string }) => b.type === "text"
+      );
+      if (textBlocks.length > 0) {
+        const raw = textBlocks[textBlocks.length - 1].text.trim();
+        const validated = validateAddress(raw);
+        if (validated) {
+          return {
+            address: validated,
+            source: "web search (company name)",
+            sourceUrl: extractFirstCitationUrl(resp) ?? buildMapsLink(validated),
+            confidence: addressConfidence(validated),
+          };
+        }
+      }
+    } catch {
+      // Non-critical
+    }
+  }
+
+  return { address: null, source: null, sourceUrl: null, confidence: "none" };
 }
 
 async function askClaudeForAddress(
@@ -851,26 +993,18 @@ function validateAddress(raw: string): string | null {
 // Restaurant Recommendations
 // ---------------------------------------------------------------------------
 
-/**
- * Find 3 business dinner restaurants near the address using Claude web search.
- */
-export async function findRestaurants(
+/** Restaurant search result: the restaurants plus the city the search used/found. */
+export type RestaurantSearchResult = {
+  restaurants: { name: string; description: string }[];
+  /** "City, ST" the search located (only meaningful when we had no address) */
+  city: string | null;
+};
+
+/** Run one restaurant web-search prompt and parse the JSON out of it. */
+async function runRestaurantSearch(
   client: Anthropic,
-  address: string
-): Promise<{ name: string; description: string }[]> {
-  if (!address) return [];
-
-  // Extract city/state from the address for a better search
-  const parts = address.split(",").map((p) => p.trim());
-  const cityState =
-    parts.length >= 2
-      ? parts
-          .slice(-2)
-          .join(", ")
-          .replace(/\s+\d{5}(-\d{4})?$/, "")
-          .trim()
-      : address;
-
+  prompt: string
+): Promise<RestaurantSearchResult> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: any[] = [
     { type: "web_search_20250305", name: "web_search", max_uses: 6 },
@@ -881,36 +1015,101 @@ export async function findRestaurants(
       model: "claude-sonnet-4-6",
       max_tokens: 1500,
       tools,
-      messages: [
-        {
-          role: "user",
-          content: `Use the web_search tool to find 3 well-known restaurants near ${cityState} that are good for a professional business dinner. Try queries like "best business dinner restaurants ${cityState}", "fine dining ${cityState}", and "upscale restaurants ${cityState}". Use multiple searches if the first one is thin.
-
-Prefer established places — fine dining, upscale steakhouses, hotel restaurants, or notable gastropubs that come up on local food guides, TripAdvisor, Eater, or similar sources. Avoid fast food, chains, and anything obviously casual.
-
-If the city is small and you cannot find 3 strong candidates, return whatever real restaurants you DO find — even 1 or 2 is fine. Only return an empty array if there are literally no restaurant search results at all.
-
-Respond with ONLY a JSON array. No preamble, no explanation, no markdown fences. Format:
-[{"name":"Actual Restaurant Name","description":"One short sentence on why it works for a business dinner."}, ...]`,
-        },
-      ],
+      messages: [{ role: "user", content: prompt }],
     });
 
     const textBlocks = resp.content.filter(
       (b: { type: string }) => b.type === "text"
     );
-    if (textBlocks.length === 0) return [];
+    if (textBlocks.length === 0) return { restaurants: [], city: null };
     const raw = textBlocks[textBlocks.length - 1].text.trim();
-
     return parseRestaurantJson(raw);
   } catch {
-    return [];
+    return { restaurants: [], city: null };
   }
 }
 
-function parseRestaurantJson(
-  raw: string
-): { name: string; description: string }[] {
+/**
+ * Find ~3 business dinner restaurants for a company. Always attempts a search:
+ *  - with an address → search that city
+ *  - with no address but a company name → have web search locate the city
+ *    first, and REPORT BACK the city it found (so the caller can display a
+ *    location even when address extraction failed)
+ *  - if the first pass is thin → one looser retry that drops the "business
+ *    dinner" qualifier
+ * Returns empty results only when every attempt genuinely comes up empty.
+ */
+export async function findRestaurants(
+  client: Anthropic,
+  address: string | null,
+  companyName?: string
+): Promise<RestaurantSearchResult> {
+  // Derive a "City, State" string from the address when we have one.
+  let cityState = "";
+  if (address) {
+    const parts = address.split(",").map((p) => p.trim());
+    cityState =
+      parts.length >= 2
+        ? parts
+            .slice(-2)
+            .join(", ")
+            .replace(/\s+\d{5}(-\d{4})?$/, "")
+            .trim()
+        : address;
+  }
+
+  const jsonFormat = `Respond with ONLY a JSON object. No preamble, no explanation, no markdown fences. Format:
+{"city":"City, ST","restaurants":[{"name":"Actual Restaurant Name","description":"One short sentence on why it works for a business dinner."}, ...]}
+"city" is the city and state/region the restaurants are in.`;
+
+  // Primary search.
+  let primaryPrompt: string;
+  if (cityState) {
+    primaryPrompt = `Use the web_search tool to find 3 well-known restaurants near ${cityState} that are good for a professional business dinner. Try queries like "best business dinner restaurants ${cityState}", "fine dining ${cityState}", and "upscale restaurants ${cityState}". Use multiple searches if the first one is thin.
+
+Prefer established places — fine dining, upscale steakhouses, hotel restaurants, or notable gastropubs that come up on local food guides, TripAdvisor, Eater, or similar sources. Avoid fast food, chains, and anything obviously casual.
+
+If the city is small and you cannot find 3 strong candidates, return whatever real restaurants you DO find — even 1 or 2 is fine. Only return an empty restaurants array if there are literally no restaurant search results at all.
+
+${jsonFormat}`;
+  } else if (companyName) {
+    primaryPrompt = `Use the web_search tool. First find what city the software company "${companyName}" is based in (search "${companyName} headquarters" or "${companyName} location"). Then find 3 well-known restaurants in that city that are good for a professional business dinner.
+
+Prefer established places — fine dining, upscale steakhouses, hotel restaurants, or notable gastropubs that come up on local food guides, TripAdvisor, Eater, or similar sources. Avoid fast food, chains, and anything obviously casual.
+
+Return whatever real restaurants you find — even 1 or 2 is fine. IMPORTANT: even if you find NO restaurants, still return the "city" you determined for the company (or null if you truly could not determine it).
+
+${jsonFormat}`;
+  } else {
+    return { restaurants: [], city: null };
+  }
+
+  const primary = await runRestaurantSearch(client, primaryPrompt);
+  // When we started from a known address, report that city back.
+  if (cityState && !primary.city) primary.city = cityState;
+  if (primary.restaurants.length > 0) return primary;
+
+  // Looser retry: drop the "business dinner" framing, accept any well-reviewed
+  // upscale sit-down spot. Use the city from the primary pass if it found one.
+  const retryCity = cityState || primary.city;
+  if (retryCity) {
+    const broad = await runRestaurantSearch(
+      client,
+      `Use the web_search tool to find up to 3 well-reviewed, upscale sit-down restaurants in ${retryCity} (not fast food or chains). Try "best restaurants ${retryCity}" and "${retryCity} restaurants TripAdvisor".
+
+Return whatever real restaurants you find — even 1 or 2 is fine. Only return an empty restaurants array if there are literally no results.
+
+${jsonFormat}`
+    );
+    if (!broad.city) broad.city = retryCity;
+    if (broad.restaurants.length > 0) return broad;
+    return { restaurants: [], city: retryCity };
+  }
+
+  return { restaurants: [], city: primary.city };
+}
+
+function parseRestaurantJson(raw: string): RestaurantSearchResult {
   // Phrases that signal Claude refused or fell back to a placeholder rather
   // than an actual restaurant. Match conservatively against names only — a
   // real restaurant called "The Cannot Saint" should still pass.
@@ -931,39 +1130,68 @@ function parseRestaurantJson(
     return !BAD_SIGNALS.some((sig) => name.includes(sig));
   }
 
-  // Try direct JSON parse
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed
-        .filter(
-          (r) => typeof r === "object" && r.name && isReal(r)
-        )
-        .map((r) => ({ name: r.name, description: r.description || "" }))
-        .slice(0, 3);
-    }
-  } catch {
-    // Try extracting JSON array from prose
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function cleanList(list: any[]): { name: string; description: string }[] {
+    return list
+      .filter((r) => typeof r === "object" && r?.name && isReal(r))
+      .map((r) => ({ name: r.name, description: r.description || "" }))
+      .slice(0, 3);
   }
 
-  const match = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
-  if (match) {
+  /** City sanity check: short string with a comma or known region shape. */
+  function cleanCity(c: unknown): string | null {
+    if (typeof c !== "string") return null;
+    const t = c.trim();
+    if (!t || t.toLowerCase() === "null" || t.length < 3 || t.length > 80)
+      return null;
+    return t;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function fromParsed(parsed: any): RestaurantSearchResult | null {
+    // New format: {"city": "...", "restaurants": [...]}
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const list = Array.isArray(parsed.restaurants) ? parsed.restaurants : [];
+      return { restaurants: cleanList(list), city: cleanCity(parsed.city) };
+    }
+    // Legacy format: bare array of restaurants
+    if (Array.isArray(parsed)) {
+      return { restaurants: cleanList(parsed), city: null };
+    }
+    return null;
+  }
+
+  // Try direct JSON parse
+  try {
+    const result = fromParsed(JSON.parse(raw));
+    if (result) return result;
+  } catch {
+    // Try extracting JSON from prose below
+  }
+
+  // Extract a JSON object from prose
+  const objMatch = raw.match(/\{[\s\S]*\}/);
+  if (objMatch) {
     try {
-      const parsed = JSON.parse(match[0]);
-      if (Array.isArray(parsed)) {
-        return parsed
-          .filter(
-            (r) => typeof r === "object" && r.name && isReal(r)
-          )
-          .map((r) => ({ name: r.name, description: r.description || "" }))
-          .slice(0, 3);
-      }
+      const result = fromParsed(JSON.parse(objMatch[0]));
+      if (result) return result;
+    } catch {
+      // Parse failure — try array extraction
+    }
+  }
+
+  // Extract a JSON array from prose (legacy)
+  const arrMatch = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (arrMatch) {
+    try {
+      const result = fromParsed(JSON.parse(arrMatch[0]));
+      if (result) return result;
     } catch {
       // Parse failure
     }
   }
 
-  return [];
+  return { restaurants: [], city: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -972,18 +1200,49 @@ function parseRestaurantJson(
 
 /**
  * Load all portfolio group .md files from content/groups/.
- * Returns { filename: content } map.
+ *
+ * The groups folder is organized as one folder per MAIN industry group
+ * (e.g. "Construction and Diversified Materials", "Agriculture", "Logistics",
+ * "Manufacturing"), each containing one .md file per sub-vertical.
+ *
+ * Returns a map keyed by relative path, e.g.
+ *   "Manufacturing/aftermarket-service.md" → file content
+ * Loose .md files sitting directly in content/groups (legacy layout) are
+ * still picked up, keyed by bare filename.
  */
 export function loadGroupFiles(): Record<string, string> {
   const groupsDir = path.join(process.cwd(), "content", "groups");
   const groups: Record<string, string> = {};
 
   try {
-    const files = fs.readdirSync(groupsDir).filter(
-      (f) => f.endsWith(".md") && f.toUpperCase() !== "CLAUDE.MD"
-    );
-    for (const file of files) {
-      groups[file] = fs.readFileSync(path.join(groupsDir, file), "utf-8");
+    const entries = fs.readdirSync(groupsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (
+        entry.isFile() &&
+        entry.name.endsWith(".md") &&
+        entry.name.toUpperCase() !== "CLAUDE.MD"
+      ) {
+        groups[entry.name] = fs.readFileSync(
+          path.join(groupsDir, entry.name),
+          "utf-8"
+        );
+      } else if (entry.isDirectory()) {
+        try {
+          const subFiles = fs
+            .readdirSync(path.join(groupsDir, entry.name))
+            .filter(
+              (f) => f.endsWith(".md") && f.toUpperCase() !== "CLAUDE.MD"
+            );
+          for (const f of subFiles) {
+            groups[`${entry.name}/${f}`] = fs.readFileSync(
+              path.join(groupsDir, entry.name, f),
+              "utf-8"
+            );
+          }
+        } catch {
+          // Unreadable subfolder — skip
+        }
+      }
     }
   } catch {
     // Directory not found or read error
@@ -993,15 +1252,41 @@ export function loadGroupFiles(): Record<string, string> {
 }
 
 /**
+ * Split a group map key into its main-group folder and filename.
+ * "Manufacturing/aftermarket-service.md" → { mainGroup: "Manufacturing", fileName: "aftermarket-service.md" }
+ * "bulk-liquids.md" (legacy root file)   → { mainGroup: null, fileName: "bulk-liquids.md" }
+ */
+function splitGroupKey(key: string): {
+  mainGroup: string | null;
+  fileName: string;
+} {
+  const idx = key.indexOf("/");
+  if (idx === -1) return { mainGroup: null, fileName: key };
+  return { mainGroup: key.slice(0, idx), fileName: key.slice(idx + 1) };
+}
+
+/** Result of classifying a company against the portfolio groups. */
+export type GroupMatch = {
+  matched: boolean;
+  /** Sub-vertical display name, e.g. "Aftermarket Service" (kept as `group` for backward compat) */
+  group: string | null;
+  /** Main industry group folder, e.g. "Manufacturing" — null for legacy root-level files */
+  mainGroup: string | null;
+  confidence: number | null;
+};
+
+/**
  * Ask Claude to classify the company into the best-fit portfolio group.
+ * Returns both the MAIN industry group (the folder, e.g. "Agriculture") and
+ * the sub-vertical (the file, e.g. "Grain Crop").
  */
 export async function matchGroup(
   client: Anthropic,
   currentText: string,
   groups: Record<string, string>
-): Promise<{ matched: boolean; group: string | null; confidence: number | null }> {
+): Promise<GroupMatch> {
   if (Object.keys(groups).length === 0) {
-    return { matched: false, group: null, confidence: null };
+    return { matched: false, group: null, mainGroup: null, confidence: null };
   }
 
   const summaries = Object.entries(groups)
@@ -1016,6 +1301,8 @@ export async function matchGroup(
         role: "user",
         content: `Based on this company's website content, which group file is the best fit?
 
+The files are organized as "Main Industry Group/sub-vertical.md" — the folder is the main industry group (e.g. Construction and Diversified Materials, Agriculture, Logistics, Manufacturing) and the file is the specific sub-vertical within it. Pick the single best-fitting FILE.
+
 COMPANY WEBSITE:
 ${currentText.slice(0, 8000)}
 
@@ -1023,9 +1310,9 @@ GROUP FILES:
 ${summaries}
 
 Return a JSON object (no markdown) with this format:
-{"file":"mining.md","confidence":85}
+{"file":"Construction and Diversified Materials/mining.md","confidence":85}
 
-- "file" is the exact filename of the best-matching group, or "NO_MATCH" if none fit.
+- "file" is the exact file key (including its folder) of the best-matching group, or "NO_MATCH" if none fit.
 - "confidence" is a number from 0-100 representing how confident you are in the match.
   90+ = very clear fit, 70-89 = reasonable fit, 50-69 = borderline, <50 = weak.`,
       },
@@ -1040,21 +1327,36 @@ Return a JSON object (no markdown) with this format:
     const parsed = JSON.parse(cleaned) as { file: string; confidence: number };
 
     if (!parsed.file || parsed.file.toUpperCase() === "NO_MATCH") {
-      return { matched: false, group: null, confidence: parsed.confidence ?? null };
+      return {
+        matched: false,
+        group: null,
+        mainGroup: null,
+        confidence: parsed.confidence ?? null,
+      };
     }
 
     const resolvedFile = resolveMatchedFile(parsed.file, groups);
-    const groupName = displayName(resolvedFile);
-    return { matched: true, group: groupName, confidence: parsed.confidence ?? null };
+    const { mainGroup } = splitGroupKey(resolvedFile);
+    return {
+      matched: true,
+      group: displayName(resolvedFile),
+      mainGroup,
+      confidence: parsed.confidence ?? null,
+    };
   } catch {
     // Fallback: try to parse as plain text (backward compat)
     const text = raw.replace(/['"]/g, "");
     if (text.toUpperCase() === "NO_MATCH") {
-      return { matched: false, group: null, confidence: null };
+      return { matched: false, group: null, mainGroup: null, confidence: null };
     }
     const resolvedFile = resolveMatchedFile(text, groups);
-    const groupName = displayName(resolvedFile);
-    return { matched: true, group: groupName, confidence: null };
+    const { mainGroup } = splitGroupKey(resolvedFile);
+    return {
+      matched: true,
+      group: displayName(resolvedFile),
+      mainGroup,
+      confidence: null,
+    };
   }
 }
 
@@ -1064,21 +1366,27 @@ function resolveMatchedFile(
 ): string {
   if (matched in groups) return matched;
   const lower = matched.toLowerCase();
-  for (const fname of Object.keys(groups)) {
+  const lowerBase = splitGroupKey(matched).fileName.toLowerCase();
+  for (const key of Object.keys(groups)) {
+    const keyLower = key.toLowerCase();
+    const baseLower = splitGroupKey(key).fileName.toLowerCase();
     if (
-      lower.includes(fname.toLowerCase()) ||
-      fname.toLowerCase().replace(".md", "").includes(lower.replace(".md", ""))
+      // Model returned bare filename for a file that lives in a folder
+      baseLower === lower ||
+      baseLower === lowerBase ||
+      lower.includes(keyLower) ||
+      baseLower.replace(".md", "").includes(lowerBase.replace(".md", ""))
     ) {
-      return fname;
+      return key;
     }
   }
   return Object.keys(groups)[0];
 }
 
-/** Convert 'bulk-materials.md' → 'Bulk Materials' */
-function displayName(filename: string): string {
-  return filename
-    .replace(".md", "")
+/** Convert 'Manufacturing/aftermarket-service.md' → 'Aftermarket Service' */
+function displayName(fileKey: string): string {
+  return splitGroupKey(fileKey)
+    .fileName.replace(".md", "")
     .replace(/-/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -1419,8 +1727,9 @@ Return only the hook text. No commentary.`,
 }
 
 /**
- * Find the matching group file name for a group display name.
- * E.g. "Bulk Materials" → "bulk-materials.md"
+ * Find the matching group file key for a sub-vertical display name.
+ * E.g. "Bulk Materials" → "Construction and Diversified Materials/bulk-materials.md"
+ * Works with both the new folder layout and legacy root-level files.
  */
 export function findGroupFileName(
   displayGroupName: string,
@@ -1431,18 +1740,21 @@ export function findGroupFileName(
     .replace(/\s+/g, "-")
     .trim();
 
-  // Direct match
+  // Direct match (legacy root-level file)
   const direct = normalized + ".md";
   if (direct in groups) return direct;
 
-  // Fuzzy match
-  for (const fname of Object.keys(groups)) {
-    if (
-      fname.toLowerCase().replace(".md", "") === normalized ||
-      fname.toLowerCase().includes(normalized)
-    ) {
-      return fname;
+  // Match against the filename part of each key (ignoring the folder)
+  for (const key of Object.keys(groups)) {
+    const base = splitGroupKey(key).fileName.toLowerCase();
+    if (base.replace(".md", "") === normalized || base.includes(normalized)) {
+      return key;
     }
+  }
+
+  // Last resort: substring match against the whole key (folder included)
+  for (const key of Object.keys(groups)) {
+    if (key.toLowerCase().includes(normalized)) return key;
   }
   return null;
 }

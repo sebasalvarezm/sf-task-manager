@@ -113,7 +113,10 @@ export async function POST(request: NextRequest) {
 
     if (portfolioMatch.matched) {
       const conf = portfolioMatch.confidence != null ? ` (${portfolioMatch.confidence}% confidence)` : "";
-      logs.push(`Best match: ${portfolioMatch.group}${conf}`);
+      const groupLabel = portfolioMatch.mainGroup
+        ? `${portfolioMatch.mainGroup} → ${portfolioMatch.group}`
+        : portfolioMatch.group;
+      logs.push(`Best match: ${groupLabel}${conf}`);
     } else {
       logs.push("No portfolio group is a strong fit for this company.");
     }

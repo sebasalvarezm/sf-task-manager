@@ -5,6 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import {
   extractAddress,
   findRestaurants,
+  quickCompanyName,
   loadGroupFiles,
   extractOutreachParagraph,
   personalizeOutreach,
@@ -46,33 +47,56 @@ export async function POST(request: NextRequest) {
     logs.push("Finding company address...");
 
     const outreachLogs: string[] = [];
+    const sourceCompanyName = quickCompanyName(url);
 
-    const [address, outreachParagraph] = await Promise.all([
-      extractAddress(anthropic, currentText, url),
+    const [addressInfo, outreachParagraph] = await Promise.all([
+      extractAddress(anthropic, currentText, url, sourceCompanyName),
       generateOutreach(anthropic, url, currentText, products, portfolioGroup, outreachLogs),
     ]);
 
+    let address = addressInfo.address;
+    let addressSource = addressInfo.source;
+    let addressSourceUrl = addressInfo.sourceUrl;
+    let locationConfidence = addressInfo.confidence;
     if (address) {
       logs.push(`Address found: ${address}`);
     } else {
-      logs.push("Company address not found.");
+      logs.push(
+        "Company address not found yet — the restaurant search will also try to locate the city."
+      );
     }
 
     // Append outreach logs (collected in parallel)
     logs.push(...outreachLogs);
 
-    // Find restaurants (depends on address — must run after)
-    let restaurants: { name: string; description: string }[] = [];
-    if (address) {
-      logs.push(`Searching for business dinner restaurants near ${address}...`);
-      restaurants = await findRestaurants(anthropic, address);
-      if (restaurants.length > 0) {
-        logs.push(`Found ${restaurants.length} restaurant recommendation(s).`);
-      } else {
-        logs.push("Could not retrieve restaurant recommendations for this address.");
-      }
+    // Always attempt a restaurant search; the company name lets it find a city
+    // even when no address was resolved.
+    logs.push("Searching for business dinner restaurants...");
+    const restaurantResult = await findRestaurants(
+      anthropic,
+      address,
+      sourceCompanyName,
+    );
+    const restaurants = restaurantResult.restaurants;
+    if (restaurants.length > 0) {
+      logs.push(`Found ${restaurants.length} restaurant recommendation(s).`);
     } else {
-      logs.push("Skipping restaurant search \u2014 no address found.");
+      logs.push("Could not retrieve restaurant recommendations.");
+    }
+
+    // Address rescue: if address extraction failed but the restaurant search
+    // located the company's city, keep that city so the result always shows
+    // at least "City, ST".
+    if (!address && restaurantResult.city) {
+      address = restaurantResult.city;
+      addressSource = "web search (restaurant lookup)";
+      addressSourceUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+        restaurantResult.city
+      )}`;
+      locationConfidence = "city";
+      logs.push(`City located via restaurant search: ${address}`);
+    } else if (!address) {
+      logs.push("Company location not found — even after all web searches.");
     }
 
     // Identify competitors (runs in parallel with restaurants, doesn't depend on address)
@@ -91,6 +115,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       address,
+      addressSource,
+      addressSourceUrl,
+      locationConfidence,
       restaurants,
       outreachParagraph,
       competitors,

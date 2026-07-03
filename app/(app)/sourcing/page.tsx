@@ -27,6 +27,8 @@ import { useJobs, type Job } from "@/app/hooks/useJobs";
 type PortfolioMatch = {
   matched: boolean;
   group: string | null;
+  /** Main industry group folder, e.g. "Manufacturing" */
+  mainGroup?: string | null;
   confidence?: number | null;
 };
 
@@ -51,6 +53,9 @@ type SourcingResult = {
   discontinued: string | null;
   discontinuedNote: string | null;
   address: string | null;
+  addressSource?: string | null;
+  addressSourceUrl?: string | null;
+  locationConfidence?: "exact" | "city" | "none";
   restaurants: { name: string; description: string }[];
   outreachParagraph: string | null;
   emailHook?: string | null;
@@ -516,7 +521,10 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
             )}
             {result.portfolioMatch.matched && result.portfolioMatch.group && (
               <Badge variant="brand">
-                Portfolio: {result.portfolioMatch.group}
+                Portfolio:{" "}
+                {result.portfolioMatch.mainGroup
+                  ? `${result.portfolioMatch.mainGroup} → ${result.portfolioMatch.group}`
+                  : result.portfolioMatch.group}
                 {result.portfolioMatch.confidence != null
                   ? ` · ${result.portfolioMatch.confidence}%`
                   : ""}
@@ -650,16 +658,37 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
         </Card>
       </div>
 
-      {/* Restaurants */}
-      {result.address && (
+      {/* Restaurants — render whenever we have a location OR any suggestions */}
+      {(result.address || result.restaurants.length > 0) && (
         <div>
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 flex items-center gap-2">
+          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-1 flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-brand" />
             Nearby Restaurants
             <span className="text-ink-muted normal-case tracking-normal font-normal">
-              — {result.address}
+              — {result.address ?? "this company's area"}
             </span>
           </h3>
+
+          {/* Provenance: where the address/city came from */}
+          {result.addressSourceUrl && (
+            <p className="text-xs text-ink-muted mb-3">
+              Source:{" "}
+              <a
+                href={result.addressSourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand hover:text-brand-hover underline underline-offset-2 inline-flex items-center gap-0.5"
+              >
+                {result.addressSource ?? "view location"}
+                <ExternalLink className="h-3 w-3" strokeWidth={2} />
+              </a>
+              {result.locationConfidence === "city" && (
+                <span className="ml-1">(city-level)</span>
+              )}
+            </p>
+          )}
+          {!result.addressSourceUrl && <div className="mb-3" />}
+
           {result.restaurants.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {result.restaurants.map((r, i) => (
@@ -675,10 +704,10 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
           ) : (
             <Card padded={false} className="p-5">
               <p className="text-sm text-ink-muted">
-                No restaurant suggestions available for this address. The
-                location may be too remote for the AI to find well-known
-                business-dinner spots, or the address itself may not be a
-                clean street address.
+                Couldn't find restaurant suggestions this time — the AI couldn't
+                pin down a city for this company, or the area has little online
+                restaurant coverage. Try re-running, or search the source link
+                above.
               </p>
             </Card>
           )}
