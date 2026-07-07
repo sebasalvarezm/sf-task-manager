@@ -7,6 +7,7 @@ import {
   fetchDrillOppsByStage,
   type DrillAccountRow,
   type TrackedSubjectType,
+  type StatsTeam,
 } from "@/lib/salesforce-stats";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +45,7 @@ export async function GET(req: NextRequest) {
   const callType = url.searchParams.get("callType") ?? "";
   const start = url.searchParams.get("start") ?? "";
   const end = url.searchParams.get("end") ?? "";
+  const team: StatsTeam = url.searchParams.get("team") === "cdm" ? "cdm" : "small_ma";
 
   if (!dimension || !VALID.includes(dimension)) {
     return NextResponse.json(
@@ -164,14 +166,14 @@ export async function GET(req: NextRequest) {
         if (!owner) {
           return NextResponse.json({ error: "owner required" }, { status: 400 });
         }
-        rows = await fetchDrillOppsByOriginator(credentials, owner);
+        rows = await fetchDrillOppsByOriginator(credentials, owner, team);
         break;
       }
       case "bro_by_stage": {
         if (!stage) {
           return NextResponse.json({ error: "stage required" }, { status: 400 });
         }
-        rows = await fetchDrillOppsByStage(credentials, stage);
+        rows = await fetchDrillOppsByStage(credentials, stage, team);
         break;
       }
     }

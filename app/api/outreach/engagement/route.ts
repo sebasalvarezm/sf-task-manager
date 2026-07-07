@@ -10,10 +10,10 @@ import {
   computeMultiOpens,
   enrichMultiOpens,
 } from "@/lib/analytics-derivations";
-import { CDM_OWNER_NAMES } from "@/lib/salesforce-stats";
+import { TEAM_CONFIG, type StatsTeam } from "@/lib/salesforce-stats";
 
 // Returns heatmap + multi-open card data for the given date range.
-// Only counts mailings sent from the CDM team's Outreach mailboxes.
+// Only counts mailings sent from the selected team's Outreach mailboxes.
 export async function GET(req: NextRequest) {
   if (!(await isAuthenticated())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const start = url.searchParams.get("start");
   const end = url.searchParams.get("end");
+  const team: StatsTeam = url.searchParams.get("team") === "cdm" ? "cdm" : "small_ma";
 
   if (!start || !end) {
     return NextResponse.json(
@@ -31,9 +32,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // First resolve CDM team's mailbox IDs (one /mailboxes call with
+    // First resolve the team's mailbox IDs (one /mailboxes call with
     // include=user). Then fetch mailings and filter to just those mailboxes.
-    const cdm = await fetchCdmMailboxIds(CDM_OWNER_NAMES);
+    const cdm = await fetchCdmMailboxIds(TEAM_CONFIG[team].ownerNames);
 
     const {
       mailings,

@@ -20,7 +20,7 @@ import ConnectSalesforce from "../../components/ConnectSalesforce";
 import ActionCard, { ActionRow } from "../../components/ActionCard";
 import Heatmap from "../../components/Heatmap";
 import { RangePreset, computeRange } from "@/lib/date-ranges";
-import { CDM_OWNER_NAMES, OTHER_ORIGINATOR } from "@/lib/salesforce-stats";
+import { OTHER_ORIGINATOR, TEAM_CONFIG, type StatsTeam } from "@/lib/salesforce-stats";
 import { Modal } from "@/app/components/ui/Modal";
 import { Table } from "@/app/components/ui/Table";
 import { Spinner } from "@/app/components/ui/Spinner";
@@ -168,8 +168,11 @@ const NAVY = "#1B2A4A";
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
-function fullNameFromFirst(first: string): string | null {
-  return CDM_OWNER_NAMES.find((n) => n.startsWith(first + " ")) ?? null;
+function fullNameFromFirst(
+  first: string,
+  ownerNames: readonly string[]
+): string | null {
+  return ownerNames.find((n) => n.startsWith(first + " ")) ?? null;
 }
 
 function firstName(full: string): string {
@@ -204,6 +207,9 @@ export default function StatsPage() {
   const router = useRouter();
   const [preset, setPreset] = useState<RangePreset>("this_week");
   const [trailingN, setTrailingN] = useState<number>(4);
+  // Which team's view is shown. Small M&A is the default; CDM is the legacy view.
+  const [team, setTeam] = useState<StatsTeam>("small_ma");
+  const ownerNames = TEAM_CONFIG[team].ownerNames;
 
   const [sfConnected, setSfConnected] = useState<boolean | null>(null);
   const [outreachConnected, setOutreachConnected] = useState<boolean | null>(null);
@@ -273,7 +279,7 @@ export default function StatsPage() {
     titleFn: (firstName: string) => string,
   ) => {
     const first = payload?.name ?? "";
-    const full = fullNameFromFirst(first);
+    const full = fullNameFromFirst(first, ownerNames);
     if (!full || !first) return;
     setDrill({ ...base, owner: full, title: titleFn(first) } as DrillTarget);
   };
@@ -306,12 +312,12 @@ export default function StatsPage() {
   useEffect(() => {
     if (sfConnected) loadStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sfConnected, preset, trailingN]);
+  }, [sfConnected, preset, trailingN, team]);
 
   useEffect(() => {
     if (outreachConnected) loadEngagement();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [outreachConnected, preset, trailingN]);
+  }, [outreachConnected, preset, trailingN, team]);
 
   async function loadStats() {
     setStatsLoading(true);
@@ -321,6 +327,7 @@ export default function StatsPage() {
         start: range.start,
         end: range.end,
         buckets: JSON.stringify(range.buckets),
+        team,
       });
       const res = await fetch(`/api/salesforce/stats?${params.toString()}`);
       if (!res.ok) {
@@ -346,6 +353,7 @@ export default function StatsPage() {
       const params = new URLSearchParams({
         start: range.start,
         end: range.end,
+        team,
       });
       const res = await fetch(`/api/outreach/engagement?${params.toString()}`);
       if (!res.ok) {
@@ -451,7 +459,7 @@ export default function StatsPage() {
         });
         continue;
       }
-      const full = fullNameFromFirst(o.name);
+      const full = fullNameFromFirst(o.name, ownerNames);
       if (!full) continue;
       out.push({
         dimension: "bro_by_originator",
@@ -460,7 +468,7 @@ export default function StatsPage() {
       });
     }
     return out;
-  }, [originatorData]);
+  }, [originatorData, ownerNames]);
 
   const showTrend = range.buckets.length > 1;
 
@@ -470,7 +478,7 @@ export default function StatsPage() {
     <>
       <PageHeader
         title="Weekly Stats"
-        subtitle="CDM Group"
+        subtitle={`${TEAM_CONFIG[team].label} Group`}
         actions={
           <>
             {outreachConnected !== null && (
@@ -512,13 +520,28 @@ export default function StatsPage() {
             }}
           />
           <div className="flex items-center gap-3">
+            <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+              {(["small_ma", "cdm"] as StatsTeam[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTeam(t)}
+                  className={
+                    team === t
+                      ? "px-3 py-1.5 text-sm font-medium rounded-md bg-navy text-white"
+                      : "px-3 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:bg-gray-200"
+                  }
+                >
+                  {TEAM_CONFIG[t].label}
+                </button>
+              ))}
+            </div>
             <button
               onClick={handleRefresh}
               className="text-sm font-medium text-navy bg-white border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50"
             >
               Refresh
             </button>
-            <CdmTeamBadge />
+            <CdmTeamBadge team={team} />
           </div>
         </div>
         <p className="text-sm text-gray-500 mb-8">
@@ -953,6 +976,7 @@ export default function StatsPage() {
             onToggleStar={toggleStar}
             rangeStart={range.start}
             rangeEnd={range.end}
+            team={team}
             onClose={() => setDrill(null)}
           />
         )}
@@ -1026,12 +1050,13 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-function CdmTeamBadge() {
+function CdmTeamBadge({ team }: { team: StatsTeam }) {
+  const cfg = TEAM_CONFIG[team];
   return (
     <div className="relative group inline-block">
       <span className="inline-flex items-center gap-2 text-xs font-medium text-navy bg-white border border-gray-200 rounded-full px-3 py-1.5 cursor-help select-none">
         <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-        CDM Team
+        {cfg.label} Team
         <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
@@ -1039,7 +1064,7 @@ function CdmTeamBadge() {
       <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl border border-gray-200 shadow-lg p-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-20 pointer-events-none">
         <p className="text-xs font-semibold text-navy mb-2 uppercase tracking-wide">Team Members</p>
         <ul className="text-sm text-gray-700 space-y-1">
-          {CDM_OWNER_NAMES.map((n) => (
+          {cfg.ownerNames.map((n) => (
             <li key={n} className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-navy" />
               {n}
@@ -1110,6 +1135,7 @@ function DrillModal({
   onToggleStar,
   rangeStart,
   rangeEnd,
+  team,
   onClose,
 }: {
   target: DrillTarget;
@@ -1119,6 +1145,7 @@ function DrillModal({
   onToggleStar?: (opportunityId: string) => void;
   rangeStart: string;
   rangeEnd: string;
+  team: StatsTeam;
   onClose: () => void;
 }) {
   const [rows, setRows] = useState<DrillRow[] | null>(null);
@@ -1136,6 +1163,7 @@ function DrillModal({
       // BRO drills don't filter by date but the helper accepts them harmlessly.
       params.set("start", rangeStart);
       params.set("end", rangeEnd);
+      params.set("team", team);
       try {
         const res = await fetch(
           `/api/salesforce/stats/drill?${params.toString()}`,
@@ -1157,7 +1185,7 @@ function DrillModal({
     return () => {
       cancelled = true;
     };
-  }, [target, rangeStart, rangeEnd]);
+  }, [target, rangeStart, rangeEnd, team]);
 
   const isOpps =
     target.dimension === "bro_by_originator" ||

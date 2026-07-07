@@ -1,12 +1,44 @@
 import { SfCredentials } from "./supabase";
 import { Bucket } from "./date-ranges";
 
-// ── Hardcoded CDM group (per product direction) ──────────────────────────────
+// ── Team rosters (per product direction) ─────────────────────────────────────
 export const CDM_OWNER_NAMES = [
   "Sebastian Alvarez",
   "Nate Sabb",
   "Tyson Hasegawa-Foster",
 ] as const;
+
+export const SMALL_MA_OWNER_NAMES = [
+  "Sebastian Alvarez",
+  "Carl Khoury",
+  "Alexis Aubert",
+  "Thomas Boucher-Charest",
+  "Ilan Bernadski",
+] as const;
+
+// The stats dashboard can be viewed for either team. The two things that differ
+// per team are (a) who is tracked and (b) how the BRO pipeline is defined:
+//   • CDM       → membership by Account.Group__c = 'CDM'
+//   • Small M&A → any open opp valued ≤ $8M. Amounts are stored in thousands
+//                 (see BRO_AMOUNT_MULTIPLIER), so ≤ $8M means Amount <= 8000.
+// Everything else (stages, open-only, which stats/charts render) is identical.
+export type StatsTeam = "cdm" | "small_ma";
+
+export const TEAM_CONFIG: Record<
+  StatsTeam,
+  { label: string; ownerNames: readonly string[]; pipelineClause: string }
+> = {
+  cdm: {
+    label: "CDM",
+    ownerNames: CDM_OWNER_NAMES,
+    pipelineClause: "Account.Group__c = 'CDM'",
+  },
+  small_ma: {
+    label: "Small M&A",
+    ownerNames: SMALL_MA_OWNER_NAMES,
+    pipelineClause: "Amount <= 8000",
+  },
+};
 
 // "D-E1" is an E1 sent for divestment purposes — counted as outreach
 // alongside regular E1 / RCE1.
@@ -74,18 +106,24 @@ function escapeSoql(v: string): string {
   return v.replace(/'/g, "\\'");
 }
 
-const ownerNamesClause = CDM_OWNER_NAMES.map((n) => `'${escapeSoql(n)}'`).join(",");
 const subjectTypesClause = TRACKED_SUBJECT_TYPES.map((t) => `'${t}'`).join(",");
 const stagesClause = OPPORTUNITY_STAGES.map((s) => `'${escapeSoql(s)}'`).join(",");
-// CDM owners can also own non-CDM opportunities (e.g. PE accounts), so the
-// owner filter alone leaks rows like RMB / Agro-IT into the stats. The
-// authoritative signal is Account.Group__c = 'CDM', matching the "Pipeline -
-// CDM" Salesforce list view.
-const cdmGroupClause = "Account.Group__c = 'CDM'";
 
-// Membership in the CDM BRO pipeline is decided SOLELY by Account.Group__c =
-// 'CDM' — regardless of owner. A trio member's deal on a non-CDM account does
-// NOT count. The owner only drives the by-originator breakdown below (trio
+// Comma-joined quoted owner names for the active team's `Owner.Name IN (...)`.
+function ownerNamesClauseFor(team: StatsTeam): string {
+  return TEAM_CONFIG[team].ownerNames.map((n) => `'${escapeSoql(n)}'`).join(",");
+}
+// The SOQL predicate that decides BRO-pipeline membership for the active team.
+// CDM: Account.Group__c = 'CDM' (owners can also own non-CDM deals, so the
+// owner filter alone would leak rows — group is the authoritative signal,
+// matching the "Pipeline - CDM" list view). Small M&A: Amount <= 8000 (≤ $8M).
+function pipelineClauseFor(team: StatsTeam): string {
+  return TEAM_CONFIG[team].pipelineClause;
+}
+
+// Pipeline membership is decided SOLELY by the team's pipeline clause —
+// regardless of owner. A team member's deal that falls outside the clause does
+// NOT count. The owner only drives the by-originator breakdown below (team
 // members get their own bar; everyone else rolls into "Other").
 export const OTHER_ORIGINATOR = "Other";
 
@@ -117,7 +155,8 @@ async function runQuery<T>(
 export async function fetchTaskCountsForRange(
   credentials: SfCredentials,
   rangeStart: string,
-  rangeEnd: string
+  rangeEnd: string,
+  team: StatsTeam
 ): Promise<TaskCountRow[]> {
   const soql =
     `SELECT Owner.Name ownerName, Subject_Type__c stype, COUNT(Id) cnt ` +
@@ -125,7 +164,7 @@ export async function fetchTaskCountsForRange(
     `WHERE Subject_Type__c IN (${subjectTypesClause}) ` +
     `AND Status = 'Completed' ` +
     `AND ActivityDate >= ${rangeStart} AND ActivityDate <= ${rangeEnd} ` +
-    `AND Owner.Name IN (${ownerNamesClause}) ` +
+    `AND Owner.Name IN (${ownerNamesClauseFor(team)}) ` +
     `GROUP BY Owner.Name, Subject_Type__c`;
 
   type Row = { ownerName: string; stype: TrackedSubjectType; cnt: number };
@@ -142,7 +181,8 @@ export async function fetchTaskCountsForRange(
 
 export async function fetchTaskCountsByBucket(
   credentials: SfCredentials,
-  buckets: Bucket[]
+  buckets: Bucket[],
+  team: StatsTeam
 ): Promise<BucketCountRow[]> {
   if (buckets.length === 0) return [];
 
@@ -154,7 +194,7 @@ export async function fetchTaskCountsByBucket(
         `WHERE Subject_Type__c IN (${subjectTypesClause}) ` +
         `AND Status = 'Completed' ` +
         `AND ActivityDate >= ${b.start} AND ActivityDate <= ${b.end} ` +
-        `AND Owner.Name IN (${ownerNamesClause}) ` +
+        `AND Owner.Name IN (${ownerNamesClauseFor(team)}) ` +
         `GROUP BY Subject_Type__c`;
 
       type Row = { stype: TrackedSubjectType; cnt: number };
@@ -189,13 +229,14 @@ export async function fetchTaskCountsByBucket(
 // ── Open opportunities summed by stage ───────────────────────────────────────
 
 export async function fetchOpportunitiesByStage(
-  credentials: SfCredentials
+  credentials: SfCredentials,
+  team: StatsTeam
 ): Promise<StageTotalRow[]> {
   const soql =
     `SELECT StageName stage, SUM(Amount) total ` +
     `FROM Opportunity ` +
     `WHERE StageName IN (${stagesClause}) ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${pipelineClauseFor(team)} ` +
     `AND IsClosed = false ` +
     `GROUP BY StageName`;
 
@@ -214,31 +255,33 @@ export async function fetchOpportunitiesByStage(
 // ── Open BRO by originator (Owner.Name) ──────────────────────────────────────
 
 export async function fetchOpenBROByOriginator(
-  credentials: SfCredentials
+  credentials: SfCredentials,
+  team: StatsTeam
 ): Promise<OriginatorTotalRow[]> {
   const soql =
     `SELECT Owner.Name ownerName, SUM(Amount) total ` +
     `FROM Opportunity ` +
     `WHERE StageName IN (${stagesClause}) ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${pipelineClauseFor(team)} ` +
     `AND IsClosed = false ` +
     `GROUP BY Owner.Name`;
 
   type Row = { ownerName: string; total: number | null };
   const rows = await runQuery<Row>(credentials, soql);
 
-  // Trio owners get their own bar; everyone else (CDM-group deals owned outside
-  // the trio) rolls into a single "Other" bar so the totals still reconcile.
-  const trio = new Set<string>(CDM_OWNER_NAMES);
+  // Team owners get their own bar; everyone else (in-pipeline deals owned
+  // outside the team) rolls into a single "Other" bar so totals reconcile.
+  const teamOwners = TEAM_CONFIG[team].ownerNames;
+  const roster = new Set<string>(teamOwners);
   const byOwner = new Map<string, number>();
   let otherTotal = 0;
   for (const r of rows) {
     const amt = Number(r.total) || 0;
-    if (trio.has(r.ownerName)) byOwner.set(r.ownerName, amt);
+    if (roster.has(r.ownerName)) byOwner.set(r.ownerName, amt);
     else otherTotal += amt;
   }
 
-  const result: OriginatorTotalRow[] = CDM_OWNER_NAMES.map((n) => ({
+  const result: OriginatorTotalRow[] = teamOwners.map((n) => ({
     owner: n,
     total: (byOwner.get(n) ?? 0) * BRO_AMOUNT_MULTIPLIER,
   }));
@@ -255,6 +298,7 @@ export async function fetchOpenBROByOriginator(
 
 export async function fetchStuckOpportunities(
   credentials: SfCredentials,
+  team: StatsTeam,
   thresholdDays: number = 30,
   limit: number = 20
 ): Promise<StuckOpportunity[]> {
@@ -263,7 +307,7 @@ export async function fetchStuckOpportunities(
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName IN (${stagesClause}) ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${pipelineClauseFor(team)} ` +
     `ORDER BY LastModifiedDate ASC ` +
     `LIMIT 200`;
 
@@ -417,15 +461,17 @@ function oppToDrillRow(r: RawOppRow): DrillAccountRow {
 /** Open BROs originated by a specific CDM owner. */
 export async function fetchDrillOppsByOriginator(
   credentials: SfCredentials,
-  ownerName: string
+  ownerName: string,
+  team: StatsTeam
 ): Promise<DrillAccountRow[]> {
-  // Both branches are scoped to CDM-group accounts (membership = group). "Other"
-  // = CDM-group BROs owned outside the trio; a named owner = that person's
-  // CDM-group BROs only.
+  // Both branches are scoped to the team's pipeline (membership = pipeline
+  // clause). "Other" = in-pipeline BROs owned outside the team; a named owner =
+  // that person's in-pipeline BROs only.
+  const pipelineClause = pipelineClauseFor(team);
   const ownerClause =
     ownerName === OTHER_ORIGINATOR
-      ? `Owner.Name NOT IN (${ownerNamesClause}) AND ${cdmGroupClause}`
-      : `Owner.Name = '${escapeSoql(ownerName)}' AND ${cdmGroupClause}`;
+      ? `Owner.Name NOT IN (${ownerNamesClauseFor(team)}) AND ${pipelineClause}`
+      : `Owner.Name = '${escapeSoql(ownerName)}' AND ${pipelineClause}`;
   const soql =
     `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, ` +
     `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
@@ -442,7 +488,8 @@ export async function fetchDrillOppsByOriginator(
 /** Open BROs in a specific stage (across all CDM owners). */
 export async function fetchDrillOppsByStage(
   credentials: SfCredentials,
-  stage: string
+  stage: string,
+  team: StatsTeam
 ): Promise<DrillAccountRow[]> {
   const soql =
     `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, ` +
@@ -450,7 +497,7 @@ export async function fetchDrillOppsByStage(
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName = '${escapeSoql(stage)}' ` +
-    `AND ${cdmGroupClause} ` +
+    `AND ${pipelineClauseFor(team)} ` +
     `ORDER BY Amount DESC NULLS LAST ` +
     `LIMIT 200`;
   const rows = await runQuery<RawOppRow>(credentials, soql);
@@ -459,14 +506,17 @@ export async function fetchDrillOppsByStage(
 
 // ── F2F This Year (always YTD, regardless of selected range) ─────────────────
 
-export async function fetchF2FThisYear(credentials: SfCredentials): Promise<number> {
+export async function fetchF2FThisYear(
+  credentials: SfCredentials,
+  team: StatsTeam
+): Promise<number> {
   const soql =
     `SELECT COUNT(Id) cnt ` +
     `FROM Task ` +
     `WHERE Subject_Type__c = 'F2F' ` +
     `AND Status = 'Completed' ` +
     `AND ActivityDate = THIS_YEAR ` +
-    `AND Owner.Name IN (${ownerNamesClause})`;
+    `AND Owner.Name IN (${ownerNamesClauseFor(team)})`;
 
   type Row = { cnt: number };
   const rows = await runQuery<Row>(credentials, soql);

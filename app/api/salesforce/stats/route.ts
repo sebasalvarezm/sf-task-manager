@@ -8,8 +8,9 @@ import {
   fetchOpenBROByOriginator,
   fetchF2FThisYear,
   fetchStuckOpportunities,
-  CDM_OWNER_NAMES,
+  TEAM_CONFIG,
   TaskCountRow,
+  type StatsTeam,
 } from "@/lib/salesforce-stats";
 import { Bucket } from "@/lib/date-ranges";
 import { computeConversion } from "@/lib/analytics-derivations";
@@ -25,6 +26,8 @@ export async function GET(req: NextRequest) {
   const start = url.searchParams.get("start");
   const end = url.searchParams.get("end");
   const bucketsParam = url.searchParams.get("buckets");
+  const teamParam = url.searchParams.get("team");
+  const team: StatsTeam = teamParam === "cdm" ? "cdm" : "small_ma";
 
   if (!start || !end) {
     return NextResponse.json(
@@ -53,16 +56,16 @@ export async function GET(req: NextRequest) {
 
     const [taskRows, bucketRows, stageRows, originatorRows, f2fYtd, stuckOpps] =
       await Promise.all([
-        fetchTaskCountsForRange(credentials, start, end),
-        fetchTaskCountsByBucket(credentials, buckets),
-        fetchOpportunitiesByStage(credentials),
-        fetchOpenBROByOriginator(credentials),
-        fetchF2FThisYear(credentials),
-        fetchStuckOpportunities(credentials),
+        fetchTaskCountsForRange(credentials, start, end, team),
+        fetchTaskCountsByBucket(credentials, buckets, team),
+        fetchOpportunitiesByStage(credentials, team),
+        fetchOpenBROByOriginator(credentials, team),
+        fetchF2FThisYear(credentials, team),
+        fetchStuckOpportunities(credentials, team),
       ]);
 
     const kpis = computeKpis(taskRows);
-    const byPerson = computeByPerson(taskRows, originatorRows);
+    const byPerson = computeByPerson(taskRows, originatorRows, team);
 
     const totalOpenBRO = originatorRows.reduce((sum, r) => sum + r.total, 0);
 
@@ -139,10 +142,11 @@ type PersonBreakdown = {
 
 function computeByPerson(
   taskRows: TaskCountRow[],
-  originatorRows: { owner: string; total: number }[]
+  originatorRows: { owner: string; total: number }[],
+  team: StatsTeam
 ): PersonBreakdown[] {
   const byOwner = new Map<string, PersonBreakdown>();
-  for (const name of CDM_OWNER_NAMES) {
+  for (const name of TEAM_CONFIG[team].ownerNames) {
     byOwner.set(name, {
       owner: name,
       e1: 0,
