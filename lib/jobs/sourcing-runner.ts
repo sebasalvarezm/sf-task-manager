@@ -26,6 +26,10 @@ import {
   type WaybackStatus,
   type CompanyAnchor,
 } from "@/lib/scout";
+import {
+  buildPrepackagedEmail,
+  type PrepackagedEmail,
+} from "@/lib/email-prepackage";
 
 export type SourcingResult = {
   url: string;
@@ -54,6 +58,7 @@ export type SourcingResult = {
   outreachParagraph: string | null;
   emailHook: string | null;
   competitors: { name: string; differentiator: string }[];
+  prepackagedEmail?: PrepackagedEmail | null;
   logs: string[];
 };
 
@@ -528,6 +533,24 @@ export async function runFullSourcing(input: {
     );
   }
 
+  // ───────── Stage 5: Prepackage Email 1 ─────────
+  // Plain string swaps into the matched subgroup's template — no AI call.
+  const prepackagedEmail = buildPrepackagedEmail({
+    mainGroup: portfolioMatch.mainGroup,
+    subgroup: portfolioMatch.group,
+    emailHook,
+    outreachParagraph,
+    address,
+    locationConfidence,
+    now: new Date(),
+  });
+  if (prepackagedEmail.skipped) {
+    logs.push(`Prepackaged email skipped: ${prepackagedEmail.skipReason}`);
+  } else {
+    logs.push(`Prepackaged Email 1 built from "${prepackagedEmail.templateSubgroup}".`);
+    for (const w of prepackagedEmail.warnings) logs.push(`Prepackage note: ${w}`);
+  }
+
   onProgress?.("details", 100);
 
   return {
@@ -551,6 +574,7 @@ export async function runFullSourcing(input: {
     outreachParagraph,
     emailHook,
     competitors,
+    prepackagedEmail,
     logs,
   };
 }

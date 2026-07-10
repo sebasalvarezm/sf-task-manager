@@ -1,0 +1,242 @@
+import fs from "fs";
+import path from "path";
+
+// Builds a ready-to-send "Email 1" draft by dropping the sourcing tool's
+// already-generated pieces (hook, outreach paragraph, town + week) into the
+// matched subgroup's template in content/email-sequences.md.
+//
+// Every swap is PLAIN STRING replacement — no AI call — so the template wording
+// stays exactly as written and Salesforce merge fields ({{...}}) pass through
+// untouched.
+
+export type PrepackagedEmail = {
+  body: string | null; // finished draft; null when skipped
+  templateSubgroup: string | null; // e.g. "Manufacturing — Production Quality"
+  warnings: string[]; // things to double-check before sending
+  skipped: boolean;
+  skipReason: string | null;
+};
+
+// The exact template strings we replace. These appear verbatim in every
+// "Email 1 — Initial Outreach" body in content/email-sequences.md.
+const HOOK_SENTENCE =
+  "I have studied {{account.name}} going back to the release of (INSERT PRODUCT).";
+const TOWN_WEEK_PLACEHOLDER = "[INSERT TOWN AND WEEK]";
+const CORE_PARAGRAPH_PREFIX = "We are building a dedicated";
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function loadEmailSequences(): string {
+  const filePath = path.join(process.cwd(), "content", "email-sequences.md");
+  return fs.readFileSync(filePath, "utf-8");
+}
+
+function norm(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Split a section header like "Manufacturing — Production Quality" into its
+// main-group and subgroup halves (on the em dash).
+function parseHeader(header: string): { main: string; sub: string } | null {
+  const parts = header.split("—");
+  if (parts.length < 2) return null;
+  return {
+    main: parts[0].trim(),
+    sub: parts.slice(1).join("—").trim(),
+  };
+}
+
+// Pull the "Email 1 — Initial Outreach" body out of a section, stopping at the
+// next subheading (### / ---) and dropping editorial notes like
+// "*(No Email 2 or Email 3 written yet…)*".
+function extractEmail1(sectionBody: string): string | null {
+  const subs = sectionBody.split(/\n### /);
+  for (const sub of subs) {
+    if (!/^Email 1\b/i.test(sub.trim())) continue;
+    const nl = sub.indexOf("\n");
+    let body = nl === -1 ? "" : sub.slice(nl + 1);
+    body = body.split(/\n---/)[0];
+    return body.trim();
+  }
+  return null;
+}
+
+function findEmail1Section(
+  fileContent: string,
+  mainGroup: string | null,
+  subgroup: string,
+): { header: string; email1Body: string } | null {
+  // chunks[0] is the preamble; each subsequent chunk begins with a header line.
+  const chunks = fileContent.split(/\n## /);
+  for (let i = 1; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const nl = chunk.indexOf("\n");
+    const header = (nl === -1 ? chunk : chunk.slice(0, nl)).trim();
+    const parsed = parseHeader(header);
+    if (!parsed) continue;
+    if (norm(parsed.sub) !== norm(subgroup)) continue;
+    if (mainGroup && norm(parsed.main) !== norm(mainGroup)) continue;
+
+    const email1Body = extractEmail1(nl === -1 ? "" : chunk.slice(nl + 1));
+    if (email1Body) return { header, email1Body };
+  }
+  return null;
+}
+
+// City = the second-to-last comma-separated part of a US-style address
+// ("11340 Lakefield Dr, Johns Creek, GA 30097" → "Johns Creek"), or the sole
+// part when there are no commas.
+function parseCity(address: string): string | null {
+  const parts = address
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  return parts[parts.length - 2];
+}
+
+// "the {ordinal} week of {Month}" for a date 21 days after `now`.
+function ordinalWeekPhrase(now: Date): string {
+  const d = new Date(now.getTime());
+  d.setDate(d.getDate() + 21);
+  const day = d.getDate();
+  let ordinal: string;
+  let monthIdx = d.getMonth();
+  if (day <= 7) ordinal = "first";
+  else if (day <= 14) ordinal = "second";
+  else if (day <= 21) ordinal = "third";
+  else if (day <= 28) ordinal = "fourth";
+  else {
+    // 29th or later → roll into the first week of next month.
+    ordinal = "first";
+    monthIdx = (monthIdx + 1) % 12;
+  }
+  return `the ${ordinal} week of ${MONTHS[monthIdx]}`;
+}
+
+export function buildPrepackagedEmail(args: {
+  mainGroup: string | null;
+  subgroup: string | null;
+  emailHook: string | null;
+  outreachParagraph: string | null;
+  address: string | null;
+  locationConfidence: "exact" | "city" | "none";
+  now: Date;
+}): PrepackagedEmail {
+  const {
+    mainGroup,
+    subgroup,
+    emailHook,
+    outreachParagraph,
+    address,
+    locationConfidence,
+    now,
+  } = args;
+
+  if (!subgroup) {
+    return {
+      body: null,
+      templateSubgroup: null,
+      warnings: [],
+      skipped: true,
+      skipReason:
+        "No portfolio subgroup matched, so no email template could be selected.",
+    };
+  }
+
+  let fileContent: string;
+  try {
+    fileContent = loadEmailSequences();
+  } catch {
+    return {
+      body: null,
+      templateSubgroup: null,
+      warnings: [],
+      skipped: true,
+      skipReason: "Email template file could not be read.",
+    };
+  }
+
+  const section = findEmail1Section(fileContent, mainGroup, subgroup);
+  if (!section) {
+    return {
+      body: null,
+      templateSubgroup: null,
+      warnings: [],
+      skipped: true,
+      skipReason: `No email template exists yet for the "${subgroup}" subgroup.`,
+    };
+  }
+
+  const warnings: string[] = [];
+  let body = section.email1Body;
+
+  // 1. Swap the hook sentence. Use a replacer function so any "$" in the hook
+  //    is treated literally.
+  if (emailHook) {
+    const replaced = body.replace(HOOK_SENTENCE, () => emailHook);
+    if (replaced === body) {
+      warnings.push(
+        "Could not find the hook placeholder in the template — the hook was not inserted.",
+      );
+    }
+    body = replaced;
+  } else {
+    warnings.push(
+      "Email hook was not generated — the template's placeholder sentence is still in place.",
+    );
+  }
+
+  // 2. Swap the core paragraph (and drop editorial notes).
+  const paragraphs = body.split(/\n\n+/);
+  const rebuilt: string[] = [];
+  let swappedCore = false;
+  for (const p of paragraphs) {
+    const t = p.trim();
+    if (/^\*\(.*\)\*$/.test(t)) continue; // editorial note like *(No Email 2…)*
+    if (!swappedCore && t.startsWith(CORE_PARAGRAPH_PREFIX)) {
+      swappedCore = true;
+      if (outreachParagraph) {
+        rebuilt.push(outreachParagraph.trim());
+      } else {
+        warnings.push(
+          "Outreach paragraph was not generated — the generic template paragraph is still in place.",
+        );
+        rebuilt.push(p);
+      }
+      continue;
+    }
+    rebuilt.push(p);
+  }
+  if (!swappedCore) {
+    warnings.push("Could not locate the core paragraph to personalize.");
+  }
+  body = rebuilt.join("\n\n");
+
+  // 3. Fill in town + week.
+  const week = ordinalWeekPhrase(now);
+  const town =
+    locationConfidence !== "none" && address ? parseCity(address) : null;
+  let townWeek: string;
+  if (town) {
+    townWeek = `${town} on ${week}`;
+  } else {
+    townWeek = `[INSERT TOWN] on ${week}`;
+    warnings.push(
+      "Town could not be determined — [INSERT TOWN] is left in the draft; fill it in before sending.",
+    );
+  }
+  body = body.replace(TOWN_WEEK_PLACEHOLDER, () => townWeek);
+
+  return {
+    body: body.trim(),
+    templateSubgroup: section.header,
+    warnings,
+    skipped: false,
+    skipReason: null,
+  };
+}

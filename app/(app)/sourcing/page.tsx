@@ -60,7 +60,17 @@ type SourcingResult = {
   outreachParagraph: string | null;
   emailHook?: string | null;
   competitors: { name: string; differentiator: string }[];
+  prepackagedEmail?: PrepackagedEmail | null;
   logs?: string[];
+};
+
+// Mirrors PrepackagedEmail in lib/email-prepackage.ts.
+type PrepackagedEmail = {
+  body: string | null;
+  templateSubgroup: string | null;
+  warnings: string[];
+  skipped: boolean;
+  skipReason: string | null;
 };
 
 // One row of a bulk sourcing run (mirrors BulkSourcingItem in
@@ -747,6 +757,7 @@ function BulkResultList({ items }: { items: BulkItem[] }) {
 function SourcingResultDisplay({ result }: { result: SourcingResult }) {
   const [copied, setCopied] = useState(false);
   const [copiedHook, setCopiedHook] = useState(false);
+  const [copiedEmail, setCopiedEmail] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
 
   const copy = useCallback(async () => {
@@ -770,6 +781,18 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
       /* clipboard blocked */
     }
   }, [result.emailHook]);
+
+  const prepackaged = result.prepackagedEmail ?? null;
+  const copyEmail = useCallback(async () => {
+    if (!prepackaged?.body) return;
+    try {
+      await navigator.clipboard.writeText(prepackaged.body);
+      setCopiedEmail(true);
+      setTimeout(() => setCopiedEmail(false), 2000);
+    } catch {
+      /* clipboard blocked */
+    }
+  }, [prepackaged?.body]);
 
   const domain = domainFromUrl(result.url);
 
@@ -824,6 +847,58 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
           >
             {copiedHook ? "Copied" : "Copy Hook"}
           </Button>
+        </Card>
+      )}
+
+      {/* Prepackaged Email 1 — full outreach draft assembled from the template */}
+      {prepackaged && (
+        <Card padded={false} className="p-5">
+          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
+            Prepackaged Email 1
+            {prepackaged.templateSubgroup && (
+              <span className="ml-auto normal-case tracking-normal font-normal text-ink-muted">
+                Template: {prepackaged.templateSubgroup}
+              </span>
+            )}
+          </h3>
+
+          {prepackaged.skipped ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              No email draft was prepackaged. {prepackaged.skipReason}
+            </div>
+          ) : (
+            <>
+              {prepackaged.warnings.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 mb-3 text-sm text-amber-700">
+                  <p className="font-medium mb-1">Check before sending:</p>
+                  <ul className="list-disc pl-5 space-y-0.5">
+                    {prepackaged.warnings.map((w, i) => (
+                      <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">
+                {prepackaged.body}
+              </p>
+              <Button
+                size="sm"
+                variant={copiedEmail ? "secondary" : "primary"}
+                onClick={copyEmail}
+                leftIcon={
+                  copiedEmail ? (
+                    <Check className="h-3.5 w-3.5" strokeWidth={2} />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" strokeWidth={2} />
+                  )
+                }
+                className="mt-3"
+              >
+                {copiedEmail ? "Copied" : "Copy Email"}
+              </Button>
+            </>
+          )}
         </Card>
       )}
 
