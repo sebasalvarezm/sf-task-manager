@@ -63,7 +63,40 @@ type SourcingResult = {
   logs?: string[];
 };
 
+// One row of a bulk sourcing run (mirrors BulkSourcingItem in
+// lib/jobs/sourcing-bulk-runner.ts — kept as a local type so no server code is
+// pulled into the client bundle).
+type BulkItem = {
+  input: string;
+  url: string | null;
+  resolvedFrom: "url" | "account";
+  accountName?: string;
+  cached: boolean;
+  error: string | null;
+  result: SourcingResult | null;
+};
+
+type BulkResult = { items: BulkItem[] };
+
+// Max companies per bulk batch (matches MAX_BULK_ENTRIES on the server).
+const BULK_CAP = 10;
+
 // ───────── Helpers ─────────
+
+// Parse a pasted blob (newline- or comma-separated) into a clean, deduped list.
+function parseBulkEntries(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const piece of raw.split(/[\n,]/)) {
+    const e = piece.trim();
+    if (!e) continue;
+    const key = e.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
+}
 
 function domainFromUrl(url: string): string {
   try {
@@ -123,11 +156,13 @@ function SourcingPageContent() {
   const { jobs, refetch } = useJobs();
 
   const sourcingJobs = useMemo(
-    () => jobs.filter((j) => j.kind === "sourcing"),
+    () => jobs.filter((j) => j.kind === "sourcing" || j.kind === "sourcing_bulk"),
     [jobs],
   );
 
+  const [mode, setMode] = useState<"single" | "bulk">("single");
   const [url, setUrl] = useState("");
+  const [bulkText, setBulkText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -225,6 +260,41 @@ function SourcingPageContent() {
     }
   }
 
+  async function handleBulkSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (submitting) return;
+    const entries = parseBulkEntries(bulkText).slice(0, BULK_CAP);
+    if (entries.length === 0) return;
+
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const res = await fetch("/api/jobs/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "sourcing_bulk",
+          input: { entries },
+          label: `Sourcing: ${entries.length} ${
+            entries.length === 1 ? "company" : "companies"
+          }`,
+          resultRoute: `/sourcing?jobId={jobId}`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to start job");
+      setBulkText("");
+      refetch();
+      router.push(`/sourcing?jobId=${data.jobId}`);
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error ? err.message : "Network error — try again",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   const selectedJob =
     (selectedJobId && sourcingJobs.find((j) => j.id === selectedJobId)) ||
     (selectedJobId && extraJob?.id === selectedJobId ? extraJob : null) ||
@@ -245,7 +315,29 @@ function SourcingPageContent() {
         subtitle="Paste a company URL — the scrape runs in the background. Keep working in another tool while it does its thing."
       />
       <PageContent>
-        {/* URL form */}
+        {/* Single / Bulk mode toggle */}
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit mb-4">
+          {(["single", "bulk"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setMode(m);
+                setSubmitError(null);
+              }}
+              className={
+                mode === m
+                  ? "px-4 py-1.5 text-sm font-medium rounded-md bg-navy text-white"
+                  : "px-4 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:bg-gray-200"
+              }
+            >
+              {m === "single" ? "Single" : "Bulk"}
+            </button>
+          ))}
+        </div>
+
+        {/* URL form (single) */}
+        {mode === "single" && (
         <Card>
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             <label className="text-sm font-medium text-ink">Company URL</label>
@@ -278,6 +370,54 @@ function SourcingPageContent() {
             )}
           </form>
         </Card>
+        )}
+
+        {/* Bulk paste form */}
+        {mode === "bulk" && (
+        <Card>
+          <form onSubmit={handleBulkSubmit} className="flex flex-col gap-3">
+            <label className="text-sm font-medium text-ink">
+              Paste companies — one per line (URL or Salesforce account name)
+            </label>
+            <textarea
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder={"acme.com\nGlobex Corporation\ninitech.io"}
+              disabled={submitting}
+              rows={7}
+              className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-muted/60 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand/20 resize-y font-mono"
+            />
+            {(() => {
+              const parsed = parseBulkEntries(bulkText);
+              const capped = parsed.length > BULK_CAP;
+              return (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-ink-muted">
+                    {parsed.length === 0
+                      ? `Up to ${BULK_CAP} at a time. Account names are matched to their Salesforce website.`
+                      : `${Math.min(parsed.length, BULK_CAP)} to source${
+                          capped
+                            ? ` (first ${BULK_CAP} of ${parsed.length} — the rest are ignored)`
+                            : ""
+                        }. Each takes 30–90s; runs in the background.`}
+                  </p>
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    size="md"
+                    loading={submitting}
+                    disabled={parsed.length === 0}
+                    className="shrink-0"
+                  >
+                    {submitting ? "Starting…" : "Run batch"}
+                  </Button>
+                </div>
+              );
+            })()}
+            {submitError && <Alert variant="danger">{submitError}</Alert>}
+          </form>
+        </Card>
+        )}
 
         {/* Cache banner — only when this view was loaded from a previous run */}
         {selectedJob && isCachedView && cachedAgeDays != null && (
@@ -467,7 +607,17 @@ function JobResultPanel({ job }: { job: Job }) {
     );
   }
 
-  // succeeded
+  // succeeded — bulk runs render a collapsed list of companies
+  if (job.kind === "sourcing_bulk") {
+    const bulk = job.result as unknown as BulkResult | null;
+    if (!bulk || !Array.isArray(bulk.items) || bulk.items.length === 0) {
+      return (
+        <Alert variant="warn">No result data on this job — try running again.</Alert>
+      );
+    }
+    return <BulkResultList items={bulk.items} />;
+  }
+
   const result = job.result as unknown as SourcingResult | null;
   if (!result) {
     return (
@@ -476,6 +626,112 @@ function JobResultPanel({ job }: { job: Job }) {
   }
 
   return <SourcingResultDisplay result={result} />;
+}
+
+// ───────── Bulk result list (collapsed → expand-in-place) ─────────
+
+function BulkResultList({ items }: { items: BulkItem[] }) {
+  const [open, setOpen] = useState<Set<number>>(new Set());
+
+  const toggle = (i: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+
+  const okCount = items.filter((it) => it.result).length;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-ink-muted">
+          Batch Results
+        </h2>
+        <span className="text-xs text-ink-muted">
+          {okCount} of {items.length} sourced
+        </span>
+      </div>
+
+      {items.map((item, i) => {
+        const isOpen = open.has(i);
+        const title =
+          item.accountName ||
+          (item.url ? domainFromUrl(item.url) : item.input);
+        const hasResult = !!item.result;
+
+        return (
+          <div
+            key={`${item.input}-${i}`}
+            className="rounded-lg border border-line bg-white overflow-hidden"
+          >
+            <button
+              type="button"
+              onClick={() => hasResult && toggle(i)}
+              className={`w-full text-left px-4 py-3 flex items-center gap-3 ${
+                hasResult ? "hover:bg-surface-2 cursor-pointer" : "cursor-default"
+              }`}
+            >
+              <div className="shrink-0">
+                {item.error ? (
+                  <AlertCircle className="h-4 w-4 text-danger" strokeWidth={2} />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 text-ok" strokeWidth={2} />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-ink truncate">{title}</p>
+                {item.error ? (
+                  <p className="text-xs text-danger mt-0.5">{item.error}</p>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                    {item.result?.foundingYear && (
+                      <Badge variant="neutral">
+                        Founded {item.result.foundingYear}
+                      </Badge>
+                    )}
+                    {item.result?.portfolioMatch?.matched &&
+                      item.result.portfolioMatch.group && (
+                        <Badge variant="brand">
+                          {item.result.portfolioMatch.group}
+                        </Badge>
+                      )}
+                    {item.resolvedFrom === "account" && (
+                      <Badge variant="neutral">from Salesforce</Badge>
+                    )}
+                    {item.cached && <Badge variant="neutral">cached</Badge>}
+                  </div>
+                )}
+              </div>
+              {hasResult && (
+                <svg
+                  className={`h-4 w-4 text-ink-muted shrink-0 transition-transform ${
+                    isOpen ? "rotate-180" : ""
+                  }`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              )}
+            </button>
+            {isOpen && hasResult && item.result && (
+              <div className="px-4 pb-5 pt-2 border-t border-line">
+                <SourcingResultDisplay result={item.result} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 // ───────── Rich result display ─────────

@@ -1660,17 +1660,13 @@ export async function generateEmailHook(
     ? `\nFOUNDING YEAR (use only as last resort, and only when attached to a specific clause): ${foundingYear}\n`
     : "";
 
-  const adjacencyBlock = matchedGroupContent
-    ? `\nVALSTONE PORTFOLIO ANGLE (use this for ONE concrete second sentence — a portfolio adjacency or the vertical thesis we're building toward):\n${matchedGroupContent.slice(0, 3500)}\n`
-    : "";
-
   const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
     max_tokens: 400,
     messages: [
       {
         role: "user",
-        content: `Write a personalized 1-2 sentence cold-email OPENER (a "hook") for the company "${companyName}" (${url}). The hook is the very first thing the recipient reads. Its job is to prove we did real homework on this specific company so the email feels written for them, not blasted from a template.
+        content: `Write a personalized single-sentence cold-email OPENER (a "hook") for the company "${companyName}" (${url}). The hook is the very first thing the recipient reads. Its job is to prove we did real homework on this specific company so the email feels written for them, not blasted from a template.
 
 GOLDEN EXAMPLES (target style — specific, falsifiable, written-not-templated):
 - "I have studied MaxMine going back to the days operating as Resolution Systems."
@@ -1701,15 +1697,14 @@ HARD BANS:
 - Wrapping quotes around the hook.
 
 LENGTH & SHAPE:
-- Maximum 2 sentences. Total length under 60 words.
-- If a Valstone portfolio angle is provided below, weave in ONE concrete adjacency or thesis reference as the second sentence. If none is provided, keep it to one sentence.
+- Write EXACTLY ONE sentence. Total length under 40 words.
+- Do NOT add a second sentence about our thesis, portfolio, adjacencies, or what we are building. The opener stands alone.
 - Tone: respectful, founder-to-founder, no sales jargon.
 
 INPUTS:
 ${anchorsBlock}${discontinuedBlock}${oldProductsBlock}${productsBlock}${foundingYearBlock}
 CURRENT WEBSITE COPY:
 ${currentText.slice(0, 2500)}
-${adjacencyBlock}
 Return only the hook text. No commentary.`,
       },
     ],

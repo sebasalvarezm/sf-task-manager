@@ -1,6 +1,7 @@
 import { serve } from "inngest/next";
 import { inngest } from "@/lib/inngest/client";
 import { sourcingJob } from "@/lib/inngest/functions/sourcing";
+import { sourcingBulkJob } from "@/lib/inngest/functions/sourcing-bulk";
 import { tripSearchJob } from "@/lib/inngest/functions/trip-search";
 import { tripGeocodeJob } from "@/lib/inngest/functions/trip-geocode";
 import { callsLogJob } from "@/lib/inngest/functions/calls-log";
@@ -13,6 +14,7 @@ export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
     sourcingJob,
+    sourcingBulkJob,
     tripSearchJob,
     tripGeocodeJob,
     callsLogJob,

@@ -2,6 +2,7 @@ import { getSupabaseAdmin } from "./supabase";
 
 export type JobKind =
   | "sourcing"
+  | "sourcing_bulk"
   | "prep"
   | "task_bulk"
   | "trip_geocode"

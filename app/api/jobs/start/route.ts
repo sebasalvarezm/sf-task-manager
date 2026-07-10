@@ -5,6 +5,7 @@ import { inngest } from "@/lib/inngest/client";
 
 const VALID_KINDS: ReadonlySet<JobKind> = new Set([
   "sourcing",
+  "sourcing_bulk",
   "prep",
   "task_bulk",
   "trip_geocode",

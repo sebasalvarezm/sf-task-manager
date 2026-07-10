@@ -6,6 +6,7 @@ export type Job = {
   id: string;
   kind:
     | "sourcing"
+    | "sourcing_bulk"
     | "prep"
     | "task_bulk"
     | "trip_geocode"

@@ -32,6 +32,7 @@ const NAV = [
 
 const KIND_TO_ROUTE: Record<Job["kind"], string> = {
   sourcing: "/sourcing",
+  sourcing_bulk: "/sourcing",
   prep: "/prep",
   task_bulk: "/tasks",
   trip_geocode: "/trip",
