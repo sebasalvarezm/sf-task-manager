@@ -260,8 +260,8 @@ function SourcingPageContent() {
     }
   }
 
-  async function handleBulkSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleBulkSubmit(e?: React.FormEvent) {
+    e?.preventDefault();
     if (submitting) return;
     const entries = parseBulkEntries(bulkText).slice(0, BULK_CAP);
     if (entries.length === 0) return;
@@ -382,6 +382,14 @@ function SourcingPageContent() {
             <textarea
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
+              onKeyDown={(e) => {
+                // Ctrl+Enter (or Cmd+Enter on Mac) runs the batch without
+                // scrolling down to the button.
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  void handleBulkSubmit();
+                }
+              }}
               placeholder={"acme.com\nGlobex Corporation\ninitech.io"}
               disabled={submitting}
               rows={7}
