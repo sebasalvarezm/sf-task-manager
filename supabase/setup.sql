@@ -143,6 +143,7 @@ END $$;
 ALTER TYPE job_kind ADD VALUE IF NOT EXISTS 'trip_search';
 ALTER TYPE job_kind ADD VALUE IF NOT EXISTS 'calls_log';
 ALTER TYPE job_kind ADD VALUE IF NOT EXISTS 'accounts_enrich';
+ALTER TYPE job_kind ADD VALUE IF NOT EXISTS 'sourcing_bulk';
 
 DO $$ BEGIN
   CREATE TYPE job_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled');
