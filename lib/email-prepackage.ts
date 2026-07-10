@@ -10,6 +10,7 @@ import path from "path";
 // untouched.
 
 export type PrepackagedEmail = {
+  subject: string | null; // e.g. "Capital Grille Lunch: Valstone"
   body: string | null; // finished draft; null when skipped
   templateSubgroup: string | null; // e.g. "Manufacturing — Production Quality"
   warnings: string[]; // things to double-check before sending
@@ -28,6 +29,42 @@ const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
+
+// Generic cuisine/venue descriptor words. When one appears, we drop it and
+// everything after it, keeping the distinctive brand in front:
+//   "Eddie V's Prime Seafood" → "Eddie V's"
+//   "Ruth's Chris Steak House" → "Ruth's Chris"
+// "Grill"/"Grille" is intentionally NOT in the list so "The Capital Grille"
+// stays "Capital Grille".
+const RESTAURANT_DESCRIPTORS = [
+  "Prime Seafood", "Prime", "Seafood", "Steak House", "Steakhouse",
+  "Chop House", "Chophouse", "Restaurant", "Ristorante", "Trattoria",
+  "Bar & Grill", "Bar and Grill", "Bar", "Kitchen", "Tavern", "Bistro",
+  "Cantina", "Cocktail", "Brasserie", "Brewhouse", "Grillhouse",
+];
+
+// Shorten a full restaurant name to the short brand form used in the subject.
+function shortenRestaurantName(raw: string): string {
+  let s = raw.trim().replace(/^the\s+/i, "");
+
+  // Find the earliest descriptor keyword (whole word) and cut there.
+  let cutIdx = -1;
+  for (const kw of RESTAURANT_DESCRIPTORS) {
+    const re = new RegExp(
+      `\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "i",
+    );
+    const m = s.match(re);
+    if (m && m.index != null && m.index > 0 && (cutIdx === -1 || m.index < cutIdx)) {
+      cutIdx = m.index;
+    }
+  }
+  if (cutIdx > 0) s = s.slice(0, cutIdx);
+
+  // Trim trailing separators/punctuation left behind by the cut.
+  s = s.replace(/[\s,\-–—&]+$/, "").trim();
+  return s || raw.trim();
+}
 
 function loadEmailSequences(): string {
   const filePath = path.join(process.cwd(), "content", "email-sequences.md");
@@ -125,6 +162,7 @@ export function buildPrepackagedEmail(args: {
   outreachParagraph: string | null;
   address: string | null;
   locationConfidence: "exact" | "city" | "none";
+  restaurants: { name: string; description: string }[];
   now: Date;
 }): PrepackagedEmail {
   const {
@@ -134,11 +172,13 @@ export function buildPrepackagedEmail(args: {
     outreachParagraph,
     address,
     locationConfidence,
+    restaurants,
     now,
   } = args;
 
   if (!subgroup) {
     return {
+      subject: null,
       body: null,
       templateSubgroup: null,
       warnings: [],
@@ -153,6 +193,7 @@ export function buildPrepackagedEmail(args: {
     fileContent = loadEmailSequences();
   } catch {
     return {
+      subject: null,
       body: null,
       templateSubgroup: null,
       warnings: [],
@@ -164,6 +205,7 @@ export function buildPrepackagedEmail(args: {
   const section = findEmail1Section(fileContent, mainGroup, subgroup);
   if (!section) {
     return {
+      subject: null,
       body: null,
       templateSubgroup: null,
       warnings: [],
@@ -232,7 +274,20 @@ export function buildPrepackagedEmail(args: {
   }
   body = body.replace(TOWN_WEEK_PLACEHOLDER, () => townWeek);
 
+  // 4. Subject line: "<short restaurant name> Lunch: Valstone".
+  const chosenRestaurant = restaurants.find((r) => r.name && r.name.trim());
+  let subject: string;
+  if (chosenRestaurant) {
+    subject = `${shortenRestaurantName(chosenRestaurant.name)} Lunch: Valstone`;
+  } else {
+    subject = "[RESTAURANT] Lunch: Valstone";
+    warnings.push(
+      "No restaurant was found — [RESTAURANT] is left in the subject; fill it in before sending.",
+    );
+  }
+
   return {
+    subject,
     body: body.trim(),
     templateSubgroup: section.header,
     warnings,

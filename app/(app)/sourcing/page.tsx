@@ -66,6 +66,7 @@ type SourcingResult = {
 
 // Mirrors PrepackagedEmail in lib/email-prepackage.ts.
 type PrepackagedEmail = {
+  subject: string | null;
   body: string | null;
   templateSubgroup: string | null;
   warnings: string[];
@@ -758,6 +759,7 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
   const [copied, setCopied] = useState(false);
   const [copiedHook, setCopiedHook] = useState(false);
   const [copiedEmail, setCopiedEmail] = useState(false);
+  const [copiedSubject, setCopiedSubject] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
 
   const copy = useCallback(async () => {
@@ -793,6 +795,17 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
       /* clipboard blocked */
     }
   }, [prepackaged?.body]);
+
+  const copySubject = useCallback(async () => {
+    if (!prepackaged?.subject) return;
+    try {
+      await navigator.clipboard.writeText(prepackaged.subject);
+      setCopiedSubject(true);
+      setTimeout(() => setCopiedSubject(false), 2000);
+    } catch {
+      /* clipboard blocked */
+    }
+  }, [prepackaged?.subject]);
 
   const domain = domainFromUrl(result.url);
 
@@ -877,6 +890,31 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
                       <li key={i}>{w}</li>
                     ))}
                   </ul>
+                </div>
+              )}
+              {prepackaged.subject && (
+                <div className="mb-3 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
+                  <span className="text-xs font-semibold text-ink-muted uppercase tracking-wide shrink-0">
+                    Subject
+                  </span>
+                  <span className="text-sm text-ink flex-1 min-w-0 truncate">
+                    {prepackaged.subject}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant={copiedSubject ? "secondary" : "ghost"}
+                    onClick={copySubject}
+                    leftIcon={
+                      copiedSubject ? (
+                        <Check className="h-3.5 w-3.5" strokeWidth={2} />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" strokeWidth={2} />
+                      )
+                    }
+                    className="shrink-0"
+                  >
+                    {copiedSubject ? "Copied" : "Copy"}
+                  </Button>
                 </div>
               )}
               <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">

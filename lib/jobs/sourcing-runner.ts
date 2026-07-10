@@ -542,6 +542,7 @@ export async function runFullSourcing(input: {
     outreachParagraph,
     address,
     locationConfidence,
+    restaurants,
     now: new Date(),
   });
   if (prepackagedEmail.skipped) {
