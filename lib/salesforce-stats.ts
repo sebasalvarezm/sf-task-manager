@@ -362,6 +362,7 @@ export type DrillAccountRow = {
   opportunityName?: string | null;
   stage?: string | null;
   amount?: number | null;
+  originator?: string | null; // Opportunity Owner.Name
 };
 
 type RawTaskAccountRow = {
@@ -440,6 +441,7 @@ type RawOppRow = {
     NumberOfEmployees?: number | null;
     BillingCountry?: string | null;
   } | null;
+  Owner?: { Name?: string } | null;
   LastModifiedDate: string;
 };
 
@@ -455,6 +457,7 @@ function oppToDrillRow(r: RawOppRow): DrillAccountRow {
     opportunityName: r.Name,
     stage: r.StageName,
     amount: (Number(r.Amount) || 0) * BRO_AMOUNT_MULTIPLIER,
+    originator: r.Owner?.Name ?? null,
   };
 }
 
@@ -473,7 +476,7 @@ export async function fetchDrillOppsByOriginator(
       ? `Owner.Name NOT IN (${ownerNamesClauseFor(team)}) AND ${pipelineClause}`
       : `Owner.Name = '${escapeSoql(ownerName)}' AND ${pipelineClause}`;
   const soql =
-    `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, ` +
+    `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, Owner.Name, ` +
     `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
@@ -492,7 +495,7 @@ export async function fetchDrillOppsByStage(
   team: StatsTeam
 ): Promise<DrillAccountRow[]> {
   const soql =
-    `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, ` +
+    `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, Owner.Name, ` +
     `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +

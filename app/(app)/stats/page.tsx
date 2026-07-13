@@ -107,6 +107,7 @@ type DrillRow = {
   opportunityName?: string | null;
   stage?: string | null;
   amount?: number | null;
+  originator?: string | null;
 };
 
 type StatsResponse = {
@@ -1715,6 +1716,11 @@ function DrillModal({
                         {r.opportunityName && (
                           <div className="text-xs text-ink-muted mt-0.5">
                             {r.opportunityName}
+                          </div>
+                        )}
+                        {r.originator && (
+                          <div className="text-xs text-ink-muted mt-0.5">
+                            Originator: {r.originator}
                           </div>
                         )}
                       </div>
