@@ -89,6 +89,16 @@ type BulkItem = {
 
 type BulkResult = { items: BulkItem[] };
 
+// One search hit from GET /api/sourcing/search (mirrors SourcingSearchMatch in
+// lib/jobs.ts).
+type SearchMatch = {
+  jobId: string;
+  kind: "sourcing" | "sourcing_bulk";
+  createdAt: string;
+  companyLabel: string;
+  companyUrl: string;
+};
+
 // Max companies per bulk batch (matches MAX_BULK_ENTRIES on the server).
 const BULK_CAP = 10;
 
@@ -141,6 +151,18 @@ function waybackEmptyMessage(
   }
 }
 
+// Mirror of normalizeSourcingUrl in lib/jobs.ts — keeps the `company` deep-link
+// param consistent with the value the search API produced.
+function normalizeDomain(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/+$/, "")
+    .split("/")[0];
+}
+
 function relativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (ms < 60_000) return "just now";
@@ -163,6 +185,7 @@ function SourcingPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedJobId = searchParams.get("jobId");
+  const expandCompany = searchParams.get("company");
   const isCachedView = searchParams.get("cached") === "1";
   const { jobs, refetch } = useJobs();
 
@@ -176,6 +199,49 @@ function SourcingPageContent() {
   const [bulkText, setBulkText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // ── Search past runs ──
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchMatch[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  // The query the current results belong to — used for the empty-state message.
+  const [searchedFor, setSearchedFor] = useState("");
+
+  async function handleSearch(e?: React.FormEvent) {
+    e?.preventDefault();
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults(null);
+      setSearchedFor("");
+      setSearchError(null);
+      return;
+    }
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const res = await fetch(`/api/sourcing/search?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Search failed");
+      setSearchResults((data.matches as SearchMatch[]) ?? []);
+      setSearchedFor(q);
+    } catch (err) {
+      setSearchError(
+        err instanceof Error ? err.message : "Network error — try again",
+      );
+      setSearchResults(null);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function openMatch(match: SearchMatch) {
+    const params = new URLSearchParams({ jobId: match.jobId });
+    if (match.kind === "sourcing_bulk" && match.companyUrl) {
+      params.set("company", match.companyUrl);
+    }
+    router.push(`/sourcing?${params.toString()}`);
+  }
 
   // The cached job we navigated to may be older than the 20-job useJobs
   // window. Fetch it directly when not in the list.
@@ -476,7 +542,59 @@ function SourcingPageContent() {
 
         {/* Selected job result — rendered ABOVE the runs list so clicking a row
             doesn't push the result below the fold. */}
-        {selectedJob && <JobResultPanel job={selectedJob} />}
+        {selectedJob && (
+          <JobResultPanel job={selectedJob} expandCompany={expandCompany} />
+        )}
+
+        {/* Search past runs */}
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-ink-muted mb-3">
+            Find a Past Run
+          </h2>
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <Input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by URL or Salesforce account name…"
+              leftIcon={<Search className="h-4 w-4" strokeWidth={1.75} />}
+            />
+            <Button
+              type="submit"
+              variant="secondary"
+              size="md"
+              loading={searching}
+              disabled={!searchQuery.trim()}
+              className="shrink-0"
+            >
+              Search
+            </Button>
+          </form>
+
+          {searchError && (
+            <Alert variant="danger" className="mt-3">
+              {searchError}
+            </Alert>
+          )}
+
+          {searchResults !== null && !searching && (
+            <div className="mt-3 space-y-2">
+              {searchResults.length === 0 ? (
+                <p className="text-sm text-ink-muted">
+                  No past runs match &ldquo;{searchedFor}&rdquo;.
+                </p>
+              ) : (
+                searchResults.map((match) => (
+                  <SearchMatchRow
+                    key={`${match.jobId}-${match.companyUrl || match.companyLabel}`}
+                    match={match}
+                    onClick={() => openMatch(match)}
+                  />
+                ))
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Recent jobs list */}
         {sourcingJobs.length > 0 && (
@@ -569,9 +687,48 @@ function SourcingJobRow({
   );
 }
 
+// ───────── Search match row ─────────
+
+function SearchMatchRow({
+  match,
+  onClick,
+}: {
+  match: SearchMatch;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full text-left rounded-lg border border-line bg-white px-4 py-3 transition-all hover:border-line-strong hover:shadow-sm"
+    >
+      <div className="flex items-center gap-3">
+        <Search className="h-4 w-4 text-ink-muted shrink-0" strokeWidth={2} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-ink truncate">
+            {match.companyLabel}
+          </p>
+          <p className="text-xs text-ink-muted mt-0.5">
+            {relativeTime(match.createdAt)}
+          </p>
+        </div>
+        <Badge variant="neutral">
+          {match.kind === "sourcing_bulk" ? "batch" : "single"}
+        </Badge>
+      </div>
+    </button>
+  );
+}
+
 // ───────── Result panel ─────────
 
-function JobResultPanel({ job }: { job: Job }) {
+function JobResultPanel({
+  job,
+  expandCompany,
+}: {
+  job: Job;
+  expandCompany?: string | null;
+}) {
   const status = job.status;
 
   if (status === "queued") {
@@ -634,7 +791,7 @@ function JobResultPanel({ job }: { job: Job }) {
         <Alert variant="warn">No result data on this job — try running again.</Alert>
       );
     }
-    return <BulkResultList items={bulk.items} />;
+    return <BulkResultList items={bulk.items} expandCompany={expandCompany} />;
   }
 
   const result = job.result as unknown as SourcingResult | null;
@@ -649,8 +806,36 @@ function JobResultPanel({ job }: { job: Job }) {
 
 // ───────── Bulk result list (collapsed → expand-in-place) ─────────
 
-function BulkResultList({ items }: { items: BulkItem[] }) {
-  const [open, setOpen] = useState<Set<number>>(new Set());
+function BulkResultList({
+  items,
+  expandCompany,
+}: {
+  items: BulkItem[];
+  expandCompany?: string | null;
+}) {
+  // When arriving from a search match (?company=<domain>), pre-open the row for
+  // that company so the user lands right on its card. Matched by normalized
+  // domain rather than array index so it's robust.
+  const initialOpen = useMemo(() => {
+    const set = new Set<number>();
+    const target = expandCompany ? normalizeDomain(expandCompany) : "";
+    if (target) {
+      const idx = items.findIndex(
+        (it) => it.url && normalizeDomain(it.url) === target,
+      );
+      if (idx >= 0) set.add(idx);
+    }
+    return set;
+  }, [items, expandCompany]);
+
+  const [open, setOpen] = useState<Set<number>>(initialOpen);
+
+  // If we navigate to a different batch (or company) while this component
+  // instance is reused, make sure the newly-targeted row opens.
+  useEffect(() => {
+    if (initialOpen.size === 0) return;
+    setOpen((prev) => new Set([...prev, ...initialOpen]));
+  }, [initialOpen]);
 
   const toggle = (i: number) =>
     setOpen((prev) => {

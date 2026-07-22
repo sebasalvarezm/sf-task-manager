@@ -267,6 +267,116 @@ export async function findRecentSourcingByUrl(
   return null;
 }
 
+/**
+ * One matching past sourcing run surfaced by the search bar. `companyUrl` is the
+ * matched company's normalized domain — for a batch this lets the UI auto-expand
+ * the exact company that matched.
+ */
+export type SourcingSearchMatch = {
+  jobId: string;
+  kind: "sourcing" | "sourcing_bulk";
+  createdAt: string;
+  companyLabel: string;
+  companyUrl: string;
+};
+
+const SEARCH_MAX_AGE_DAYS = 180;
+const SEARCH_ROW_WINDOW = 200;
+const SEARCH_MAX_MATCHES = 15;
+
+/**
+ * Search past succeeded sourcing runs (single + bulk) by URL, domain, or
+ * Salesforce account name. Pulls a recent window of rows and filters in JS —
+ * same approach as `findRecentSourcingByUrl`, no SQL JSON querying needed at
+ * this volume. Substring matching so partial names ("control") and typos still
+ * surface results. Returns up to `SEARCH_MAX_MATCHES` matches, newest first.
+ */
+export async function searchSourcingRuns(
+  query: string,
+  sessionId: string = DEFAULT_SESSION,
+): Promise<{ matches: SourcingSearchMatch[]; truncated: boolean }> {
+  const q = query.trim().toLowerCase();
+  if (!q) return { matches: [], truncated: false };
+
+  const supabase = getSupabaseAdmin();
+  const sinceIso = new Date(
+    Date.now() - SEARCH_MAX_AGE_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("*")
+    .eq("session_id", sessionId)
+    .in("kind", ["sourcing", "sourcing_bulk"])
+    .eq("status", "succeeded")
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(SEARCH_ROW_WINDOW);
+  if (error) {
+    throw new Error(`Failed to search sourcing runs: ${error.message}`);
+  }
+
+  const matches: SourcingSearchMatch[] = [];
+  const normalizedQuery = normalizeSourcingUrl(q);
+
+  for (const row of (data ?? []) as Job[]) {
+    if (matches.length >= SEARCH_MAX_MATCHES) break;
+
+    if (row.kind === "sourcing") {
+      const inputUrl =
+        typeof row.input?.url === "string" ? (row.input.url as string) : "";
+      const normUrl = normalizeSourcingUrl(inputUrl);
+      const label = (row.label ?? "").toLowerCase();
+      const hit =
+        (normUrl && normUrl.includes(normalizedQuery)) ||
+        inputUrl.toLowerCase().includes(q) ||
+        label.includes(q);
+      if (hit) {
+        matches.push({
+          jobId: row.id,
+          kind: "sourcing",
+          createdAt: row.created_at,
+          companyLabel: normUrl || inputUrl || row.label || "Sourcing run",
+          companyUrl: normUrl,
+        });
+      }
+      continue;
+    }
+
+    // Bulk run: match against each company inside the batch and surface the
+    // first company that matches so the UI can jump straight to it.
+    const items = Array.isArray(row.result?.items)
+      ? (row.result.items as Array<Record<string, unknown>>)
+      : [];
+    for (const item of items) {
+      if (matches.length >= SEARCH_MAX_MATCHES) break;
+      const itemUrl = typeof item.url === "string" ? item.url : "";
+      const accountName =
+        typeof item.accountName === "string" ? item.accountName : "";
+      const rawInput = typeof item.input === "string" ? item.input : "";
+      const normUrl = normalizeSourcingUrl(itemUrl);
+      const hit =
+        (normUrl && normUrl.includes(normalizedQuery)) ||
+        itemUrl.toLowerCase().includes(q) ||
+        accountName.toLowerCase().includes(q) ||
+        rawInput.toLowerCase().includes(q);
+      if (hit) {
+        matches.push({
+          jobId: row.id,
+          kind: "sourcing_bulk",
+          createdAt: row.created_at,
+          companyLabel: accountName || normUrl || rawInput || "Batch company",
+          companyUrl: normUrl,
+        });
+      }
+    }
+  }
+
+  return {
+    matches,
+    truncated: matches.length >= SEARCH_MAX_MATCHES,
+  };
+}
+
 export function summarize(jobs: Job[]): {
   inProgressCount: number;
   unreadCount: number;
