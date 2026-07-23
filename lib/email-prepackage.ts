@@ -10,7 +10,7 @@ import path from "path";
 // untouched.
 
 export type PrepackagedEmail = {
-  subject: string | null; // e.g. "Capital Grille Lunch: Valstone"
+  subject: string | null; // e.g. "Capital Grille Lunch Aug 12: Valstone"
   body: string | null; // finished draft; null when skipped
   templateSubgroup: string | null; // e.g. "Manufacturing — Production Quality"
   warnings: string[]; // things to double-check before sending
@@ -29,6 +29,26 @@ const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
+
+// Short month labels used in the subject-line date, e.g. "Aug 12".
+const SHORT_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+// First day-of-month of each ordinal week block (weeks are the 1-7 / 8-14 /
+// 15-21 / 22-28 day ranges).
+const ORDINAL_START_DAY: Record<string, number> = {
+  first: 1,
+  second: 8,
+  third: 15,
+  fourth: 22,
+};
+
+// The name to drop into {{sender.first_name}} while this is a single-user tool.
+// The template keeps the merge field so multi-user (each with their own login)
+// still works later — we only substitute in the generated draft.
+const SENDER_FIRST_NAME = "Sebastian";
 
 // Generic cuisine/venue descriptor words. When one appears, we drop it and
 // everything after it, keeping the distinctive brand in front:
@@ -136,13 +156,17 @@ function parseCity(address: string): string | null {
   return parts[parts.length - 2];
 }
 
-// "the {ordinal} week of {Month}" for a date 21 days after `now`.
-function ordinalWeekPhrase(now: Date): string {
+// The lunch is pitched ~3 weeks out. Returns both the body phrase
+// ("the second week of August") and the specific Wednesday of that same week
+// as a short date ("Aug 12") for the subject line — both derived from one
+// reference so the subject date and the body's week never disagree.
+function referenceWeek(now: Date): { phrase: string; shortDate: string } {
   const d = new Date(now.getTime());
   d.setDate(d.getDate() + 21);
   const day = d.getDate();
   let ordinal: string;
   let monthIdx = d.getMonth();
+  let year = d.getFullYear();
   if (day <= 7) ordinal = "first";
   else if (day <= 14) ordinal = "second";
   else if (day <= 21) ordinal = "third";
@@ -150,9 +174,29 @@ function ordinalWeekPhrase(now: Date): string {
   else {
     // 29th or later → roll into the first week of next month.
     ordinal = "first";
-    monthIdx = (monthIdx + 1) % 12;
+    monthIdx += 1;
+    if (monthIdx > 11) {
+      monthIdx = 0;
+      year += 1;
+    }
   }
-  return `the ${ordinal} week of ${MONTHS[monthIdx]}`;
+
+  // The Wednesday inside that week's day-of-month block. Any 7 consecutive days
+  // contain exactly one Wednesday (getDay() === 3).
+  const startDay = ORDINAL_START_DAY[ordinal];
+  let wednesday = new Date(year, monthIdx, startDay);
+  for (let i = 0; i < 7; i++) {
+    const cand = new Date(year, monthIdx, startDay + i);
+    if (cand.getDay() === 3) {
+      wednesday = cand;
+      break;
+    }
+  }
+
+  return {
+    phrase: `the ${ordinal} week of ${MONTHS[monthIdx]}`,
+    shortDate: `${SHORT_MONTHS[monthIdx]} ${wednesday.getDate()}`,
+  };
 }
 
 export function buildPrepackagedEmail(args: {
@@ -260,7 +304,7 @@ export function buildPrepackagedEmail(args: {
   body = rebuilt.join("\n\n");
 
   // 3. Fill in town + week.
-  const week = ordinalWeekPhrase(now);
+  const { phrase: week, shortDate: lunchDate } = referenceWeek(now);
   const town =
     locationConfidence !== "none" && address ? parseCity(address) : null;
   let townWeek: string;
@@ -274,13 +318,17 @@ export function buildPrepackagedEmail(args: {
   }
   body = body.replace(TOWN_WEEK_PLACEHOLDER, () => townWeek);
 
-  // 4. Subject line: "<short restaurant name> Lunch: Valstone".
+  // 4. Fill the sender name (single-user tool for now).
+  body = body.split("{{sender.first_name}}").join(SENDER_FIRST_NAME);
+
+  // 5. Subject line: "<short restaurant name> Lunch <Mon DD>: Valstone", where
+  //    the date is the Wednesday of the week the email body references.
   const chosenRestaurant = restaurants.find((r) => r.name && r.name.trim());
   let subject: string;
   if (chosenRestaurant) {
-    subject = `${shortenRestaurantName(chosenRestaurant.name)} Lunch: Valstone`;
+    subject = `${shortenRestaurantName(chosenRestaurant.name)} Lunch ${lunchDate}: Valstone`;
   } else {
-    subject = "[RESTAURANT] Lunch: Valstone";
+    subject = `[RESTAURANT] Lunch ${lunchDate}: Valstone`;
     warnings.push(
       "No restaurant was found — [RESTAURANT] is left in the subject; fill it in before sending.",
     );
