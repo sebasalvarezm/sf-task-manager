@@ -88,7 +88,11 @@ function shortenRestaurantName(raw: string): string {
 
 function loadEmailSequences(): string {
   const filePath = path.join(process.cwd(), "content", "email-sequences.md");
-  return fs.readFileSync(filePath, "utf-8");
+  // Normalize line endings to \n. On Windows, git (core.autocrlf) can rewrite
+  // the file with \r\n, which would break the blank-line ("\n\n") paragraph
+  // splitting below. Normalizing here makes parsing independent of how the
+  // file was checked out.
+  return fs.readFileSync(filePath, "utf-8").replace(/\r\n?/g, "\n");
 }
 
 function norm(s: string): string {
@@ -174,7 +178,10 @@ function parseCity(address: string): string | null {
   if (parts.length === 1) return parts[0];
 
   for (let i = parts.length - 1; i >= 0; i--) {
-    const p = parts[i];
+    // Strip a postal code fused to the city in one segment, e.g. the Dutch
+    // "3844 DG Harderwijk" → "Harderwijk".
+    const p = parts[i].replace(/^\d{3,}\s*[A-Za-z]{0,3}\s+/, "").trim();
+    if (!p) continue;
     if (COUNTRY_NAMES.has(p.toLowerCase())) continue;
     if (/\d/.test(p)) continue; // postal / zip / "ST 30097"
     if (/^[A-Za-z]{2,4}$/.test(p) && p === p.toUpperCase()) continue; // GA, NL, ONT
