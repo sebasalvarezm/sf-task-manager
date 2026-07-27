@@ -143,9 +143,28 @@ function findEmail1Section(
   return null;
 }
 
-// City = the second-to-last comma-separated part of a US-style address
-// ("11340 Lakefield Dr, Johns Creek, GA 30097" → "Johns Creek"), or the sole
-// part when there are no commas.
+// Country names/codes that may trail an international address. Skipped when
+// hunting for the city so we don't mistake the country for the town.
+const COUNTRY_NAMES = new Set([
+  "usa", "u.s.a.", "us", "united states", "united states of america",
+  "uk", "u.k.", "united kingdom", "england", "scotland", "wales",
+  "canada", "mexico", "netherlands", "the netherlands", "holland",
+  "germany", "deutschland", "france", "belgium", "spain", "italy", "ireland",
+  "switzerland", "austria", "sweden", "norway", "denmark", "finland",
+  "poland", "portugal", "czechia", "czech republic", "luxembourg",
+  "australia", "new zealand", "brazil", "india", "japan", "china",
+]);
+
+// Extract the city from a postal address. Handles both US-style
+// ("11340 Lakefield Dr, Johns Creek, GA 30097[, USA]" → "Johns Creek") and
+// international ("Wethouder Jansenlaan 78, Harderwijk, 3844 DG, Netherlands"
+// → "Harderwijk") ordering.
+//
+// Walks the comma-separated parts from the end and returns the first
+// "city-like" one: it must contain no digits (postal codes and "ST 30097"
+// tokens have digits), must not be a bare state/country code (e.g. "GA",
+// "NL"), and must not be a country name. Falls back to the old
+// second-to-last-part rule if nothing qualifies.
 function parseCity(address: string): string | null {
   const parts = address
     .split(",")
@@ -153,6 +172,14 @@ function parseCity(address: string): string | null {
     .filter(Boolean);
   if (parts.length === 0) return null;
   if (parts.length === 1) return parts[0];
+
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    if (COUNTRY_NAMES.has(p.toLowerCase())) continue;
+    if (/\d/.test(p)) continue; // postal / zip / "ST 30097"
+    if (/^[A-Za-z]{2,4}$/.test(p) && p === p.toUpperCase()) continue; // GA, NL, ONT
+    return p;
+  }
   return parts[parts.length - 2];
 }
 

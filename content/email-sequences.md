@@ -8,7 +8,7 @@ This file contains the email skeletons for every portfolio subgroup. The Sourcin
 
 Merge fields like `{{first_name}}`, `{{account.name}}`, `{{sender.first_name}}`, and `{{sender.name}}` are filled by Salesforce and must be left untouched. The greeting line "Hi {{first_name}}," is intentionally omitted here (Salesforce/sequence tooling adds it).
 
-Subgroup names below match the folder/file names in `content/groups/`. Note: **Equipment Dealers Rental has no email sequence yet.**
+Subgroup names below match the folder/file names in `content/groups/`.
 
 ---
 
@@ -234,6 +234,45 @@ Best,
 I wanted to check in as I have not heard back. I completely understand how busy things can get, but I truly think our contractor-specific focus is worth discussing.
 
 Our broader vision is to build a connected set of systems across the contractor value chain, including materials, jobsite execution, inspections, compliance, and the back office. Most of these operators have grown up on isolated systems that do not talk to each other, so there is a clear opportunity to integrate key workflows and become a one-stop shop for customers who are tired of managing a dozen separate IT vendors.
+
+If you are open to a meet and discuss in person, feel free to suggest a date that works for you, and I will gladly coordinate.
+
+Thank you,
+{{sender.first_name}}
+
+---
+
+## Construction and Diversified Materials — Equipment Dealers Rental
+
+### Email 1 — Initial Outreach
+
+I have studied {{account.name}} going back to the release of (INSERT PRODUCT). My name is {{sender.first_name}}, and I lead investment efforts at Valstone. We are a global provider of mission-critical software for industrial end markets, where these systems sit at the center of daily operations.
+
+We are building a dedicated Equipment Dealers, Rental and Maintenance group. The vision is to become a long-term home for the software that runs the businesses that sell, rent, and service heavy equipment, across dealer management, rental contracts and utilization, fleet tracking, parts inventory, maintenance scheduling, and billing. In simple terms, we help dealers, rental companies, and fleet operators keep machines earning in the field, reduce downtime, and run their operations with fewer manual steps.
+
+I will be near [INSERT TOWN AND WEEK] and would love to discuss at your office or a good restaurant nearby. Please let me know if available.
+
+Best,
+{{sender.first_name}}
+
+### Email 2 — Follow-up
+
+Quick follow-up to see if you got my last email.
+
+As mentioned, we are building an Equipment Dealers, Rental and Maintenance operating group that can support core workflows like dealer management, rental contracts and utilization, fleet tracking, parts inventory, and maintenance scheduling. I believe there could be significant synergy between {{account.name}} and Valstone in this ecosystem.
+
+Let me know if you are available to meet in the next two weeks. I am flexible and happy to accommodate your schedule.
+
+Best,
+{{sender.name}}
+
+### Email 3 — Final Check-in
+
+I wanted to check in as I have not heard back. I completely understand how busy things can get, but I truly think our equipment dealer, rental, and maintenance focus is worth discussing.
+
+Our ecosystem is built to span the businesses that sell, rent, and service heavy equipment, across dealer management systems, rental management, fleet tracking and telematics, parts inventory, and maintenance work orders. The goal is to keep machines earning in the field, reduce downtime, and cut out manual steps across the back office.
+
+Most of these operators have grown up on isolated systems that do not talk to each other, so there is a clear opportunity to integrate key workflows and become a one-stop shop for customers who are tired of managing a dozen separate IT vendors.
 
 If you are open to a meet and discuss in person, feel free to suggest a date that works for you, and I will gladly coordinate.
 
