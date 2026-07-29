@@ -102,6 +102,7 @@ type DrillRow = {
   website: string | null;
   numberOfEmployees: number | null;
   country: string | null;
+  yearEstablished: string | null;
   lastActivityDate: string | null;
   opportunityId?: string | null;
   opportunityName?: string | null;
@@ -1654,9 +1655,10 @@ function DrillModal({
   })();
 
   function renderTable(visibleRows: DrillRow[], includeStageColumn: boolean) {
-    // Base 4 cols (Company, URL, Employees, Country) + optional Stage; opps add
-    // Amount/Memo/File, non-opps add Last Activity. Used for the expander span.
-    const colCount = 4 + (includeStageColumn ? 1 : 0) + (isOpps ? 3 : 1);
+    // Base 5 cols (Company, URL, Employees, Country, Founded) + optional Stage;
+    // opps add Amount/Memo/File, non-opps add Last Activity. Used for the
+    // expander span.
+    const colCount = 5 + (includeStageColumn ? 1 : 0) + (isOpps ? 3 : 1);
     return (
       <Table>
         <Table.Head>
@@ -1665,6 +1667,7 @@ function DrillModal({
             <Table.HeadCell>URL</Table.HeadCell>
             <Table.HeadCell className="text-right">Employees</Table.HeadCell>
             <Table.HeadCell>Country</Table.HeadCell>
+            <Table.HeadCell>Founded</Table.HeadCell>
             {includeStageColumn && <Table.HeadCell>Stage</Table.HeadCell>}
             {isOpps && (
               <Table.HeadCell className="text-right">Amount</Table.HeadCell>
@@ -1752,6 +1755,11 @@ function DrillModal({
                   </Table.Cell>
                   <Table.Cell>
                     {r.country ?? <span className="text-ink-muted">—</span>}
+                  </Table.Cell>
+                  <Table.Cell className="tabular-nums">
+                    {r.yearEstablished ?? (
+                      <span className="text-ink-muted">—</span>
+                    )}
                   </Table.Cell>
                   {includeStageColumn && (
                     <Table.Cell>{r.stage ?? "—"}</Table.Cell>

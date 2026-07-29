@@ -150,6 +150,22 @@ async function runQuery<T>(
   return data.records ?? [];
 }
 
+// Drill queries below select the custom field Account.Year_Established__c.
+// Most orgs have it, but if a query fails (e.g. the field is missing), retry
+// once without that field so the rest of the drill still loads. Mirrors the
+// graceful fallback in lib/salesforce-prep.ts.
+async function runDrillQuery<T>(
+  credentials: SfCredentials,
+  soql: string
+): Promise<T[]> {
+  try {
+    return await runQuery<T>(credentials, soql);
+  } catch {
+    const stripped = soql.replace(/,\s*Account\.Year_Established__c/g, "");
+    return await runQuery<T>(credentials, stripped);
+  }
+}
+
 // ── Task counts for a single range, grouped by owner + subject type ──────────
 
 export async function fetchTaskCountsForRange(
@@ -356,6 +372,7 @@ export type DrillAccountRow = {
   website: string | null;
   numberOfEmployees: number | null;
   country: string | null;
+  yearEstablished: string | null;
   lastActivityDate: string | null;
   // populated only for opportunity-based drills
   opportunityId?: string | null;
@@ -375,6 +392,7 @@ type RawTaskAccountRow = {
     Website?: string | null;
     NumberOfEmployees?: number | null;
     BillingCountry?: string | null;
+    Year_Established__c?: string | null;
   } | null;
 };
 
@@ -398,7 +416,7 @@ export async function fetchDrillAccountsForTasks(
   const typesClause = types.map((t) => `'${t}'`).join(",");
   const soql =
     `SELECT Id, ActivityDate, Subject_Type__c, AccountId, ` +
-    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
+    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry, Account.Year_Established__c ` +
     `FROM Task ` +
     `WHERE Subject_Type__c IN (${typesClause}) ` +
     `AND Status = 'Completed' ` +
@@ -408,7 +426,7 @@ export async function fetchDrillAccountsForTasks(
     `ORDER BY ActivityDate DESC ` +
     `LIMIT ${limit}`;
 
-  const rows = await runQuery<RawTaskAccountRow>(credentials, soql);
+  const rows = await runDrillQuery<RawTaskAccountRow>(credentials, soql);
 
   // Dedupe by AccountId — most recent task wins (SOQL ORDER BY ActivityDate DESC).
   const seen = new Set<string>();
@@ -423,6 +441,7 @@ export async function fetchDrillAccountsForTasks(
       website: r.Account?.Website ?? null,
       numberOfEmployees: r.Account?.NumberOfEmployees ?? null,
       country: r.Account?.BillingCountry ?? null,
+      yearEstablished: r.Account?.Year_Established__c ?? null,
       lastActivityDate: r.ActivityDate ?? null,
     });
   }
@@ -440,6 +459,7 @@ type RawOppRow = {
     Website?: string | null;
     NumberOfEmployees?: number | null;
     BillingCountry?: string | null;
+    Year_Established__c?: string | null;
   } | null;
   Owner?: { Name?: string } | null;
   LastModifiedDate: string;
@@ -452,6 +472,7 @@ function oppToDrillRow(r: RawOppRow): DrillAccountRow {
     website: r.Account?.Website ?? null,
     numberOfEmployees: r.Account?.NumberOfEmployees ?? null,
     country: r.Account?.BillingCountry ?? null,
+    yearEstablished: r.Account?.Year_Established__c ?? null,
     lastActivityDate: r.LastModifiedDate,
     opportunityId: r.Id,
     opportunityName: r.Name,
@@ -477,14 +498,14 @@ export async function fetchDrillOppsByOriginator(
       : `Owner.Name = '${escapeSoql(ownerName)}' AND ${pipelineClause}`;
   const soql =
     `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, Owner.Name, ` +
-    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
+    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry, Account.Year_Established__c ` +
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName IN (${stagesClause}) ` +
     `AND ${ownerClause} ` +
     `ORDER BY Amount DESC NULLS LAST ` +
     `LIMIT 200`;
-  const rows = await runQuery<RawOppRow>(credentials, soql);
+  const rows = await runDrillQuery<RawOppRow>(credentials, soql);
   return rows.map(oppToDrillRow);
 }
 
@@ -496,14 +517,14 @@ export async function fetchDrillOppsByStage(
 ): Promise<DrillAccountRow[]> {
   const soql =
     `SELECT Id, Name, StageName, Amount, LastModifiedDate, AccountId, Owner.Name, ` +
-    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry ` +
+    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry, Account.Year_Established__c ` +
     `FROM Opportunity ` +
     `WHERE IsClosed = false ` +
     `AND StageName = '${escapeSoql(stage)}' ` +
     `AND ${pipelineClauseFor(team)} ` +
     `ORDER BY Amount DESC NULLS LAST ` +
     `LIMIT 200`;
-  const rows = await runQuery<RawOppRow>(credentials, soql);
+  const rows = await runDrillQuery<RawOppRow>(credentials, soql);
   return rows.map(oppToDrillRow);
 }
 
