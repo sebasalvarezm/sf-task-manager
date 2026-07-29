@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { isAuthenticated } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth";
 
 // PATCH /api/triage/review
 // Update the review status of an email (approve, edit, reject)
 export async function PATCH(request: NextRequest) {
-  if (!(await isAuthenticated())) {
+  if (!(await isAdmin())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

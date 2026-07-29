@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { isAuthenticated } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth";
 import { sendEmail } from "@/lib/microsoft";
 
 // POST /api/triage/send
 // Send an approved/edited draft reply via Microsoft Graph (Outlook)
 export async function POST(request: NextRequest) {
-  if (!(await isAuthenticated())) {
+  if (!(await isAdmin())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

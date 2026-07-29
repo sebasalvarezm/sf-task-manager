@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ListChecks,
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/app/components/ui/Card";
 import { Badge } from "@/app/components/ui/Badge";
+import { useIsIntern } from "@/app/components/RoleContext";
 
 type ConnState = boolean | null;
 
@@ -94,6 +95,9 @@ const TOOLS: Tool[] = [
   },
 ];
 
+// Interns only get the Sourcing card. Enforcement is in middleware.ts.
+const INTERN_TOOL_HREFS: readonly string[] = ["/sourcing"];
+
 const CONN_LABEL: Record<"sf" | "ms" | "outreach", string> = {
   sf: "Salesforce",
   ms: "Outlook",
@@ -117,6 +121,7 @@ function formatToday() {
 }
 
 export default function HomePage() {
+  const isIntern = useIsIntern();
   const [sfConnected, setSfConnected] = useState<ConnState>(null);
   const [msConnected, setMsConnected] = useState<ConnState>(null);
   const [outreachConnected, setOutreachConnected] = useState<ConnState>(null);
@@ -125,9 +130,18 @@ export default function HomePage() {
     dueOutreach: number | null;
   } | null>(null);
 
+  const visibleTools = useMemo(
+    () =>
+      isIntern ? TOOLS.filter((t) => INTERN_TOOL_HREFS.includes(t.href)) : TOOLS,
+    [isIntern],
+  );
+
   useEffect(() => {
+    // Interns are blocked from the status + dashboard endpoints by middleware,
+    // and the Sourcing card needs no connections, so skip the fetches entirely.
+    if (isIntern) return;
     void loadAll();
-  }, []);
+  }, [isIntern]);
 
   async function loadAll() {
     try {
@@ -211,7 +225,7 @@ export default function HomePage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {TOOLS.map((tool) => {
+        {visibleTools.map((tool) => {
           const Icon = tool.icon;
           return (
             <Link key={tool.href} href={tool.href} className="no-underline">

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { isAuthenticated } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth";
 
 // GET /api/triage?date=2026-03-24
 // Returns all triage emails for a given date
 export async function GET(request: NextRequest) {
-  if (!(await isAuthenticated())) {
+  if (!(await isAdmin())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   const apiKey = request.headers.get("x-triage-api-key");
   const validApiKey = process.env.TRIAGE_API_KEY;
 
-  const isSessionAuth = await isAuthenticated();
+  const isSessionAuth = await isAdmin();
   const isApiKeyAuth = validApiKey && apiKey === validApiKey;
 
   if (!isSessionAuth && !isApiKeyAuth) {

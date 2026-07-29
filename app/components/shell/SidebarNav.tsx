@@ -16,6 +16,10 @@ import {
 } from "lucide-react";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { useJobs, type Job } from "@/app/hooks/useJobs";
+import { useIsIntern } from "@/app/components/RoleContext";
+
+// Interns only get these two. Enforcement is in middleware.ts — this is UI.
+const INTERN_NAV_HREFS: readonly string[] = ["/", "/sourcing"];
 
 const NAV = [
   { href: "/",         label: "Home",         icon: Home },
@@ -52,6 +56,12 @@ export function SidebarNav() {
   const pathname = usePathname() ?? "/";
   const { jobs, refetch } = useJobs();
   const lastClearedRef = useRef<string | null>(null);
+  const isIntern = useIsIntern();
+
+  const navItems = useMemo(
+    () => (isIntern ? NAV.filter((i) => INTERN_NAV_HREFS.includes(i.href)) : NAV),
+    [isIntern],
+  );
 
   const unreadByRoute = useMemo(() => {
     const map: Record<string, number> = {};
@@ -93,7 +103,7 @@ export function SidebarNav() {
 
   return (
     <nav className="space-y-0.5" aria-label="Primary">
-      {NAV.map((item) => {
+      {navItems.map((item) => {
         const active =
           item.href === "/"
             ? pathname === "/"

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   fetchRecentEmails,
@@ -11,7 +11,7 @@ import Anthropic from "@anthropic-ai/sdk";
 // POST /api/triage/scan
 // Scans recent Outlook emails, categorizes with AI, writes to triage table
 export async function POST() {
-  if (!(await isAuthenticated())) {
+  if (!(await isAdmin())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
+import { getRole } from "@/lib/auth";
+import { INTERN_JOB_KINDS } from "@/lib/roles";
 import { createJob, type JobKind } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 
@@ -15,7 +16,8 @@ const VALID_KINDS: ReadonlySet<JobKind> = new Set([
 ]);
 
 export async function POST(req: Request) {
-  if (!(await isAuthenticated())) {
+  const role = await getRole();
+  if (role === null) {
     return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
   }
 
@@ -39,6 +41,12 @@ export async function POST(req: Request) {
   }
   if (!body.input || typeof body.input !== "object") {
     return NextResponse.json({ error: "Missing input" }, { status: 400 });
+  }
+
+  // Middleware has to allow /api/jobs for the Sourcing tool, but this endpoint
+  // can launch any tool's job — so restrict interns to Sourcing kinds here.
+  if (role === "intern" && !INTERN_JOB_KINDS.includes(body.kind)) {
+    return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   }
 
   try {

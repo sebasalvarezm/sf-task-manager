@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { isAuthenticated } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth";
 
 // GET /api/triage/status
 // Returns today's triage summary for the homepage tile
 export async function GET() {
-  if (!(await isAuthenticated())) {
+  if (!(await isAdmin())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
