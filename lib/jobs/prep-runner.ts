@@ -99,6 +99,22 @@ function parseOnePagerJson(raw: string): OnePagerContent | null {
   return null;
 }
 
+function applyPrepMode(
+  content: OnePagerContent,
+  prepMode: "first_call" | "reconnect",
+): OnePagerContent {
+  if (prepMode === "reconnect") return content;
+
+  // First Calls use the established four-section format. These fields belong
+  // only to Reconnect and must not leak into cached or downloaded First Calls.
+  return {
+    ...content,
+    quickBrief: "",
+    businessModel: "",
+    relationshipCatchUp: "",
+  };
+}
+
 export async function runPrepGenerate(
   input: PrepInput,
 ): Promise<OnePagerContent> {
@@ -109,6 +125,7 @@ export async function runPrepGenerate(
 
   const companyIdentifier =
     input.accountName || input.domain || input.website || "Unknown";
+  const prepMode = input.prepMode === "reconnect" ? "reconnect" : "first_call";
 
   // Step 1: Salesforce account context (if we have an accountId)
   let sfContext = "";
@@ -169,9 +186,9 @@ export async function runPrepGenerate(
   // the original full-search fallback below remains active.
   if (scrapedContext) {
     const targetCompany = input.accountName || siteUrl || "Unknown";
-    const mode = input.prepMode === "reconnect" ? "Reconnect" : "First Call";
+    const mode = prepMode === "reconnect" ? "Reconnect" : "First Call";
     const commonGuard = `Target company: ${targetCompany}\nWebsite: ${siteUrl ?? "Not available"}\nMeeting mode: ${mode}\n\nWrite about this exact company only. Never pivot to a parent, acquirer, investor, sister company, or namesake.`;
-    const staticPrompt = `${commonGuard}
+    const staticPrompt = prepMode === "reconnect" ? `${commonGuard}
 
 Prepare the stable sections of an M&A call briefing from the supplied website and Salesforce evidence. The 60-second brief must refresh the reader on the business even for a reconnect. For Reconnect mode, relationshipCatchUp must summarize prior interactions, promises, objections, and the most useful reopening angle from Salesforce activity. Do not invent missing facts.
 ${sfContext}${scrapedContext}
@@ -185,6 +202,20 @@ Return ONLY valid JSON:
   "whatTheyDo": "2-4 plain-language sentences",
   "customers": "2-4 sentences including a concrete example beginning 'For example, ...'",
   "companyHistory": "3-5 sentences covering founding, milestones, leadership, growth, and M&A where supported",
+  "recentNews": []
+}` : `${commonGuard}
+
+What does this company do, what type of companies would be customers, and give a use case example. Use everyday language that a non-industry expert can understand. Give me a one pager on the company and its history ahead of an M&A call.
+
+Match the established First Call format and level of detail: four useful sections only, without a separate executive summary, business-model section, relationship section, suggested call angle, or repeated information. Use the supplied website and Salesforce evidence and do not invent missing facts.
+${sfContext}${scrapedContext}
+
+Return ONLY valid JSON:
+{
+  "companyName": "The common/short name of the target company",
+  "whatTheyDo": "A substantial plain-language paragraph explaining what the company does so a non-industry expert can understand it",
+  "customers": "A substantial paragraph describing customer types and a concrete use case beginning 'For example, ...'",
+  "companyHistory": "A substantial paragraph covering founding, headquarters, leadership, milestones, ownership/funding, growth, and M&A where supported",
   "recentNews": []
 }`;
     const newsPrompt = `${commonGuard}
@@ -217,7 +248,10 @@ Return ONLY valid JSON: {"recentNews":["item 1", "item 2"]}`;
     } catch {
       throw new Error("Failed to parse recent news response");
     }
-    return { ...stable, generatedOn: new Date().toISOString(), recentNews };
+    return applyPrepMode(
+      { ...stable, generatedOn: new Date().toISOString(), recentNews },
+      prepMode,
+    );
   }
 
   // Step 3: Build prompt
@@ -236,6 +270,7 @@ You MUST write the one-pager about THIS exact target company. If the Salesforce 
 What does this company do, what type of companies would be customers, and give a use case example. Use everyday language that a non-industry expert can understand. Give me a one pager on the company and its history ahead of an M&A call.
 
 Also include 2-3 relevant recent news items about this company (new product releases, big announcements, partnerships, funding rounds, etc.).
+${prepMode === "first_call" ? "\nFor a First Call, match the established concise four-section format only: What They Do, Customers & Use Case, Company History, and Recent News. Do not add or repeat an executive summary, business-model section, relationship section, or suggested call angle. Make each of the first three sections a useful, substantial paragraph like the established call-prep documents." : "\nFor a Reconnect, include the 60-second refresher, business model, and relationship catch-up in addition to the four core sections."}
 ${sfContext}${scrapedContext}${
     !scrapedContext && !sfContext
       ? "\n\nNo website or Salesforce data is available. Use web search to find information about this company."
@@ -247,12 +282,12 @@ ${sfContext}${scrapedContext}${
 Return ONLY valid JSON, no explanation, no markdown fences. Use this exact structure:
 {
   "companyName": "The common/short name of the target company (must be the target, not a parent/acquirer)",
-  "quickBrief": "A 60-second refresher covering the business, business model, buyer, relationship status, and useful call angle",
-  "businessModel": "2-4 sentences explaining products/services, how the company earns money, and who pays",
-  "relationshipCatchUp": "2-4 sentences based on Salesforce relationship activity; explicitly say when no history is available",
-  "whatTheyDo": "2-4 sentences in plain language explaining what the TARGET company does. A non-industry expert should be able to understand.",
-  "customers": "2-4 sentences describing what types of companies are the TARGET's customers, followed by a concrete use case example. Start the use case with 'For example, ...'",
-  "companyHistory": "3-5 sentences covering when the TARGET company was founded, key milestones, leadership, growth, and any M&A activity (acquisitions made or investment received).",
+  "quickBrief": "${prepMode === "reconnect" ? "A 60-second refresher covering the business, business model, buyer, relationship status, and useful call angle" : ""}",
+  "businessModel": "${prepMode === "reconnect" ? "2-4 sentences explaining products/services, how the company earns money, and who pays" : ""}",
+  "relationshipCatchUp": "${prepMode === "reconnect" ? "2-4 sentences based on Salesforce relationship activity; explicitly say when no history is available" : ""}",
+  "whatTheyDo": "A substantial paragraph in plain language explaining what the TARGET company does. A non-industry expert should be able to understand.",
+  "customers": "A substantial paragraph describing the TARGET company's customer types, followed by a concrete use case example beginning 'For example, ...'",
+  "companyHistory": "A substantial paragraph covering when the TARGET company was founded, headquarters, leadership, key milestones, ownership/funding, growth, and any M&A activity where supported.",
   "recentNews": ["News item 1 about the target — brief description with approximate date", "News item 2 about the target — brief description with approximate date", "News item 3 about the target — brief description with approximate date"]
 }`;
 
@@ -282,5 +317,5 @@ Return ONLY valid JSON, no explanation, no markdown fences. Use this exact struc
     throw new Error("Failed to parse AI response");
   }
 
-  return parsed;
+  return applyPrepMode(parsed, prepMode);
 }

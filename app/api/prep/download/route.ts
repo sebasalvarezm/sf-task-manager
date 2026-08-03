@@ -11,6 +11,7 @@ import {
 
 type OnePagerContent = {
   companyName: string;
+  prepMode?: "first_call" | "reconnect";
   generatedOn?: string;
   quickBrief?: string;
   businessModel?: string;
@@ -88,7 +89,7 @@ export async function POST(request: NextRequest) {
             children: [new TextRun({ text: "" })],
           }),
 
-          ...(content.quickBrief
+          ...(content.prepMode === "reconnect" && content.quickBrief
             ? [
                 new Paragraph({
                   heading: HeadingLevel.HEADING_2,
@@ -98,13 +99,13 @@ export async function POST(request: NextRequest) {
                 new Paragraph({ spacing: { after: 300 }, children: [new TextRun({ text: content.quickBrief, size: 22 })] }),
               ]
             : []),
-          ...(content.businessModel
+          ...(content.prepMode === "reconnect" && content.businessModel
             ? [
                 new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 }, children: [new TextRun({ text: "Business Model", bold: true, size: 26, color: "1B2A4A" })] }),
                 new Paragraph({ spacing: { after: 300 }, children: [new TextRun({ text: content.businessModel, size: 22 })] }),
               ]
             : []),
-          ...(content.relationshipCatchUp
+          ...(content.prepMode === "reconnect" && content.relationshipCatchUp
             ? [
                 new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 200, after: 100 }, children: [new TextRun({ text: "Relationship Catch-Up", bold: true, size: 26, color: "1B2A4A" })] }),
                 new Paragraph({ spacing: { after: 300 }, children: [new TextRun({ text: content.relationshipCatchUp, size: 22 })] }),

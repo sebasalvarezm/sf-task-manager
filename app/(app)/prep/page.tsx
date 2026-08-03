@@ -501,7 +501,10 @@ function PrepPageContent() {
       const res = await fetch("/api/prep/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(meeting.onePager),
+        body: JSON.stringify({
+          ...meeting.onePager,
+          prepMode: meeting.prepMode,
+        }),
       });
 
       if (!res.ok) throw new Error("Download failed");
@@ -1148,21 +1151,21 @@ function MeetingRow({
                 </p>
               )}
 
-              {meeting.onePager.quickBrief && (
+              {meeting.prepMode === "reconnect" && meeting.onePager.quickBrief && (
                 <div className="mb-4 rounded-lg border border-brand-orange/30 bg-orange-50 p-4">
                   <h4 className="text-sm font-semibold text-navy uppercase tracking-wide mb-1">60-Second Brief</h4>
                   <p className="text-sm text-gray-700 leading-relaxed">{meeting.onePager.quickBrief}</p>
                 </div>
               )}
 
-              {meeting.onePager.businessModel && (
+              {meeting.prepMode === "reconnect" && meeting.onePager.businessModel && (
                 <div className="mb-4">
                   <h4 className="text-sm font-semibold text-navy uppercase tracking-wide mb-1">Business Model</h4>
                   <p className="text-sm text-gray-700 leading-relaxed">{meeting.onePager.businessModel}</p>
                 </div>
               )}
 
-              {meeting.onePager.relationshipCatchUp && (
+              {meeting.prepMode === "reconnect" && meeting.onePager.relationshipCatchUp && (
                 <div className="mb-4">
                   <h4 className="text-sm font-semibold text-navy uppercase tracking-wide mb-1">Relationship Catch-Up</h4>
                   <p className="text-sm text-gray-700 leading-relaxed">{meeting.onePager.relationshipCatchUp}</p>
