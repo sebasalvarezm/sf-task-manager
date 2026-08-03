@@ -9,6 +9,7 @@ import {
 } from "@/lib/jobs";
 import {
   runFullSourcing,
+  runFastSourcingClassification,
   type SourcingResult,
 } from "@/lib/jobs/sourcing-runner";
 import {
@@ -43,6 +44,67 @@ export const sourcingBulkJob = inngest.createFunction(
       );
 
       const total = items.length;
+      const quickMatches: Array<SourcingResult["portfolioMatch"] | null> =
+        Array.from({ length: total }, () => null);
+
+      // Classify every company first so Weekly Outreach shows Industry and
+      // Subgroup/Sequence quickly, before the slower Wayback, hook, address,
+      // restaurant, and email work begins. Cached runs reuse their prior match;
+      // new runs use the exact same classifier as full sourcing.
+      const classificationConcurrency = 3;
+      for (let start = 0; start < items.length; start += classificationConcurrency) {
+        const chunk = items.slice(start, start + classificationConcurrency);
+        const matches = await Promise.all(
+          chunk.map(async (item, offset) => {
+            const i = start + offset;
+            if (!item.url || item.error) return null;
+            return step.run(`classify-${i}`, async () => {
+              try {
+                const cached = await findRecentSourcingByUrl(
+                  normalizeSourcingUrl(item.url!),
+                  90,
+                );
+                const cachedResult = cached?.result
+                  ? (cached.result as unknown as SourcingResult)
+                  : null;
+                const match =
+                  cachedResult?.portfolioMatch ??
+                  (await runFastSourcingClassification(item.url!));
+
+                const weeklyId = input.weeklyOutreachIds?.[i];
+                if (weeklyId && match.matched) {
+                  const classification: Record<string, string> = {};
+                  if (match.mainGroup) classification.industry = match.mainGroup;
+                  if (match.group) classification.group_name = match.group;
+                  if (Object.keys(classification).length > 0) {
+                    await getSupabaseAdmin()
+                      .from("weekly_outreach")
+                      .update(classification)
+                      .eq("id", weeklyId);
+                  }
+                }
+                return match;
+              } catch {
+                // Classification is an acceleration only. If it fails, the
+                // full run below retries the normal path and retains today's
+                // quality/fallback behavior.
+                return null;
+              }
+            });
+          }),
+        );
+        matches.forEach((match, offset) => {
+          quickMatches[start + offset] = match;
+        });
+        const classified = Math.min(start + chunk.length, total);
+        await step.run(`classification-progress-${classified}`, () =>
+          updateProgress(jobId, {
+            step: `Classified ${classified} of ${total}; deep research next`,
+            pct: total > 0 ? Math.round((classified / total) * 20) : 20,
+          }),
+        );
+      }
+
       let done = 0;
       const processed: BulkSourcingItem[] = [];
 
@@ -55,17 +117,46 @@ export const sourcingBulkJob = inngest.createFunction(
             if (!item.url || item.error) return item;
             const url = item.url;
             const outcome = await step.run(`source-${i}`, async () => {
-              const cached = await findRecentSourcingByUrl(normalizeSourcingUrl(url), 90);
-              if (cached?.result) {
-                return { cached: true, result: cached.result as unknown as SourcingResult };
+              try {
+                const cached = await findRecentSourcingByUrl(normalizeSourcingUrl(url), 90);
+                if (cached?.result) {
+                  return {
+                    cached: true,
+                    result: cached.result as unknown as SourcingResult,
+                    error: null,
+                  };
+                }
+                const result = await runFullSourcing({
+                  url,
+                  portfolioMatchOverride: quickMatches[i] ?? undefined,
+                });
+                const trimmed: SourcingResult = {
+                  ...result,
+                  currentText:
+                    typeof result.currentText === "string"
+                      ? result.currentText.slice(0, 500)
+                      : "",
+                };
+                return { cached: false, result: trimmed, error: null };
+              } catch (sourceError) {
+                return {
+                  cached: false,
+                  result: null,
+                  error:
+                    sourceError instanceof Error
+                      ? sourceError.message
+                      : "This company could not be sourced",
+                };
               }
-              const result = await runFullSourcing({ url });
-              const trimmed: SourcingResult = {
-                ...result,
-                currentText: typeof result.currentText === "string" ? result.currentText.slice(0, 500) : "",
-              };
-              return { cached: false, result: trimmed };
             });
+            if (outcome.error || !outcome.result) {
+              return {
+                ...item,
+                cached: false,
+                result: null,
+                error: outcome.error ?? "This company could not be sourced",
+              };
+            }
             return { ...item, cached: outcome.cached, result: outcome.result };
           }),
         );
@@ -84,14 +175,34 @@ export const sourcingBulkJob = inngest.createFunction(
         const supabase = getSupabaseAdmin();
         for (let i = 0; i < Math.min(input.weeklyOutreachIds.length, processed.length); i++) {
           const item = processed[i];
-          if (!item.result || item.error) continue;
+          if (!item.result || item.error) {
+            await supabase
+              .from("weekly_outreach")
+              .update({
+                status: "needs_context",
+                context_summary: item.error ?? "This company could not be sourced",
+              })
+              .eq("id", input.weeklyOutreachIds[i]);
+            continue;
+          }
           const packaged = item.result.prepackagedEmail;
           const draft = packaged && !packaged.skipped
             ? [packaged.subject, packaged.body].filter(Boolean).join("\n\n")
             : null;
+          const classification = item.result.portfolioMatch.matched
+            ? {
+                ...(item.result.portfolioMatch.mainGroup
+                  ? { industry: item.result.portfolioMatch.mainGroup }
+                  : {}),
+                ...(item.result.portfolioMatch.group
+                  ? { group_name: item.result.portfolioMatch.group }
+                  : {}),
+              }
+            : {};
           await supabase
             .from("weekly_outreach")
             .update({
+              ...classification,
               status: draft ? "draft_ready" : "needs_context",
               draft,
               context_summary: item.result.emailHook ?? null,

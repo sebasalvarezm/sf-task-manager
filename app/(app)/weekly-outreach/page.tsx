@@ -739,6 +739,12 @@ export default function WeeklyOutreachPage() {
     setError(null);
   }
 
+  async function copyReviewDraft() {
+    if (!reviewDraft.trim()) return;
+    await navigator.clipboard.writeText(reviewDraft);
+    setMessage("Reconnect draft copied. Paste it into the existing Outlook chain.");
+  }
+
   async function reviewRce(action: "save" | "send" | "dismiss") {
     if (!reviewingRce || reviewSaving) return;
     if (
@@ -802,7 +808,7 @@ export default function WeeklyOutreachPage() {
       "Country",
       "City",
       "Tier",
-      "Group",
+      "Subgroup / Sequence",
       "Source",
       "RCE Days",
       "Status",
@@ -1029,7 +1035,7 @@ export default function WeeklyOutreachPage() {
                   <span className="font-medium text-ink">{item.tier || "—"}</span>
                 </div>
                 <div className="rounded-lg bg-surface-2 p-2">
-                  <span className="block text-ink-muted">Group</span>
+                  <span className="block text-ink-muted">Subgroup / Sequence</span>
                   <span className="font-medium text-ink">{item.group_name || "—"}</span>
                 </div>
               </div>
@@ -1067,7 +1073,7 @@ export default function WeeklyOutreachPage() {
                     ["Country", "country", item.country],
                     ["City", "city", item.city],
                     ["Tier", "tier", item.tier],
-                    ["Group", "groupName", item.group_name],
+                    ["Subgroup / Sequence", "groupName", item.group_name],
                   ] as const).map(([label, field, value]) => (
                     <label key={field} className={field === "industry" || field === "groupName" ? "col-span-2" : ""}>
                       <span className="mb-1 block text-[11px] font-medium text-ink-muted">{label}</span>
@@ -1158,7 +1164,7 @@ export default function WeeklyOutreachPage() {
                   <th className="min-w-32 border-b border-r border-line px-2 py-2">Country</th>
                   <th className="min-w-28 border-b border-r border-line px-2 py-2">City</th>
                   <th className="w-24 border-b border-r border-line px-2 py-2">Tier</th>
-                  <th className="min-w-40 border-b border-r border-line px-2 py-2">Group</th>
+                  <th className="min-w-48 border-b border-r border-line px-2 py-2">Subgroup / Sequence</th>
                   <th className="w-24 border-b border-r border-line px-2 py-2">Source</th>
                   <th className="w-32 border-b border-r border-line px-2 py-2">Status</th>
                   <th className="w-36 border-b border-r border-line px-2 py-2">Draft RCE?</th>
@@ -1458,7 +1464,7 @@ export default function WeeklyOutreachPage() {
                     {reviewingRce.account_name}
                   </h2>
                   <p className="mt-1 truncate text-sm text-ink-muted">
-                    {reviewingRce.outlook_reply_subject || "Outlook reply draft"}
+                    {reviewingRce.outlook_reply_subject || "Copyable reconnect draft"}
                   </p>
                 </div>
                 <button
@@ -1490,7 +1496,7 @@ export default function WeeklyOutreachPage() {
                     <span className={`text-xs ${reviewingRce.outlook_draft_ready ? "text-ok" : "text-warning"}`}>
                       {reviewingRce.outlook_draft_ready
                         ? "Connected to an Outlook reply draft"
-                        : "No Outlook reply thread attached"}
+                        : "Ready to copy and paste"}
                     </span>
                   </div>
                   <textarea
@@ -1500,7 +1506,9 @@ export default function WeeklyOutreachPage() {
                     className="min-h-64 w-full resize-y rounded-xl border border-line p-4 text-[15px] leading-6 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
                   />
                   <p className="mt-2 text-xs text-ink-muted">
-                    Save keeps Outlook synchronized. Approve and Send sends this exact text as a reply in the existing chain.
+                    {reviewingRce.outlook_draft_ready
+                      ? "Save keeps Outlook synchronized. Approve and Send sends this exact text as a reply in the existing chain."
+                      : "Edit if needed, save it here, then copy and paste it into the correct Outlook chain. Nothing can send from this tool until Outlook approval is available."}
                   </p>
                 </section>
               </div>
@@ -1519,13 +1527,21 @@ export default function WeeklyOutreachPage() {
                     variant="secondary"
                     className="w-full"
                     loading={reviewSaving}
-                    disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim()}
+                    disabled={!reviewDraft.trim()}
                     onClick={() => void reviewRce("save")}
                   >
-                    Save to Outlook
+                    {reviewingRce.outlook_draft_ready ? "Save to Outlook" : "Save draft"}
                   </Button>
                   <Button
+                    variant="secondary"
                     className="w-full"
+                    disabled={!reviewDraft.trim()}
+                    onClick={() => void copyReviewDraft()}
+                  >
+                    Copy draft
+                  </Button>
+                  <Button
+                    className="col-span-2 w-full sm:col-span-1"
                     loading={reviewSaving}
                     disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim()}
                     onClick={() => void reviewRce("send")}

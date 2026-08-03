@@ -98,19 +98,32 @@ Return ONLY JSON:
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text) as { contextSummary: string; draft: string };
     const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
     let replySubject = metadata.replySubject;
+    let outlookWarning: string | null = null;
     if (replyTarget) {
-      const outlookDraft = await createOutlookReplyDraft(replyTarget.id, parsed.draft);
-      metadata.outlookDraftId = outlookDraft.id;
       metadata.replyToMessageId = replyTarget.id;
-      metadata.replySubject = outlookDraft.subject;
-      replySubject = outlookDraft.subject;
+      metadata.replySubject = replyTarget.subject;
+      replySubject = replyTarget.subject;
+      try {
+        const outlookDraft = await createOutlookReplyDraft(replyTarget.id, parsed.draft);
+        metadata.outlookDraftId = outlookDraft.id;
+        metadata.replyToMessageId = replyTarget.id;
+        metadata.replySubject = outlookDraft.subject;
+        replySubject = outlookDraft.subject;
+      } catch (draftError) {
+        if (draftError instanceof Error && draftError.message === "OUTLOOK_RECONNECT_REQUIRED") {
+          outlookWarning =
+            "A copyable reconnect draft is ready. Outlook approval is still pending, so paste it into the existing email chain manually.";
+        } else {
+          throw draftError;
+        }
+      }
     }
     const { data: updated, error: updateError } = await supabase
       .from("weekly_outreach")
       .update({
         context_summary: parsed.contextSummary,
         draft: parsed.draft,
-        status: replyTarget ? "draft_ready" : "needs_context",
+        status: "draft_ready",
         source_reference: writeWeeklyOutreachSourceMetadata(metadata),
       })
       .eq("id", id)
@@ -119,9 +132,11 @@ Return ONLY JSON:
     if (updateError) throw new Error(updateError.message);
     return NextResponse.json({
       item: withWeeklyOutreachClientMetadata(updated),
-      warning: replyTarget
-        ? null
-        : "No received Outlook message was found, so a reply draft could not be created.",
+      warning:
+        outlookWarning ??
+        (replyTarget
+          ? null
+          : "No received Outlook thread was found. A copyable draft is ready, but choose the correct chain manually."),
       replySubject,
     });
   } catch (err) {

@@ -25,6 +25,7 @@ import {
   findGroupFileName,
   type WaybackStatus,
   type CompanyAnchor,
+  type GroupMatch,
 } from "@/lib/scout";
 import {
   buildPrepackagedEmail,
@@ -63,6 +64,31 @@ export type SourcingResult = {
   prepackagedEmail?: PrepackagedEmail | null;
   logs: string[];
 };
+
+/**
+ * Fast first pass for bulk sourcing. It uses the exact same website evidence,
+ * group definitions, and Sonnet classifier as the full run, but stops before
+ * Wayback, address, hook, and email research. The full run can then reuse this
+ * result so quality stays identical and the group-classification AI call is
+ * not repeated.
+ */
+export async function runFastSourcingClassification(
+  url: string,
+): Promise<GroupMatch> {
+  const anthropic = getAnthropicClient();
+  if (!anthropic) {
+    throw new Error("AI service not configured (missing ANTHROPIC_API_KEY)");
+  }
+  const normalized = url.startsWith("http") ? url : `https://${url}`;
+  const currentText = await scrapeWithJina(normalized);
+  if (!currentText || currentText.length < 100) {
+    throw new Error("Could not extract enough website text for classification");
+  }
+  if (isParkedPage(currentText)) {
+    throw new Error("This domain appears to be parked or a placeholder page");
+  }
+  return matchGroup(anthropic, currentText, loadGroupFiles());
+}
 
 function dedup(items: string[]): string[] {
   const seen = new Set<string>();
@@ -154,8 +180,9 @@ async function generateOutreach(
 export async function runFullSourcing(input: {
   url: string;
   onProgress?: (step: string, pct: number) => void;
+  portfolioMatchOverride?: SourcingResult["portfolioMatch"];
 }): Promise<SourcingResult> {
-  const { url, onProgress } = input;
+  const { url, onProgress, portfolioMatchOverride } = input;
   const anthropic = getAnthropicClient();
   if (!anthropic) {
     throw new Error("AI service not configured (missing ANTHROPIC_API_KEY)");
@@ -224,7 +251,13 @@ export async function runFullSourcing(input: {
   // Portfolio match
   logs.push(`Loaded ${Object.keys(groups).length} portfolio group file(s).`);
   logs.push("Matching to portfolio group...");
-  const portfolioMatch = await matchGroup(anthropic, currentText, groups);
+  const portfolioMatch: GroupMatch = portfolioMatchOverride
+    ? {
+        ...portfolioMatchOverride,
+        mainGroup: portfolioMatchOverride.mainGroup ?? null,
+        confidence: portfolioMatchOverride.confidence ?? null,
+      }
+    : await matchGroup(anthropic, currentText, groups);
   if (portfolioMatch.matched) {
     const conf = portfolioMatch.confidence != null
       ? ` (${portfolioMatch.confidence}% confidence)`
