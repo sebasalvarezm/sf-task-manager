@@ -33,6 +33,12 @@ export async function POST(request: Request) {
   if (error || !data) return NextResponse.json({ error: "Weekly Outreach row not found" }, { status: 404 });
   const item = data as WeeklyOutreachItem;
   if (item.outreach_type !== "RCE") return NextResponse.json({ error: "Only RCE rows use Outlook reconnect drafting" }, { status: 400 });
+  if (!readWeeklyOutreachSourceMetadata(item.source_reference).rceDraftEnabled) {
+    return NextResponse.json(
+      { error: "This RCE is opted out of drafting", code: "RCE_DRAFT_SKIPPED" },
+      { status: 409 },
+    );
+  }
   const client = getAnthropicClient();
   if (!client) return NextResponse.json({ error: "AI service not configured" }, { status: 503 });
 

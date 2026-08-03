@@ -35,6 +35,7 @@ export type WeeklyOutreachItem = {
   sourcing_job_id: string | null;
   created_at: string;
   updated_at: string;
+  rce_draft_enabled?: boolean;
   outlook_draft_ready?: boolean;
   outlook_reply_subject?: string | null;
 };
@@ -44,6 +45,7 @@ export type WeeklyOutreachSourceMetadata = {
   outlookDraftId: string | null;
   replyToMessageId: string | null;
   replySubject: string | null;
+  rceDraftEnabled: boolean;
 };
 
 export function readWeeklyOutreachSourceMetadata(
@@ -55,6 +57,7 @@ export function readWeeklyOutreachSourceMetadata(
       outlookDraftId: null,
       replyToMessageId: null,
       replySubject: null,
+      rceDraftEnabled: true,
     };
   }
   try {
@@ -67,6 +70,7 @@ export function readWeeklyOutreachSourceMetadata(
         outlookDraftId: parsed.outlookDraftId ?? null,
         replyToMessageId: parsed.replyToMessageId ?? null,
         replySubject: parsed.replySubject ?? null,
+        rceDraftEnabled: parsed.rceDraftEnabled !== false,
       };
     }
   } catch {
@@ -77,13 +81,19 @@ export function readWeeklyOutreachSourceMetadata(
     outlookDraftId: null,
     replyToMessageId: null,
     replySubject: null,
+    rceDraftEnabled: true,
   };
 }
 
 export function writeWeeklyOutreachSourceMetadata(
   metadata: WeeklyOutreachSourceMetadata,
 ): string | null {
-  if (!metadata.outlookDraftId && !metadata.replyToMessageId && !metadata.replySubject) {
+  if (
+    !metadata.outlookDraftId &&
+    !metadata.replyToMessageId &&
+    !metadata.replySubject &&
+    metadata.rceDraftEnabled
+  ) {
     return metadata.originalReference;
   }
   return JSON.stringify({ weeklyOutreachMetadata: true, ...metadata });
@@ -95,6 +105,7 @@ export function withWeeklyOutreachClientMetadata(
   const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
   return {
     ...item,
+    rce_draft_enabled: metadata.rceDraftEnabled,
     outlook_draft_ready: Boolean(metadata.outlookDraftId),
     outlook_reply_subject: metadata.replySubject,
   };

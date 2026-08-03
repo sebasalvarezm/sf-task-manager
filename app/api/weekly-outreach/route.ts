@@ -6,9 +6,11 @@ import {
   addWeeklyOutreachBatch,
   currentWeekStart,
   parseManualWeeklyEntry,
+  readWeeklyOutreachSourceMetadata,
   resolveWeeklyAccountByName,
   upsertWeeklyOutreachItem,
   withWeeklyOutreachClientMetadata,
+  writeWeeklyOutreachSourceMetadata,
   type WeeklyOutreachSource,
   type WeeklyOutreachStatus,
   type WeeklyOutreachType,
@@ -135,6 +137,7 @@ export async function PATCH(request: NextRequest) {
     city?: string | null;
     tier?: string | null;
     groupName?: string | null;
+    rceDraftEnabled?: boolean;
   };
   const ids = body.ids ?? (body.id ? [body.id] : []);
   if (ids.length === 0) return NextResponse.json({ error: "Missing row id" }, { status: 400 });
@@ -158,6 +161,25 @@ export async function PATCH(request: NextRequest) {
   if (body.city !== undefined) updates.city = body.city?.trim() || null;
   if (body.tier !== undefined) updates.tier = body.tier?.trim() || null;
   if (body.groupName !== undefined) updates.group_name = body.groupName?.trim() || null;
+  if (body.rceDraftEnabled !== undefined) {
+    if (ids.length !== 1) {
+      return NextResponse.json(
+        { error: "RCE drafting can only be changed one row at a time" },
+        { status: 400 },
+      );
+    }
+    const { data: existing, error: existingError } = await getSupabaseAdmin()
+      .from("weekly_outreach")
+      .select("source_reference")
+      .eq("id", ids[0])
+      .single();
+    if (existingError || !existing) {
+      return NextResponse.json({ error: "Weekly Outreach row not found" }, { status: 404 });
+    }
+    const metadata = readWeeklyOutreachSourceMetadata(existing.source_reference);
+    metadata.rceDraftEnabled = body.rceDraftEnabled;
+    updates.source_reference = writeWeeklyOutreachSourceMetadata(metadata);
+  }
   const { data, error } = await getSupabaseAdmin()
     .from("weekly_outreach")
     .update(updates)

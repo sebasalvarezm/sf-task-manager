@@ -62,6 +62,7 @@ type WeeklyRowChanges = {
   city?: string | null;
   tier?: string | null;
   groupName?: string | null;
+  rceDraftEnabled?: boolean;
 };
 
 type GridCellElement = HTMLInputElement | HTMLSelectElement | HTMLButtonElement;
@@ -196,6 +197,16 @@ export default function WeeklyOutreachPage() {
       total: items.length,
       e1: items.filter((item) => item.outreach_type === "E1").length,
       rce: items.filter((item) => item.outreach_type === "RCE").length,
+      rceToDraft: items.filter(
+        (item) =>
+          item.outreach_type === "RCE" &&
+          item.rce_draft_enabled !== false &&
+          item.status !== "sent" &&
+          !item.draft,
+      ).length,
+      rceSkipped: items.filter(
+        (item) => item.outreach_type === "RCE" && item.rce_draft_enabled === false,
+      ).length,
       ready: items.filter((item) => item.status === "draft_ready").length,
     }),
     [items],
@@ -582,6 +593,9 @@ export default function WeeklyOutreachPage() {
     if (changes.city !== undefined) optimisticChanges.city = changes.city;
     if (changes.tier !== undefined) optimisticChanges.tier = changes.tier;
     if (changes.groupName !== undefined) optimisticChanges.group_name = changes.groupName;
+    if (changes.rceDraftEnabled !== undefined) {
+      optimisticChanges.rce_draft_enabled = changes.rceDraftEnabled;
+    }
     setItems((previous) =>
       previous.map((row) => (row.id === item.id ? { ...row, ...optimisticChanges } : row)),
     );
@@ -657,6 +671,10 @@ export default function WeeklyOutreachPage() {
   }
 
   async function prepareRce(item: WeeklyOutreachItem): Promise<boolean> {
+    if (item.rce_draft_enabled === false) {
+      setMessage(`${item.account_name} is opted out of RCE drafting.`);
+      return false;
+    }
     setPreparingRces((previous) => new Set(previous).add(item.id));
     setError(null);
     try {
@@ -693,8 +711,16 @@ export default function WeeklyOutreachPage() {
 
   async function prepareAllRces() {
     const rces = items.filter(
-      (item) => item.outreach_type === "RCE" && item.status !== "sent" && !item.draft,
+      (item) =>
+        item.outreach_type === "RCE" &&
+        item.rce_draft_enabled !== false &&
+        item.status !== "sent" &&
+        !item.draft,
     );
+    if (rces.length === 0) {
+      setMessage("No undrafted RCEs are currently selected for drafting.");
+      return;
+    }
     let preparedCount = 0;
     for (let index = 0; index < rces.length; index += 3) {
       const results = await Promise.all(rces.slice(index, index + 3).map(prepareRce));
@@ -702,7 +728,7 @@ export default function WeeklyOutreachPage() {
     }
     if (preparedCount > 0) {
       setMessage(
-        `Prepared ${preparedCount} Outlook reply draft${preparedCount === 1 ? "" : "s"}. Nothing was sent.`,
+        `Prepared ${preparedCount} Outlook reply draft${preparedCount === 1 ? "" : "s"}. Nothing was sent.${counts.rceSkipped > 0 ? ` ${counts.rceSkipped} opted-out RCE${counts.rceSkipped === 1 ? " was" : "s were"} skipped.` : ""}`,
       );
     }
   }
@@ -864,10 +890,10 @@ export default function WeeklyOutreachPage() {
             <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
               <Button
                 onClick={prepareAllRces}
-                disabled={pasting || preparingRces.size > 0 || counts.rce === 0}
+                disabled={pasting || preparingRces.size > 0 || counts.rceToDraft === 0}
                 className="w-full sm:w-auto"
               >
-                Prepare RCE Drafts
+                Prepare RCE Drafts ({counts.rceToDraft})
               </Button>
               <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={pasting || saving || counts.e1 === 0}>
                 Prepare E1 Sourcing Batch
@@ -1008,6 +1034,29 @@ export default function WeeklyOutreachPage() {
                 </div>
               </div>
 
+              {item.outreach_type === "RCE" && !item.draft ? (
+                <label className="mt-3 flex min-h-12 items-center justify-between gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2">
+                  <span>
+                    <span className="block text-sm font-semibold text-ink">Draft this RCE</span>
+                    <span className="block text-xs text-ink-muted">
+                      {item.rce_draft_enabled === false
+                        ? "Skipped when you prepare the batch"
+                        : "Included in the next draft batch"}
+                    </span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={item.rce_draft_enabled !== false}
+                    disabled={preparingRces.has(item.id)}
+                    onChange={(event) =>
+                      void updateRow(item, { rceDraftEnabled: event.target.checked })
+                    }
+                    className="h-6 w-6 rounded border-line text-brand focus:ring-brand"
+                    aria-label={`Draft reconnect for ${item.account_name}`}
+                  />
+                </label>
+              ) : null}
+
               <details className="mt-3 border-t border-line pt-3">
                 <summary className="cursor-pointer text-sm font-medium text-brand">
                   Edit Salesforce fields
@@ -1045,6 +1094,10 @@ export default function WeeklyOutreachPage() {
                     <Button className="col-span-2 w-full" onClick={() => openRceReview(item)}>
                       Review reconnect
                     </Button>
+                  ) : item.rce_draft_enabled === false ? (
+                    <div className="col-span-2 rounded-lg bg-surface-2 px-3 py-2 text-center text-sm font-medium text-ink-muted">
+                      RCE draft skipped
+                    </div>
                   ) : (
                     <Button
                       className="col-span-2 w-full"
@@ -1108,7 +1161,7 @@ export default function WeeklyOutreachPage() {
                   <th className="min-w-40 border-b border-r border-line px-2 py-2">Group</th>
                   <th className="w-24 border-b border-r border-line px-2 py-2">Source</th>
                   <th className="w-32 border-b border-r border-line px-2 py-2">Status</th>
-                  <th className="w-32 border-b border-r border-line px-2 py-2">Draft</th>
+                  <th className="w-36 border-b border-r border-line px-2 py-2">Draft RCE?</th>
                   <th className="min-w-52 border-b border-r border-line px-2 py-2">Trip / Notes</th>
                   <th className="w-12 border-b border-line px-2 py-2" />
                 </tr>
@@ -1190,16 +1243,34 @@ export default function WeeklyOutreachPage() {
                     </td>
                     <td className="border-b border-r border-line p-0">
                       {item.outreach_type === "RCE" && !item.draft ? (
-                        <button
-                          ref={registerGridCell(index, 9)}
-                          type="button"
-                          onKeyDown={(event) => handleGridNavigation(event, index, 9)}
-                          onClick={() => void prepareRce(item)}
-                          disabled={preparingRces.has(item.id)}
-                          className="h-10 w-full px-2 text-left font-medium text-brand hover:bg-brand-soft disabled:opacity-50"
-                        >
-                          {preparingRces.has(item.id) ? "Preparing…" : "Prepare"}
-                        </button>
+                        <div className="flex h-10 items-center gap-2 px-2">
+                          <input
+                            ref={registerGridCell(index, 9)}
+                            type="checkbox"
+                            checked={item.rce_draft_enabled !== false}
+                            disabled={preparingRces.has(item.id)}
+                            onKeyDown={(event) => handleGridNavigation(event, index, 9)}
+                            onChange={(event) =>
+                              void updateRow(item, {
+                                rceDraftEnabled: event.target.checked,
+                              })
+                            }
+                            className="h-4 w-4 shrink-0 rounded border-line text-brand focus:ring-brand"
+                            aria-label={`Draft reconnect for ${item.account_name}`}
+                          />
+                          {item.rce_draft_enabled === false ? (
+                            <span className="text-xs font-medium text-ink-muted">Skipped</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void prepareRce(item)}
+                              disabled={preparingRces.has(item.id)}
+                              className="min-w-0 flex-1 text-left font-medium text-brand hover:underline disabled:opacity-50"
+                            >
+                              {preparingRces.has(item.id) ? "Preparing…" : "Prepare"}
+                            </button>
+                          )}
+                        </div>
                       ) : item.outreach_type === "RCE" && item.draft ? (
                         <button
                           ref={registerGridCell(index, 9)}
