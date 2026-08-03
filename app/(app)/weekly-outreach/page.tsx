@@ -14,6 +14,7 @@ import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
 import { Alert } from "@/app/components/ui/Alert";
+import { useJobs } from "@/app/hooks/useJobs";
 import type {
   WeeklyOutreachItem,
   WeeklyOutreachStatus,
@@ -117,6 +118,7 @@ function sortItems(items: WeeklyOutreachItem[]): WeeklyOutreachItem[] {
 
 export default function WeeklyOutreachPage() {
   const router = useRouter();
+  const { jobs } = useJobs();
   const [weekStart, setWeekStart] = useState(thisWeek);
   const [items, setItems] = useState<WeeklyOutreachItem[]>([]);
   const [draftRows, setDraftRows] = useState<DraftSheetRow[]>(createDraftRows);
@@ -215,6 +217,19 @@ export default function WeeklyOutreachPage() {
   const blankRowCount = Math.max(5, MINIMUM_SHEET_ROWS - items.length);
   const visibleDraftRows = draftRows.slice(0, blankRowCount);
   const goalPercent = Math.min(100, (counts.total / WEEKLY_GOAL) * 100);
+  const retryableSourcingJobIds = useMemo(
+    () =>
+      new Set(
+        jobs
+          .filter(
+            (job) =>
+              job.kind === "sourcing_bulk" &&
+              (job.status === "failed" || job.status === "cancelled"),
+          )
+          .map((job) => job.id),
+      ),
+    [jobs],
+  );
   const totalGridRows = items.length + visibleDraftRows.length;
   const reviewingRce = reviewingRceId
     ? items.find((item) => item.id === reviewingRceId) ?? null
@@ -623,7 +638,9 @@ export default function WeeklyOutreachPage() {
   async function prepareE1s() {
     const e1s = items.filter(
       (item) =>
-        item.outreach_type === "E1" && item.status !== "sent" && !item.sourcing_job_id,
+        item.outreach_type === "E1" &&
+        item.status !== "sent" &&
+        (!item.sourcing_job_id || retryableSourcingJobIds.has(item.sourcing_job_id)),
     );
     if (e1s.length === 0) {
       setMessage("There are no unsourced E1s in this week.");

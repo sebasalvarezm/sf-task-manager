@@ -219,6 +219,18 @@ export const sourcingBulkJob = inngest.createFunction(
       return { ok: true, jobId };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unexpected error";
+      if (Array.isArray(input.weeklyOutreachIds) && input.weeklyOutreachIds.length > 0) {
+        await step.run("release-weekly-outreach-after-failure", async () => {
+          await getSupabaseAdmin()
+            .from("weekly_outreach")
+            .update({
+              status: "needs_context",
+              sourcing_job_id: null,
+              context_summary: `Batch stopped: ${msg}`,
+            })
+            .in("id", input.weeklyOutreachIds!);
+        });
+      }
       await step.run("mark-failed", () => markFailed(jobId, msg));
       throw err;
     }
