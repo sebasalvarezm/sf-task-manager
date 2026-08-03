@@ -35,7 +35,70 @@ export type WeeklyOutreachItem = {
   sourcing_job_id: string | null;
   created_at: string;
   updated_at: string;
+  outlook_draft_ready?: boolean;
+  outlook_reply_subject?: string | null;
 };
+
+export type WeeklyOutreachSourceMetadata = {
+  originalReference: string | null;
+  outlookDraftId: string | null;
+  replyToMessageId: string | null;
+  replySubject: string | null;
+};
+
+export function readWeeklyOutreachSourceMetadata(
+  sourceReference: string | null,
+): WeeklyOutreachSourceMetadata {
+  if (!sourceReference) {
+    return {
+      originalReference: null,
+      outlookDraftId: null,
+      replyToMessageId: null,
+      replySubject: null,
+    };
+  }
+  try {
+    const parsed = JSON.parse(sourceReference) as Partial<WeeklyOutreachSourceMetadata> & {
+      weeklyOutreachMetadata?: boolean;
+    };
+    if (parsed.weeklyOutreachMetadata) {
+      return {
+        originalReference: parsed.originalReference ?? null,
+        outlookDraftId: parsed.outlookDraftId ?? null,
+        replyToMessageId: parsed.replyToMessageId ?? null,
+        replySubject: parsed.replySubject ?? null,
+      };
+    }
+  } catch {
+    // Existing rows store their source reference as plain text.
+  }
+  return {
+    originalReference: sourceReference,
+    outlookDraftId: null,
+    replyToMessageId: null,
+    replySubject: null,
+  };
+}
+
+export function writeWeeklyOutreachSourceMetadata(
+  metadata: WeeklyOutreachSourceMetadata,
+): string | null {
+  if (!metadata.outlookDraftId && !metadata.replyToMessageId && !metadata.replySubject) {
+    return metadata.originalReference;
+  }
+  return JSON.stringify({ weeklyOutreachMetadata: true, ...metadata });
+}
+
+export function withWeeklyOutreachClientMetadata(
+  item: WeeklyOutreachItem,
+): WeeklyOutreachItem {
+  const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
+  return {
+    ...item,
+    outlook_draft_ready: Boolean(metadata.outlookDraftId),
+    outlook_reply_subject: metadata.replySubject,
+  };
+}
 
 type SalesforceAccountDetails = {
   accountId: string;

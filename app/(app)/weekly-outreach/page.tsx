@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { format, startOfWeek } from "date-fns";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
@@ -22,6 +23,7 @@ import type {
 const WEEKLY_GOAL = 30;
 const MINIMUM_SHEET_ROWS = 35;
 const LIVE_REFRESH_MS = 5_000;
+const GRID_COLUMN_COUNT = 11;
 
 const STATUSES: Array<{ value: WeeklyOutreachStatus; label: string }> = [
   { value: "queued", label: "Queued" },
@@ -49,6 +51,21 @@ type DraftSheetRow = {
   error: string | null;
 };
 
+type WeeklyRowChanges = {
+  status?: WeeklyOutreachStatus;
+  notes?: string | null;
+  outreachType?: WeeklyOutreachType;
+  accountName?: string;
+  website?: string | null;
+  industry?: string | null;
+  country?: string | null;
+  city?: string | null;
+  tier?: string | null;
+  groupName?: string | null;
+};
+
+type GridCellElement = HTMLInputElement | HTMLSelectElement | HTMLButtonElement;
+
 function thisWeek(): string {
   return format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd");
 }
@@ -75,6 +92,7 @@ function sortItems(items: WeeklyOutreachItem[]): WeeklyOutreachItem[] {
 }
 
 export default function WeeklyOutreachPage() {
+  const router = useRouter();
   const [weekStart, setWeekStart] = useState(thisWeek);
   const [items, setItems] = useState<WeeklyOutreachItem[]>([]);
   const [draftRows, setDraftRows] = useState<DraftSheetRow[]>(createDraftRows);
@@ -84,9 +102,14 @@ export default function WeeklyOutreachPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [preparingRces, setPreparingRces] = useState<Set<string>>(new Set());
+  const [reviewingRceId, setReviewingRceId] = useState<string | null>(null);
+  const [reviewDraft, setReviewDraft] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [outlookReconnectRequired, setOutlookReconnectRequired] = useState(false);
   const loadingRef = useRef(false);
   const searchTimers = useRef<Map<string, number>>(new Map());
   const companyInputs = useRef<Map<string, HTMLInputElement>>(new Map());
+  const gridCells = useRef<Map<string, GridCellElement>>(new Map());
 
   const load = useCallback(
     async (silent = false) => {
@@ -157,6 +180,71 @@ export default function WeeklyOutreachPage() {
   const blankRowCount = Math.max(5, MINIMUM_SHEET_ROWS - items.length);
   const visibleDraftRows = draftRows.slice(0, blankRowCount);
   const goalPercent = Math.min(100, (counts.total / WEEKLY_GOAL) * 100);
+  const totalGridRows = items.length + visibleDraftRows.length;
+  const reviewingRce = reviewingRceId
+    ? items.find((item) => item.id === reviewingRceId) ?? null
+    : null;
+
+  function registerGridCell(rowIndex: number, columnIndex: number) {
+    return (element: GridCellElement | null) => {
+      const key = `${rowIndex}:${columnIndex}`;
+      if (element) gridCells.current.set(key, element);
+      else gridCells.current.delete(key);
+    };
+  }
+
+  function focusGridCell(rowIndex: number, columnIndex: number) {
+    gridCells.current.get(`${rowIndex}:${columnIndex}`)?.focus();
+  }
+
+  function handleGridNavigation(
+    event: React.KeyboardEvent<GridCellElement>,
+    rowIndex: number,
+    columnIndex: number,
+  ): boolean {
+    let nextRow = rowIndex;
+    let nextColumn = columnIndex;
+    const element = event.currentTarget;
+
+    if (event.key === "Enter") {
+      nextRow += event.shiftKey ? -1 : 1;
+    } else if (event.key === "Tab") {
+      nextColumn += event.shiftKey ? -1 : 1;
+      if (nextColumn >= GRID_COLUMN_COUNT) {
+        nextColumn = 0;
+        nextRow += 1;
+      } else if (nextColumn < 0) {
+        nextColumn = GRID_COLUMN_COUNT - 1;
+        nextRow -= 1;
+      }
+    } else if (event.key === "ArrowUp") {
+      nextRow -= 1;
+    } else if (event.key === "ArrowDown") {
+      nextRow += 1;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      if (element instanceof HTMLInputElement && !element.readOnly) {
+        const atLeftEdge = (element.selectionStart ?? 0) === 0;
+        const atRightEdge = (element.selectionEnd ?? 0) === element.value.length;
+        if (event.key === "ArrowLeft" && !atLeftEdge) return false;
+        if (event.key === "ArrowRight" && !atRightEdge) return false;
+      }
+      nextColumn += event.key === "ArrowLeft" ? -1 : 1;
+    } else {
+      return false;
+    }
+
+    if (
+      nextRow < 0 ||
+      nextRow >= totalGridRows ||
+      nextColumn < 0 ||
+      nextColumn >= GRID_COLUMN_COUNT
+    ) {
+      return false;
+    }
+    event.preventDefault();
+    focusGridCell(nextRow, nextColumn);
+    return true;
+  }
 
   function patchDraftRow(key: string, changes: Partial<DraftSheetRow>) {
     setDraftRows((previous) =>
@@ -272,12 +360,16 @@ export default function WeeklyOutreachPage() {
   function handleCompanyKeyDown(
     event: React.KeyboardEvent<HTMLInputElement>,
     row: DraftSheetRow,
+    rowIndex: number,
   ) {
     if (event.key === "Escape") {
       patchDraftRow(row.key, { results: [], error: null });
       return;
     }
-    if (event.key !== "Enter") return;
+    if (event.key !== "Enter" || event.shiftKey) {
+      handleGridNavigation(event, rowIndex, 1);
+      return;
+    }
     event.preventDefault();
     const exact = row.results.find(
       (result) =>
@@ -289,10 +381,21 @@ export default function WeeklyOutreachPage() {
 
   async function updateRow(
     item: WeeklyOutreachItem,
-    changes: { status?: WeeklyOutreachStatus; notes?: string | null },
+    changes: WeeklyRowChanges,
   ) {
+    const optimisticChanges: Partial<WeeklyOutreachItem> = {};
+    if (changes.status !== undefined) optimisticChanges.status = changes.status;
+    if (changes.notes !== undefined) optimisticChanges.notes = changes.notes;
+    if (changes.outreachType !== undefined) optimisticChanges.outreach_type = changes.outreachType;
+    if (changes.accountName !== undefined) optimisticChanges.account_name = changes.accountName;
+    if (changes.website !== undefined) optimisticChanges.website = changes.website;
+    if (changes.industry !== undefined) optimisticChanges.industry = changes.industry;
+    if (changes.country !== undefined) optimisticChanges.country = changes.country;
+    if (changes.city !== undefined) optimisticChanges.city = changes.city;
+    if (changes.tier !== undefined) optimisticChanges.tier = changes.tier;
+    if (changes.groupName !== undefined) optimisticChanges.group_name = changes.groupName;
     setItems((previous) =>
-      previous.map((row) => (row.id === item.id ? { ...row, ...changes } : row)),
+      previous.map((row) => (row.id === item.id ? { ...row, ...optimisticChanges } : row)),
     );
     const res = await fetch("/api/weekly-outreach", {
       method: "PATCH",
@@ -353,6 +456,7 @@ export default function WeeklyOutreachPage() {
       });
       setMessage(`Created one Sourcing batch for ${e1s.length} E1s. Nothing was sent.`);
       await load(true);
+      router.push(`/sourcing?jobId=${data.jobId}`);
     } catch (prepareError) {
       setError(
         prepareError instanceof Error
@@ -364,7 +468,7 @@ export default function WeeklyOutreachPage() {
     }
   }
 
-  async function prepareRce(item: WeeklyOutreachItem) {
+  async function prepareRce(item: WeeklyOutreachItem): Promise<boolean> {
     setPreparingRces((previous) => new Set(previous).add(item.id));
     setError(null);
     try {
@@ -374,14 +478,22 @@ export default function WeeklyOutreachPage() {
         body: JSON.stringify({ id: item.id }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Could not prepare reconnect");
+      if (!res.ok) {
+        if (data.code === "OUTLOOK_RECONNECT_REQUIRED") {
+          setOutlookReconnectRequired(true);
+        }
+        throw new Error(data.error ?? "Could not prepare reconnect");
+      }
       setItems((previous) =>
         previous.map((row) => (row.id === item.id ? data.item : row)),
       );
+      if (data.warning) setMessage(data.warning);
+      return true;
     } catch (prepareError) {
       setError(
         prepareError instanceof Error ? prepareError.message : "Could not prepare reconnect",
       );
+      return false;
     } finally {
       setPreparingRces((previous) => {
         const next = new Set(previous);
@@ -395,13 +507,75 @@ export default function WeeklyOutreachPage() {
     const rces = items.filter(
       (item) => item.outreach_type === "RCE" && item.status !== "sent" && !item.draft,
     );
+    let preparedCount = 0;
     for (let index = 0; index < rces.length; index += 3) {
-      await Promise.all(rces.slice(index, index + 3).map(prepareRce));
+      const results = await Promise.all(rces.slice(index, index + 3).map(prepareRce));
+      preparedCount += results.filter(Boolean).length;
     }
-    if (rces.length > 0) {
+    if (preparedCount > 0) {
       setMessage(
-        `Prepared ${rces.length} reconnect draft${rces.length === 1 ? "" : "s"}. Nothing was sent.`,
+        `Prepared ${preparedCount} Outlook reply draft${preparedCount === 1 ? "" : "s"}. Nothing was sent.`,
       );
+    }
+  }
+
+  function openRceReview(item: WeeklyOutreachItem) {
+    setReviewingRceId(item.id);
+    setReviewDraft(item.draft ?? "");
+    setError(null);
+  }
+
+  async function reviewRce(action: "save" | "send" | "dismiss") {
+    if (!reviewingRce || reviewSaving) return;
+    if (
+      action === "send" &&
+      !window.confirm(`Approve and send this reply to ${reviewingRce.account_name} through Outlook now?`)
+    ) {
+      return;
+    }
+    if (
+      action === "dismiss" &&
+      !window.confirm("Dismiss this reconnect draft and remove the matching Outlook draft?")
+    ) {
+      return;
+    }
+    setReviewSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/weekly-outreach/review-rce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: reviewingRce.id,
+          action,
+          draft: reviewDraft,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === "OUTLOOK_RECONNECT_REQUIRED") {
+          setOutlookReconnectRequired(true);
+        }
+        throw new Error(data.error ?? "Could not review reconnect");
+      }
+      setItems((previous) =>
+        previous.map((item) => (item.id === reviewingRce.id ? data.item : item)),
+      );
+      if (action === "save") {
+        setMessage("Draft saved in Weekly Outreach and Outlook.");
+      } else {
+        setReviewingRceId(null);
+        setReviewDraft("");
+        setMessage(
+          action === "send"
+            ? `Reconnect reply sent through Outlook to ${reviewingRce.account_name}.`
+            : `Reconnect draft for ${reviewingRce.account_name} dismissed.`,
+        );
+      }
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : "Could not review reconnect");
+    } finally {
+      setReviewSaving(false);
     }
   }
 
@@ -466,6 +640,14 @@ export default function WeeklyOutreachPage() {
             {message}
           </Alert>
         )}
+        {outlookReconnectRequired && (
+          <Alert variant="info" onDismiss={() => setOutlookReconnectRequired(false)}>
+            Outlook needs one permission refresh before it can create editable reply drafts.{" "}
+            <a className="font-semibold underline" href="/api/microsoft/connect">
+              Reconnect Outlook
+            </a>
+          </Alert>
+        )}
 
         <div className="mb-4 rounded-xl border border-line bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -488,24 +670,219 @@ export default function WeeklyOutreachPage() {
                 />
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
               <Button
                 onClick={prepareAllRces}
                 disabled={preparingRces.size > 0 || counts.rce === 0}
+                className="w-full sm:w-auto"
               >
                 Prepare RCE Drafts
               </Button>
-              <Button onClick={prepareE1s} disabled={saving || counts.e1 === 0}>
+              <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={saving || counts.e1 === 0}>
                 Prepare E1 Sourcing Batch
               </Button>
-              <Button variant="secondary" onClick={copyCsv} disabled={items.length === 0}>
+              <Button className="w-full sm:w-auto" variant="secondary" onClick={copyCsv} disabled={items.length === 0}>
                 Copy CSV
               </Button>
             </div>
           </div>
         </div>
 
-        <div className="border border-line bg-white shadow-sm">
+        <div className="space-y-3 md:hidden">
+          {visibleDraftRows[0] ? (
+            <div className="rounded-xl border border-line bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-ink">Add to this week</h2>
+                <span className="text-xs text-ink-muted">Salesforce autofill</span>
+              </div>
+              <div className="mb-3 grid grid-cols-2 gap-2">
+                {(["E1", "RCE"] as WeeklyOutreachType[]).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() =>
+                      patchDraftRow(visibleDraftRows[0].key, {
+                        outreachType: type,
+                        error: null,
+                      })
+                    }
+                    className={`h-11 rounded-lg border text-sm font-semibold ${
+                      visibleDraftRows[0].outreachType === type
+                        ? "border-brand bg-brand text-white"
+                        : "border-line bg-white text-ink"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+              <div className="relative">
+                <input
+                  value={visibleDraftRows[0].accountName}
+                  onChange={(event) =>
+                    handleCompanyChange(visibleDraftRows[0], event.target.value)
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      const exact = visibleDraftRows[0].results.find(
+                        (result) =>
+                          result.accountName.toLowerCase() ===
+                          visibleDraftRows[0].accountName.trim().toLowerCase(),
+                      );
+                      void addAccountFromRow(
+                        visibleDraftRows[0],
+                        exact ??
+                          (visibleDraftRows[0].results.length === 1
+                            ? visibleDraftRows[0].results[0]
+                            : undefined),
+                      );
+                    }
+                  }}
+                  disabled={visibleDraftRows[0].saving}
+                  className="h-12 w-full rounded-lg border border-line bg-white px-3 text-base focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                  placeholder="Search Salesforce company"
+                />
+                {visibleDraftRows[0].searching || visibleDraftRows[0].saving ? (
+                  <span className="absolute right-3 top-4 text-xs text-ink-muted">
+                    {visibleDraftRows[0].saving ? "Saving…" : "Searching…"}
+                  </span>
+                ) : null}
+                {visibleDraftRows[0].results.length > 0 ? (
+                  <div className="absolute left-0 right-0 top-12 z-40 max-h-64 overflow-y-auto rounded-b-lg border border-line bg-white shadow-xl">
+                    {visibleDraftRows[0].results.map((account) => (
+                      <button
+                        key={account.accountId}
+                        type="button"
+                        onClick={() => void addAccountFromRow(visibleDraftRows[0], account)}
+                        className="block w-full border-b border-line px-3 py-3 text-left last:border-0"
+                      >
+                        <span className="block font-medium text-ink">{account.accountName}</span>
+                        {account.website ? (
+                          <span className="text-xs text-ink-muted">{account.website}</span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              {visibleDraftRows[0].error ? (
+                <p className="mt-2 text-xs text-danger">{visibleDraftRows[0].error}</p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {items.map((item, index) => (
+            <div key={item.id} className="rounded-xl border border-line bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-brand-soft px-2 py-1 text-xs font-bold text-brand">
+                      {item.outreach_type}
+                    </span>
+                    <span className="text-xs text-ink-muted">#{index + 1}</span>
+                  </div>
+                  <h3 className="mt-2 truncate text-base font-semibold text-ink">
+                    {item.account_name}
+                  </h3>
+                  <p className="mt-1 text-xs text-ink-muted">
+                    {[item.industry, item.country, item.city].filter(Boolean).join(" · ") ||
+                      "Salesforce details unavailable"}
+                  </p>
+                </div>
+                <select
+                  value={item.status}
+                  onChange={(event) =>
+                    updateRow(item, { status: event.target.value as WeeklyOutreachStatus })
+                  }
+                  className="h-9 rounded-md border border-line bg-white px-2 text-xs"
+                >
+                  {STATUSES.map((status) => (
+                    <option key={status.value} value={status.value}>
+                      {status.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-lg bg-surface-2 p-2">
+                  <span className="block text-ink-muted">Tier</span>
+                  <span className="font-medium text-ink">{item.tier || "—"}</span>
+                </div>
+                <div className="rounded-lg bg-surface-2 p-2">
+                  <span className="block text-ink-muted">Group</span>
+                  <span className="font-medium text-ink">{item.group_name || "—"}</span>
+                </div>
+              </div>
+
+              <details className="mt-3 border-t border-line pt-3">
+                <summary className="cursor-pointer text-sm font-medium text-brand">
+                  Edit Salesforce fields
+                </summary>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {([
+                    ["Industry", "industry", item.industry],
+                    ["Country", "country", item.country],
+                    ["City", "city", item.city],
+                    ["Tier", "tier", item.tier],
+                    ["Group", "groupName", item.group_name],
+                  ] as const).map(([label, field, value]) => (
+                    <label key={field} className={field === "industry" || field === "groupName" ? "col-span-2" : ""}>
+                      <span className="mb-1 block text-[11px] font-medium text-ink-muted">{label}</span>
+                      <input
+                        defaultValue={value ?? ""}
+                        onBlur={(event) => updateRow(item, { [field]: event.target.value || null })}
+                        className="h-10 w-full rounded-md border border-line px-2 text-sm"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </details>
+
+              <textarea
+                defaultValue={item.notes ?? ""}
+                onBlur={(event) => updateRow(item, { notes: event.target.value || null })}
+                className="mt-3 min-h-20 w-full rounded-lg border border-line p-3 text-sm"
+                placeholder="Trip, angle, reminder…"
+              />
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {item.outreach_type === "RCE" ? (
+                  item.draft ? (
+                    <Button className="col-span-2 w-full" onClick={() => openRceReview(item)}>
+                      Review reconnect
+                    </Button>
+                  ) : (
+                    <Button
+                      className="col-span-2 w-full"
+                      loading={preparingRces.has(item.id)}
+                      onClick={() => void prepareRce(item)}
+                    >
+                      Prepare reconnect
+                    </Button>
+                  )
+                ) : item.sourcing_job_id ? (
+                  <Link
+                    className="col-span-2 flex h-10 items-center justify-center rounded-md bg-brand font-medium text-white"
+                    href={`/sourcing?jobId=${item.sourcing_job_id}`}
+                  >
+                    Open in Sourcing
+                  </Link>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => removeRow(item)}
+                  className="col-span-2 py-2 text-sm font-medium text-danger"
+                >
+                  Remove from week
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden border border-line bg-white shadow-sm md:block">
           <div className="flex items-center justify-between border-b border-line bg-surface-2 px-3 py-2">
             <div>
               <span className="text-sm font-semibold text-ink">Week of {weekStart}</span>
@@ -520,14 +897,15 @@ export default function WeeklyOutreachPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1280px] border-collapse text-xs">
+            <table className="w-full min-w-[1500px] border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-surface-3 text-left font-semibold text-ink-muted">
                 <tr>
                   <th className="w-10 border-b border-r border-line px-2 py-2 text-center">#</th>
                   <th className="w-20 border-b border-r border-line px-2 py-2">Type</th>
                   <th className="min-w-60 border-b border-r border-line px-2 py-2">Company</th>
                   <th className="min-w-40 border-b border-r border-line px-2 py-2">Industry</th>
-                  <th className="min-w-36 border-b border-r border-line px-2 py-2">Country / City</th>
+                  <th className="min-w-32 border-b border-r border-line px-2 py-2">Country</th>
+                  <th className="min-w-28 border-b border-r border-line px-2 py-2">City</th>
                   <th className="w-24 border-b border-r border-line px-2 py-2">Tier</th>
                   <th className="min-w-40 border-b border-r border-line px-2 py-2">Group</th>
                   <th className="w-24 border-b border-r border-line px-2 py-2">Source</th>
@@ -543,36 +921,56 @@ export default function WeeklyOutreachPage() {
                     <td className="border-b border-r border-line bg-surface-2 px-2 text-center text-ink-muted">
                       {index + 1}
                     </td>
-                    <td className="border-b border-r border-line px-2 font-semibold text-brand">
-                      {item.outreach_type}
-                      {item.rce_days ? <span className="ml-1 text-[10px] text-ink-muted">{item.rce_days}d</span> : null}
+                    <td className="border-b border-r border-line p-0">
+                      <select
+                        ref={registerGridCell(index, 0)}
+                        value={item.outreach_type}
+                        onKeyDown={(event) => handleGridNavigation(event, index, 0)}
+                        onChange={(event) =>
+                          updateRow(item, { outreachType: event.target.value as WeeklyOutreachType })
+                        }
+                        className="h-10 w-full border-0 bg-transparent px-2 font-semibold text-brand focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                      >
+                        <option value="E1">E1</option>
+                        <option value="RCE">RCE</option>
+                      </select>
                     </td>
-                    <td className="border-b border-r border-line px-2 font-medium text-ink">
-                      {item.account_url ? (
-                        <a
-                          className="hover:text-brand hover:underline"
-                          href={item.account_url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {item.account_name}
-                        </a>
-                      ) : (
-                        item.account_name
-                      )}
+                    <td className="border-b border-r border-line p-0">
+                      <input
+                        ref={registerGridCell(index, 1)}
+                        defaultValue={item.account_name}
+                        onKeyDown={(event) => handleGridNavigation(event, index, 1)}
+                        onBlur={(event) => {
+                          if (event.target.value.trim() !== item.account_name) {
+                            void updateRow(item, { accountName: event.target.value });
+                          }
+                        }}
+                        className="h-10 w-full border-0 bg-transparent px-2 font-medium text-ink focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                      />
                     </td>
-                    <td className="border-b border-r border-line px-2">{item.industry || ""}</td>
-                    <td className="border-b border-r border-line px-2">
-                      {[item.country, item.city].filter(Boolean).join(" · ")}
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(index, 2)} defaultValue={item.industry ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 2)} onBlur={(event) => void updateRow(item, { industry: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
                     </td>
-                    <td className="border-b border-r border-line px-2">{item.tier || ""}</td>
-                    <td className="border-b border-r border-line px-2">{item.group_name || ""}</td>
-                    <td className="border-b border-r border-line px-2 capitalize text-ink-muted">
-                      {item.source}
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(index, 3)} defaultValue={item.country ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 3)} onBlur={(event) => void updateRow(item, { country: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    </td>
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(index, 4)} defaultValue={item.city ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 4)} onBlur={(event) => void updateRow(item, { city: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    </td>
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(index, 5)} defaultValue={item.tier ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 5)} onBlur={(event) => void updateRow(item, { tier: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    </td>
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(index, 6)} defaultValue={item.group_name ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 6)} onBlur={(event) => void updateRow(item, { groupName: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    </td>
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(index, 7)} readOnly value={item.source} onKeyDown={(event) => handleGridNavigation(event, index, 7)} className="h-10 w-full border-0 bg-surface-2 px-2 capitalize text-ink-muted focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
                     </td>
                     <td className="border-b border-r border-line px-1">
                       <select
+                        ref={registerGridCell(index, 8)}
                         value={item.status}
+                        onKeyDown={(event) => handleGridNavigation(event, index, 8)}
                         onChange={(event) =>
                           updateRow(item, {
                             status: event.target.value as WeeklyOutreachStatus,
@@ -592,41 +990,39 @@ export default function WeeklyOutreachPage() {
                         </Link>
                       ) : null}
                     </td>
-                    <td className="border-b border-r border-line px-2">
+                    <td className="border-b border-r border-line p-0">
                       {item.outreach_type === "RCE" && !item.draft ? (
                         <button
+                          ref={registerGridCell(index, 9)}
                           type="button"
-                          onClick={() => prepareRce(item)}
+                          onKeyDown={(event) => handleGridNavigation(event, index, 9)}
+                          onClick={() => void prepareRce(item)}
                           disabled={preparingRces.has(item.id)}
-                          className="font-medium text-brand hover:underline disabled:opacity-50"
+                          className="h-10 w-full px-2 text-left font-medium text-brand hover:bg-brand-soft disabled:opacity-50"
                         >
                           {preparingRces.has(item.id) ? "Preparing…" : "Prepare"}
                         </button>
-                      ) : null}
-                      {item.draft ? (
-                        <details className="relative">
-                          <summary className="cursor-pointer font-medium text-brand">View draft</summary>
-                          <div className="absolute right-0 z-30 mt-2 w-96 rounded-lg border border-line bg-white p-3 shadow-xl">
-                            {item.context_summary ? (
-                              <p className="mb-2 text-ink-muted">{item.context_summary}</p>
-                            ) : null}
-                            <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-sans text-ink">
-                              {item.draft}
-                            </pre>
-                            <button
-                              type="button"
-                              onClick={() => navigator.clipboard.writeText(item.draft ?? "")}
-                              className="mt-2 font-medium text-brand underline"
-                            >
-                              Copy draft
-                            </button>
-                          </div>
-                        </details>
-                      ) : null}
+                      ) : item.outreach_type === "RCE" && item.draft ? (
+                        <button
+                          ref={registerGridCell(index, 9)}
+                          type="button"
+                          onKeyDown={(event) => handleGridNavigation(event, index, 9)}
+                          onClick={() => openRceReview(item)}
+                          className="h-10 w-full px-2 text-left font-medium text-brand hover:bg-brand-soft"
+                        >
+                          Review
+                        </button>
+                      ) : (
+                        <button ref={registerGridCell(index, 9)} type="button" onKeyDown={(event) => handleGridNavigation(event, index, 9)} className="h-10 w-full px-2 text-left text-ink-muted">
+                          {item.outreach_type === "E1" ? (item.sourcing_job_id ? "In Sourcing" : "—") : "—"}
+                        </button>
+                      )}
                     </td>
                     <td className="border-b border-r border-line p-0">
                       <input
+                        ref={registerGridCell(index, 10)}
                         defaultValue={item.notes ?? ""}
+                        onKeyDown={(event) => handleGridNavigation(event, index, 10)}
                         onBlur={(event) =>
                           updateRow(item, { notes: event.target.value || null })
                         }
@@ -654,7 +1050,11 @@ export default function WeeklyOutreachPage() {
                     </td>
                     <td className="border-b border-r border-line p-0">
                       <select
+                        ref={registerGridCell(items.length + draftIndex, 0)}
                         value={row.outreachType}
+                        onKeyDown={(event) =>
+                          handleGridNavigation(event, items.length + draftIndex, 0)
+                        }
                         onChange={(event) => {
                           patchDraftRow(row.key, {
                             outreachType: event.target.value as "" | WeeklyOutreachType,
@@ -676,12 +1076,20 @@ export default function WeeklyOutreachPage() {
                     <td className="relative border-b border-r border-line p-0">
                       <input
                         ref={(element) => {
-                          if (element) companyInputs.current.set(row.key, element);
-                          else companyInputs.current.delete(row.key);
+                          const gridKey = `${items.length + draftIndex}:1`;
+                          if (element) {
+                            companyInputs.current.set(row.key, element);
+                            gridCells.current.set(gridKey, element);
+                          } else {
+                            companyInputs.current.delete(row.key);
+                            gridCells.current.delete(gridKey);
+                          }
                         }}
                         value={row.accountName}
                         onChange={(event) => handleCompanyChange(row, event.target.value)}
-                        onKeyDown={(event) => handleCompanyKeyDown(event, row)}
+                        onKeyDown={(event) =>
+                          handleCompanyKeyDown(event, row, items.length + draftIndex)
+                        }
                         disabled={row.saving}
                         className={`h-10 w-full border-0 bg-transparent px-2 text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-inset ${
                           row.error ? "focus:ring-danger" : "focus:ring-brand"
@@ -717,13 +1125,34 @@ export default function WeeklyOutreachPage() {
                         </div>
                       ) : null}
                     </td>
-                    {Array.from({ length: 4 }, (_, index) => (
-                      <td key={index} className="border-b border-r border-line" />
+                    {Array.from({ length: 5 }, (_, emptyIndex) => (
+                      <td key={emptyIndex} className="border-b border-r border-line p-0">
+                        <input
+                          ref={registerGridCell(items.length + draftIndex, emptyIndex + 2)}
+                          readOnly
+                          onKeyDown={(event) =>
+                            handleGridNavigation(
+                              event,
+                              items.length + draftIndex,
+                              emptyIndex + 2,
+                            )
+                          }
+                          className="h-10 w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        />
+                      </td>
                     ))}
-                    <td className="border-b border-r border-line px-2 text-ink-muted">Manual</td>
-                    <td className="border-b border-r border-line px-2 text-ink-muted">Queued</td>
-                    <td className="border-b border-r border-line" />
-                    <td className="border-b border-r border-line" />
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(items.length + draftIndex, 7)} readOnly value="Manual" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 7)} className="h-10 w-full border-0 bg-surface-2 px-2 text-ink-muted focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    </td>
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(items.length + draftIndex, 8)} readOnly value="Queued" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 8)} className="h-10 w-full border-0 bg-transparent px-2 text-ink-muted focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    </td>
+                    <td className="border-b border-r border-line p-0">
+                      <button ref={registerGridCell(items.length + draftIndex, 9)} type="button" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 9)} className="h-10 w-full focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" aria-label="Empty draft cell" />
+                    </td>
+                    <td className="border-b border-r border-line p-0">
+                      <input ref={registerGridCell(items.length + draftIndex, 10)} readOnly onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 10)} className="h-10 w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    </td>
                     <td className="border-b border-line" />
                   </tr>
                 ))}
@@ -735,6 +1164,96 @@ export default function WeeklyOutreachPage() {
         <p className="mt-3 text-xs text-ink-muted">
           Entries from Open Tasks and Re-Contact are added to the bottom automatically. The sheet keeps five empty rows after the weekly target and continues expanding beyond 30.
         </p>
+
+        {reviewingRce ? (
+          <div className="fixed inset-0 z-50 flex items-end bg-navy/50 sm:items-center sm:justify-center sm:p-6">
+            <div className="flex max-h-[95vh] w-full flex-col rounded-t-2xl bg-white shadow-2xl sm:max-w-3xl sm:rounded-2xl">
+              <div className="flex items-start justify-between border-b border-line px-4 py-4 sm:px-6">
+                <div className="min-w-0">
+                  <span className="text-xs font-bold uppercase tracking-wide text-brand">RCE review</span>
+                  <h2 className="mt-1 truncate text-xl font-semibold text-ink">
+                    {reviewingRce.account_name}
+                  </h2>
+                  <p className="mt-1 truncate text-sm text-ink-muted">
+                    {reviewingRce.outlook_reply_subject || "Outlook reply draft"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviewingRceId(null)}
+                  className="ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xl text-ink-muted"
+                  aria-label="Close reconnect review"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="overflow-y-auto px-4 py-4 sm:px-6">
+                <section className="rounded-xl border border-info/20 bg-info-soft p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-ink">Where the conversation left off</h3>
+                    <span className="shrink-0 text-[11px] text-ink-muted">Under 30 seconds</span>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-ink">
+                    {reviewingRce.context_summary || "No relationship summary was available."}
+                  </p>
+                </section>
+
+                <section className="mt-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <label htmlFor="rce-review-draft" className="text-sm font-semibold text-ink">
+                      Reconnect email
+                    </label>
+                    <span className={`text-xs ${reviewingRce.outlook_draft_ready ? "text-ok" : "text-warning"}`}>
+                      {reviewingRce.outlook_draft_ready
+                        ? "Connected to an Outlook reply draft"
+                        : "No Outlook reply thread attached"}
+                    </span>
+                  </div>
+                  <textarea
+                    id="rce-review-draft"
+                    value={reviewDraft}
+                    onChange={(event) => setReviewDraft(event.target.value)}
+                    className="min-h-64 w-full resize-y rounded-xl border border-line p-4 text-[15px] leading-6 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                  />
+                  <p className="mt-2 text-xs text-ink-muted">
+                    Save keeps Outlook synchronized. Approve and Send sends this exact text as a reply in the existing chain.
+                  </p>
+                </section>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 border-t border-line bg-surface-2 p-4 sm:flex sm:justify-between sm:px-6">
+                <Button
+                  variant="ghost"
+                  className="order-3 col-span-2 text-danger sm:order-none sm:col-span-1"
+                  disabled={reviewSaving}
+                  onClick={() => void reviewRce("dismiss")}
+                >
+                  Dismiss draft
+                </Button>
+                <div className="contents sm:flex sm:gap-2">
+                  <Button
+                    variant="secondary"
+                    className="w-full"
+                    loading={reviewSaving}
+                    disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim()}
+                    onClick={() => void reviewRce("save")}
+                  >
+                    Save to Outlook
+                  </Button>
+                  <Button
+                    className="w-full"
+                    loading={reviewSaving}
+                    disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim()}
+                    onClick={() => void reviewRce("send")}
+                  >
+                    Approve &amp; Send
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </PageContent>
     </>
   );

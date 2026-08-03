@@ -7,6 +7,7 @@ import {
   parseManualWeeklyEntry,
   resolveWeeklyAccountByName,
   upsertWeeklyOutreachItem,
+  withWeeklyOutreachClientMetadata,
   type WeeklyOutreachSource,
   type WeeklyOutreachStatus,
   type WeeklyOutreachType,
@@ -23,7 +24,10 @@ export async function GET(request: NextRequest) {
     .eq("week_start", weekStart)
     .order("created_at", { ascending: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ items: data ?? [], weekStart });
+  return NextResponse.json({
+    items: (data ?? []).map((item) => withWeeklyOutreachClientMetadata(item)),
+    weekStart,
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -68,7 +72,7 @@ export async function POST(request: NextRequest) {
         account: resolved.account,
         source: "manual",
       });
-      return NextResponse.json({ item });
+      return NextResponse.json({ item: withWeeklyOutreachClientMetadata(item) });
     }
 
     if (!body.accountId || !body.outreachType) {
@@ -82,7 +86,7 @@ export async function POST(request: NextRequest) {
       sourceReference: body.sourceReference,
       rceDays: body.rceDays,
     });
-    return NextResponse.json({ item });
+    return NextResponse.json({ item: withWeeklyOutreachClientMetadata(item) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -101,6 +105,14 @@ export async function PATCH(request: NextRequest) {
     draft?: string | null;
     contextSummary?: string | null;
     sourcingJobId?: string | null;
+    outreachType?: WeeklyOutreachType;
+    accountName?: string;
+    website?: string | null;
+    industry?: string | null;
+    country?: string | null;
+    city?: string | null;
+    tier?: string | null;
+    groupName?: string | null;
   };
   const ids = body.ids ?? (body.id ? [body.id] : []);
   if (ids.length === 0) return NextResponse.json({ error: "Missing row id" }, { status: 400 });
@@ -110,13 +122,29 @@ export async function PATCH(request: NextRequest) {
   if (body.draft !== undefined) updates.draft = body.draft;
   if (body.contextSummary !== undefined) updates.context_summary = body.contextSummary;
   if (body.sourcingJobId !== undefined) updates.sourcing_job_id = body.sourcingJobId;
+  if (body.outreachType !== undefined) updates.outreach_type = body.outreachType;
+  if (body.accountName !== undefined) {
+    const accountName = body.accountName.trim();
+    if (!accountName) {
+      return NextResponse.json({ error: "Company name cannot be empty" }, { status: 400 });
+    }
+    updates.account_name = accountName;
+  }
+  if (body.website !== undefined) updates.website = body.website?.trim() || null;
+  if (body.industry !== undefined) updates.industry = body.industry?.trim() || null;
+  if (body.country !== undefined) updates.country = body.country?.trim() || null;
+  if (body.city !== undefined) updates.city = body.city?.trim() || null;
+  if (body.tier !== undefined) updates.tier = body.tier?.trim() || null;
+  if (body.groupName !== undefined) updates.group_name = body.groupName?.trim() || null;
   const { data, error } = await getSupabaseAdmin()
     .from("weekly_outreach")
     .update(updates)
     .in("id", ids)
     .select("*");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ items: data ?? [] });
+  return NextResponse.json({
+    items: (data ?? []).map((item) => withWeeklyOutreachClientMetadata(item)),
+  });
 }
 
 export async function DELETE(request: NextRequest) {

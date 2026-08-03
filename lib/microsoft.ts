@@ -318,6 +318,7 @@ export type OutlookRelationshipEmail = {
   toEmails: string[];
   sentDateTime: string;
   bodyText: string;
+  conversationId: string;
 };
 
 /** Search all Outlook folders, including Sent Items, for relationship context. */
@@ -330,7 +331,7 @@ export async function searchMailboxMessages(
   const safe = searchTerm.replace(/"/g, "");
   const params = new URLSearchParams({
     $search: `"${safe}"`,
-    $select: "id,subject,from,toRecipients,sentDateTime,body",
+    $select: "id,subject,from,toRecipients,sentDateTime,receivedDateTime,body,conversationId",
     $top: String(Math.min(50, Math.max(1, limit))),
   });
   const response = await fetch(
@@ -351,7 +352,9 @@ export async function searchMailboxMessages(
       from?: { emailAddress?: { address?: string } };
       toRecipients?: Array<{ emailAddress?: { address?: string } }>;
       sentDateTime?: string;
+      receivedDateTime?: string;
       body?: { content?: string };
+      conversationId?: string;
     }>;
   };
   return (data.value ?? []).map((m) => ({
@@ -359,9 +362,112 @@ export async function searchMailboxMessages(
     subject: m.subject ?? "(No subject)",
     fromEmail: (m.from?.emailAddress?.address ?? "").toLowerCase(),
     toEmails: (m.toRecipients ?? []).map((r) => (r.emailAddress?.address ?? "").toLowerCase()).filter(Boolean),
-    sentDateTime: m.sentDateTime ?? "",
+    sentDateTime: m.sentDateTime ?? m.receivedDateTime ?? "",
     bodyText: (m.body?.content ?? "").slice(0, 5000),
+    conversationId: m.conversationId ?? "",
   }));
+}
+
+/** The signed-in Outlook mailbox address, used to distinguish sent vs received thread messages. */
+export async function getMailboxAddress(): Promise<string> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(
+    "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
+    { headers: { Authorization: `Bearer ${credentials.access_token}` } },
+  );
+  if (!response.ok) throw new Error(`Failed to read Outlook profile: ${await response.text()}`);
+  const data = (await response.json()) as { mail?: string; userPrincipalName?: string };
+  return (data.mail ?? data.userPrincipalName ?? "").toLowerCase();
+}
+
+export type OutlookReplyDraft = {
+  id: string;
+  subject: string;
+};
+
+/** Create a real Outlook reply draft attached to an existing message thread. */
+export async function createOutlookReplyDraft(
+  replyToMessageId: string,
+  body: string,
+): Promise<OutlookReplyDraft> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const createResponse = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(replyToMessageId)}/createReply`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    },
+  );
+  if (!createResponse.ok) {
+    const detail = await createResponse.text();
+    if (createResponse.status === 403) {
+      throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+    }
+    throw new Error(`Could not create Outlook reply draft: ${detail}`);
+  }
+  const created = (await createResponse.json()) as { id: string; subject?: string };
+  await updateOutlookDraft(created.id, body);
+  return { id: created.id, subject: created.subject ?? "Reply" };
+}
+
+/** Keep edits in the tool synchronized with the real Outlook draft. */
+export async function updateOutlookDraft(draftId: string, body: string): Promise<void> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ body: { contentType: "Text", content: body } }),
+    },
+  );
+  if (!response.ok) {
+    if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+    throw new Error(`Could not update Outlook draft: ${await response.text()}`);
+  }
+}
+
+/** Send an existing Outlook draft. Microsoft moves it to Sent Items. */
+export async function sendOutlookDraft(draftId: string): Promise<void> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}/send`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Length": "0",
+      },
+    },
+  );
+  if (!response.ok) throw new Error(`Could not send Outlook reply: ${await response.text()}`);
+}
+
+/** Remove an Outlook draft when its Weekly Outreach review is dismissed. */
+export async function deleteOutlookDraft(draftId: string): Promise<void> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${credentials.access_token}` },
+    },
+  );
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Could not remove Outlook draft: ${await response.text()}`);
+  }
 }
 
 // ── Send Email API ───────────────────────────────────────────────────────────

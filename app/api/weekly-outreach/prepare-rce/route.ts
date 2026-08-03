@@ -2,9 +2,18 @@ import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { getAnthropicClient } from "@/lib/anthropic";
-import { searchMailboxMessages } from "@/lib/microsoft";
+import {
+  createOutlookReplyDraft,
+  getMailboxAddress,
+  searchMailboxMessages,
+} from "@/lib/microsoft";
 import { fetchRecentAccountActivity } from "@/lib/salesforce-prep";
-import type { WeeklyOutreachItem } from "@/lib/weekly-outreach";
+import {
+  readWeeklyOutreachSourceMetadata,
+  withWeeklyOutreachClientMetadata,
+  writeWeeklyOutreachSourceMetadata,
+  type WeeklyOutreachItem,
+} from "@/lib/weekly-outreach";
 
 function domainFromWebsite(website: string | null): string | null {
   if (!website) return null;
@@ -29,19 +38,36 @@ export async function POST(request: Request) {
 
   try {
     const domain = domainFromWebsite(item.website);
-    const [relationshipEmails, personalAngleEmails, sfActivity] = await Promise.all([
-      searchMailboxMessages(domain ?? item.account_name, 25).catch(() => []),
-      searchMailboxMessages("100th birthday", 8).catch(() => []),
+    const [domainEmails, nameEmails, personalAngleEmails, sfActivity, mailboxAddress] = await Promise.all([
+      domain ? searchMailboxMessages(domain, 50).catch(() => []) : Promise.resolve([]),
+      searchMailboxMessages(item.account_name, 50).catch(() => []),
+      searchMailboxMessages("100th birthday", 12).catch(() => []),
       fetchRecentAccountActivity(item.sf_account_id).catch(() => []),
+      getMailboxAddress().catch(() => ""),
     ]);
-    const relationshipText = relationshipEmails.map((m) =>
-      `${m.sentDateTime} | ${m.fromEmail} -> ${m.toEmails.join(", ")} | ${m.subject}\n${m.bodyText.slice(0, 1800)}`,
+    const relationshipEmails = [...domainEmails, ...nameEmails]
+      .filter((email, index, all) => all.findIndex((candidate) => candidate.id === email.id) === index)
+      .sort((a, b) => new Date(a.sentDateTime).getTime() - new Date(b.sentDateTime).getTime())
+      .slice(-50);
+    const relationshipText = relationshipEmails.map((message) =>
+      `${message.sentDateTime} | ${message.fromEmail} -> ${message.toEmails.join(", ")} | ${message.subject}\n${message.bodyText.slice(0, 1800)}`,
     ).join("\n\n");
-    const personalAngleText = personalAngleEmails.map((m) => `${m.subject}\n${m.bodyText.slice(0, 1200)}`).join("\n\n");
+    const sentStyleExamples = relationshipEmails
+      .filter((message) => mailboxAddress && message.fromEmail === mailboxAddress)
+      .slice(-12)
+      .map((message) => `${message.subject}\n${message.bodyText.slice(0, 1600)}`)
+      .join("\n\n");
+    const personalAngleText = personalAngleEmails
+      .filter((message) => !mailboxAddress || message.fromEmail === mailboxAddress)
+      .map((message) => `${message.subject}\n${message.bodyText.slice(0, 1200)}`)
+      .join("\n\n");
+    const replyTarget = [...relationshipEmails]
+      .reverse()
+      .find((message) => message.fromEmail && message.fromEmail !== mailboxAddress);
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1800,
-      messages: [{ role: "user", content: `Draft a reconnect email for an M&A professional. Match the user's actual sent-email voice in the evidence: concise, natural, specific, and human. Avoid AI jargon, generic praise, hype, em dashes, and invented history. Do not include a greeting or signature. Do not claim the recipient said something unless the thread supports it.
+      messages: [{ role: "user", content: `Draft a reconnect email for an M&A professional. Match Sebastian's actual sent-email voice in the evidence: concise, natural, personable, and specific. Use his vocabulary, sentence length, contractions, and level of formality. Never use an em dash. Never write "I would welcome a conversation", "I would value a conversation", "I hope this message finds you well", generic praise, AI jargon, hype, or anything corny. Do not invent history or claim the recipient said something unless the thread supports it. Do not include a subject line, greeting, or signature because this will be inserted into an existing Outlook reply draft.
 
 Company: ${item.account_name}
 Salesforce activity:
@@ -50,26 +76,60 @@ ${sfActivity.join("\n") || "No Salesforce activity available"}
 Relevant Outlook exchanges (received and sent):
 ${relationshipText || "No relevant Outlook thread found"}
 
+Sebastian's sent-email style examples from this relationship:
+${sentStyleExamples || "No sent examples found in the relationship search"}
+
 Optional recent personal-angle examples from the user's sent mail. Reuse only if the evidence makes the wording clear and it fits naturally; otherwise ignore it:
 ${personalAngleText || "No personal-angle example found"}
 
 Return ONLY JSON:
 {
-  "contextSummary": "2-4 sentences: last meaningful interaction, concrete detail, objection/promise, and why reconnect now",
-  "draft": "subject line on first line, blank line, then a short reconnect email body"
+  "contextSummary": "Maximum 55 words. State when contact last occurred, exactly where the conversation stopped, the concrete decision/objection/promise, and the most useful reconnect angle. It must be readable in under 30 seconds.",
+  "draft": "A short, natural reconnect email body in Sebastian's demonstrated voice, generally 50-120 words. No subject, greeting, signature, em dash, generic CTA, or invented detail."
 }` }],
     });
     const text = message.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n");
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text) as { contextSummary: string; draft: string };
+    const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
+    let replySubject = metadata.replySubject;
+    if (replyTarget) {
+      const outlookDraft = await createOutlookReplyDraft(replyTarget.id, parsed.draft);
+      metadata.outlookDraftId = outlookDraft.id;
+      metadata.replyToMessageId = replyTarget.id;
+      metadata.replySubject = outlookDraft.subject;
+      replySubject = outlookDraft.subject;
+    }
     const { data: updated, error: updateError } = await supabase
       .from("weekly_outreach")
-      .update({ context_summary: parsed.contextSummary, draft: parsed.draft, status: "draft_ready" })
+      .update({
+        context_summary: parsed.contextSummary,
+        draft: parsed.draft,
+        status: replyTarget ? "draft_ready" : "needs_context",
+        source_reference: writeWeeklyOutreachSourceMetadata(metadata),
+      })
       .eq("id", id)
       .select("*")
       .single();
     if (updateError) throw new Error(updateError.message);
-    return NextResponse.json({ item: updated });
+    return NextResponse.json({
+      item: withWeeklyOutreachClientMetadata(updated),
+      warning: replyTarget
+        ? null
+        : "No received Outlook message was found, so a reply draft could not be created.",
+      replySubject,
+    });
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Could not prepare reconnect" }, { status: 500 });
+    const message = err instanceof Error ? err.message : "Could not prepare reconnect";
+    if (message === "OUTLOOK_RECONNECT_REQUIRED") {
+      return NextResponse.json(
+        {
+          error: "Reconnect Outlook once to allow editable reply drafts. No email was sent.",
+          code: "OUTLOOK_RECONNECT_REQUIRED",
+          reconnectUrl: "/api/microsoft/connect",
+        },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
