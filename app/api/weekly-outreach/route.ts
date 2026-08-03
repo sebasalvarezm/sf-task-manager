@@ -3,6 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   addAccountToWeeklyOutreach,
+  addWeeklyOutreachBatch,
   currentWeekStart,
   parseManualWeeklyEntry,
   resolveWeeklyAccountByName,
@@ -43,7 +44,28 @@ export async function POST(request: NextRequest) {
       source?: WeeklyOutreachSource;
       sourceReference?: string;
       rceDays?: number;
+      entries?: Array<{ outreachType: WeeklyOutreachType; accountName: string }>;
     };
+
+    if (body.entries) {
+      if (body.entries.length === 0 || body.entries.length > 50) {
+        return NextResponse.json(
+          { error: "Paste between 1 and 50 companies at a time." },
+          { status: 400 },
+        );
+      }
+      const results = await addWeeklyOutreachBatch({
+        entries: body.entries,
+        weekStart: body.weekStart,
+        source: "manual",
+      });
+      return NextResponse.json({
+        results: results.map((result) => ({
+          ...result,
+          item: result.item ? withWeeklyOutreachClientMetadata(result.item) : undefined,
+        })),
+      });
+    }
 
     if (body.entry) {
       const parsed = parseManualWeeklyEntry(body.entry);

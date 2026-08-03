@@ -274,3 +274,117 @@ export async function addAccountToWeeklyOutreach(input: {
   if (!account) throw new Error("Salesforce account was not found");
   return upsertWeeklyOutreachItem({ ...input, account });
 }
+
+export type WeeklyOutreachBatchEntry = {
+  outreachType: WeeklyOutreachType;
+  accountName: string;
+};
+
+export type WeeklyOutreachBatchResult = {
+  index: number;
+  item?: WeeklyOutreachItem;
+  error?: string;
+};
+
+/** Resolve an Excel-style paste with one Salesforce query and one Supabase upsert. */
+export async function addWeeklyOutreachBatch(input: {
+  entries: WeeklyOutreachBatchEntry[];
+  weekStart?: string;
+  source: WeeklyOutreachSource;
+}): Promise<WeeklyOutreachBatchResult[]> {
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("NOT_CONNECTED");
+  const entries = input.entries.slice(0, 50).map((entry) => ({
+    outreachType: entry.outreachType,
+    accountName: entry.accountName.trim(),
+  }));
+  const uniqueNames = [...new Set(entries.map((entry) => entry.accountName.toLowerCase()))];
+  const originalName = new Map(entries.map((entry) => [entry.accountName.toLowerCase(), entry.accountName]));
+  const accounts: SalesforceAccountDetails[] = [];
+
+  for (let index = 0; index < uniqueNames.length; index += 25) {
+    const names = uniqueNames.slice(index, index + 25);
+    const where = `Name IN (${names
+      .map((name) => `'${escapeSoql(originalName.get(name) ?? name)}'`)
+      .join(", ")})`;
+    accounts.push(...(await queryAccounts(credentials, where, Math.min(200, names.length * 4))));
+  }
+
+  const matchesByName = new Map<string, SalesforceAccountDetails[]>();
+  for (const account of accounts) {
+    const key = account.accountName.trim().toLowerCase();
+    const matches = matchesByName.get(key) ?? [];
+    matches.push(account);
+    matchesByName.set(key, matches);
+  }
+
+  const pending: Array<{
+    index: number;
+    entry: WeeklyOutreachBatchEntry;
+    account: SalesforceAccountDetails;
+  }> = [];
+  const results: WeeklyOutreachBatchResult[] = [];
+  entries.forEach((entry, index) => {
+    if (!entry.accountName || !["E1", "RCE"].includes(entry.outreachType)) {
+      results.push({ index, error: "Each row needs E1 or RCE and a company name." });
+      return;
+    }
+    const matches = matchesByName.get(entry.accountName.toLowerCase()) ?? [];
+    if (matches.length !== 1) {
+      results.push({
+        index,
+        error:
+          matches.length === 0
+            ? "No exact Salesforce account matched."
+            : "More than one Salesforce account has this exact name.",
+      });
+      return;
+    }
+    pending.push({ index, entry, account: matches[0] });
+  });
+
+  if (pending.length === 0) return results.sort((a, b) => a.index - b.index);
+
+  const weekStart = input.weekStart ?? currentWeekStart();
+  const uniquePayloads = new Map<string, Record<string, unknown>>();
+  for (const row of pending) {
+    const key = `${row.account.accountId}:${row.entry.outreachType}`;
+    uniquePayloads.set(key, {
+      week_start: weekStart,
+      outreach_type: row.entry.outreachType,
+      sf_account_id: row.account.accountId,
+      account_name: row.account.accountName,
+      account_url: row.account.accountUrl,
+      website: row.account.website,
+      industry: row.account.industry,
+      country: row.account.country,
+      city: row.account.city,
+      tier: row.account.tier,
+      group_name: row.account.groupName,
+      source: input.source,
+      source_reference: null,
+      rce_days: null,
+    });
+  }
+  const { data, error } = await getSupabaseAdmin()
+    .from("weekly_outreach")
+    .upsert([...uniquePayloads.values()], {
+      onConflict: "week_start,sf_account_id,outreach_type",
+    })
+    .select("*");
+  if (error) throw new Error(`Could not paste Weekly Outreach rows: ${error.message}`);
+
+  const savedByKey = new Map<string, WeeklyOutreachItem>();
+  for (const item of (data ?? []) as WeeklyOutreachItem[]) {
+    savedByKey.set(`${item.sf_account_id}:${item.outreach_type}`, item);
+  }
+  for (const row of pending) {
+    const item = savedByKey.get(`${row.account.accountId}:${row.entry.outreachType}`);
+    results.push(
+      item
+        ? { index: row.index, item }
+        : { index: row.index, error: "The row could not be saved." },
+    );
+  }
+  return results.sort((a, b) => a.index - b.index);
+}

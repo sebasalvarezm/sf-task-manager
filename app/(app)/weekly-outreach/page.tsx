@@ -9,7 +9,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { format, startOfWeek } from "date-fns";
+import { addDays, format, parse, startOfWeek } from "date-fns";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
@@ -70,6 +70,29 @@ function thisWeek(): string {
   return format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd");
 }
 
+function weekPickerValue(weekStart: string): string {
+  return format(new Date(`${weekStart}T12:00:00`), "RRRR-'W'II");
+}
+
+function weekStartFromPicker(value: string): string {
+  const parsed = parse(value, "RRRR-'W'II", new Date());
+  return format(startOfWeek(parsed, { weekStartsOn: 1 }), "yyyy-MM-dd");
+}
+
+function weekLabel(weekStart: string): string {
+  const monday = new Date(`${weekStart}T12:00:00`);
+  return `${format(monday, "MMM d")} – ${format(addDays(monday, 6), "MMM d, yyyy")}`;
+}
+
+function clipboardGrid(text: string): string[][] {
+  return text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.split("\t").map((cell) => cell.trim()))
+    .filter((row) => row.some(Boolean))
+    .slice(0, 50);
+}
+
 function createDraftRows(): DraftSheetRow[] {
   return Array.from({ length: MINIMUM_SHEET_ROWS }, (_, index) => ({
     key: `draft-${index}`,
@@ -99,6 +122,7 @@ export default function WeeklyOutreachPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pasting, setPasting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [preparingRces, setPreparingRces] = useState<Set<string>>(new Set());
@@ -261,6 +285,170 @@ export default function WeeklyOutreachPage() {
       saving: false,
       error: null,
     });
+  }
+
+  async function handleSheetPaste(
+    event: React.ClipboardEvent<HTMLElement>,
+    gridRowIndex: number,
+    gridColumnIndex: number,
+  ) {
+    const rows = clipboardGrid(event.clipboardData.getData("text/plain"));
+    if (rows.length === 0) return;
+    event.preventDefault();
+    const startDraftIndex = Math.max(0, gridRowIndex - items.length);
+    const maxColumns = Math.max(...rows.map((row) => row.length));
+    const typeColumn = Array.from({ length: maxColumns }, (_, column) => column).find(
+      (column) =>
+        rows.every((row) => {
+          const value = row[column]?.toUpperCase();
+          return !value || value === "E1" || value === "RCE";
+        }) && rows.some((row) => ["E1", "RCE"].includes(row[column]?.toUpperCase())),
+    );
+
+    if (rows.every((row) => row.length === 1) && gridColumnIndex === 0) {
+      const types = rows.map((row) => row[0].toUpperCase());
+      if (!types.every((type) => type === "E1" || type === "RCE")) {
+        setError("The Type column accepts only E1 or RCE.");
+        return;
+      }
+      setDraftRows((previous) =>
+        previous.map((row, index) => {
+          const pastedType = types[index - startDraftIndex];
+          return pastedType
+            ? { ...row, outreachType: pastedType as WeeklyOutreachType, error: null }
+            : row;
+        }),
+      );
+      setMessage(`${types.length} contact types pasted. Paste the company column beside them.`);
+      return;
+    }
+
+    let entries: Array<{ outreachType: WeeklyOutreachType; accountName: string }> = [];
+    if (typeColumn !== undefined && maxColumns > 1) {
+      const companyColumn = Array.from({ length: maxColumns }, (_, column) => column).find(
+        (column) =>
+          column !== typeColumn &&
+          column > typeColumn &&
+          rows.some((row) => Boolean(row[column])),
+      );
+      if (companyColumn !== undefined) {
+        entries = rows
+          .map((row) => ({
+            outreachType: row[typeColumn]?.toUpperCase() as WeeklyOutreachType,
+            accountName: row[companyColumn] ?? "",
+          }))
+          .filter(
+            (entry) =>
+              ["E1", "RCE"].includes(entry.outreachType) && Boolean(entry.accountName),
+          );
+      }
+    } else if (rows.every((row) => row.length === 1) && gridColumnIndex === 1) {
+      const names = rows.map((row) => row[0]).filter(Boolean);
+      setDraftRows((previous) =>
+        previous.map((row, index) => {
+          const accountName = names[index - startDraftIndex];
+          return accountName ? { ...row, accountName, error: null } : row;
+        }),
+      );
+      entries = names.flatMap((accountName, index) => {
+        const outreachType = draftRows[startDraftIndex + index]?.outreachType;
+        return outreachType ? [{ outreachType, accountName }] : [];
+      });
+      if (entries.length !== names.length) {
+        setMessage(
+          `${names.length} company names pasted. Add E1 or RCE in the missing Type cells to save them.`,
+        );
+        return;
+      }
+    } else if (rows.every((row) => row.length === 1)) {
+      entries = rows.flatMap((row) => {
+        const match = row[0].match(/^(E1|RCE)\s+(.+)$/i);
+        return match
+          ? [{ outreachType: match[1].toUpperCase() as WeeklyOutreachType, accountName: match[2].trim() }]
+          : [];
+      });
+    }
+
+    if (entries.length === 0) {
+      setError("Paste Type and Company columns, for example E1 followed by the Salesforce company name.");
+      return;
+    }
+
+    setPasting(true);
+    setError(null);
+    setMessage(null);
+    setDraftRows((previous) =>
+      previous.map((row, index) => {
+        const entry = entries[index - startDraftIndex];
+        return entry
+          ? {
+              ...row,
+              outreachType: entry.outreachType,
+              accountName: entry.accountName,
+              results: [],
+              saving: true,
+              error: null,
+            }
+          : row;
+      }),
+    );
+    try {
+      const res = await fetch("/api/weekly-outreach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries, weekStart }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not paste companies");
+      const results = (data.results ?? []) as Array<{
+        index: number;
+        item?: WeeklyOutreachItem;
+        error?: string;
+      }>;
+      const savedItems = results.flatMap((result) => (result.item ? [result.item] : []));
+      setItems((previous) => {
+        const byId = new Map(previous.map((item) => [item.id, item]));
+        for (const item of savedItems) byId.set(item.id, item);
+        return sortItems([...byId.values()]);
+      });
+      setDraftRows((previous) =>
+        previous.map((row, index) => {
+          const result = results.find(
+            (candidate) => candidate.index === index - startDraftIndex,
+          );
+          if (!result) return row;
+          if (result.item) {
+            return {
+              ...row,
+              outreachType: "",
+              accountName: "",
+              results: [],
+              searching: false,
+              saving: false,
+              error: null,
+            };
+          }
+          return { ...row, saving: false, error: result.error ?? "Could not save row" };
+        }),
+      );
+      const failedCount = results.filter((result) => result.error).length;
+      setMessage(
+        `${savedItems.length} compan${savedItems.length === 1 ? "y" : "ies"} pasted and autofilled${
+          failedCount ? `. ${failedCount} row${failedCount === 1 ? " needs" : "s need"} attention.` : "."
+        }`,
+      );
+    } catch (pasteError) {
+      setDraftRows((previous) =>
+        previous.map((row, index) =>
+          index >= startDraftIndex && index < startDraftIndex + entries.length
+            ? { ...row, saving: false }
+            : row,
+        ),
+      );
+      setError(pasteError instanceof Error ? pasteError.message : "Could not paste companies");
+    } finally {
+      setPasting(false);
+    }
   }
 
   function handleCompanyChange(row: DraftSheetRow, accountName: string) {
@@ -622,9 +810,12 @@ export default function WeeklyOutreachPage() {
         subtitle={`${counts.total} / ${WEEKLY_GOAL} weekly goal · ${counts.rce} RCE · ${counts.e1} E1 · ${counts.ready} drafts ready`}
         actions={
           <input
-            type="date"
-            value={weekStart}
-            onChange={(event) => setWeekStart(event.target.value)}
+            type="week"
+            value={weekPickerValue(weekStart)}
+            onChange={(event) => {
+              if (event.target.value) setWeekStart(weekStartFromPicker(event.target.value));
+            }}
+            aria-label="Weekly Outreach week"
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
           />
         }
@@ -673,12 +864,12 @@ export default function WeeklyOutreachPage() {
             <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
               <Button
                 onClick={prepareAllRces}
-                disabled={preparingRces.size > 0 || counts.rce === 0}
+                disabled={pasting || preparingRces.size > 0 || counts.rce === 0}
                 className="w-full sm:w-auto"
               >
                 Prepare RCE Drafts
               </Button>
-              <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={saving || counts.e1 === 0}>
+              <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={pasting || saving || counts.e1 === 0}>
                 Prepare E1 Sourcing Batch
               </Button>
               <Button className="w-full sm:w-auto" variant="secondary" onClick={copyCsv} disabled={items.length === 0}>
@@ -719,6 +910,7 @@ export default function WeeklyOutreachPage() {
               <div className="relative">
                 <input
                   value={visibleDraftRows[0].accountName}
+                  onPaste={(event) => void handleSheetPaste(event, items.length, 1)}
                   onChange={(event) =>
                     handleCompanyChange(visibleDraftRows[0], event.target.value)
                   }
@@ -885,14 +1077,20 @@ export default function WeeklyOutreachPage() {
         <div className="hidden border border-line bg-white shadow-sm md:block">
           <div className="flex items-center justify-between border-b border-line bg-surface-2 px-3 py-2">
             <div>
-              <span className="text-sm font-semibold text-ink">Week of {weekStart}</span>
+              <span className="text-sm font-semibold text-ink">Week of {weekLabel(weekStart)}</span>
               <span className="ml-2 text-xs text-ink-muted">
-                Type and company are editable. Salesforce fills the remaining columns.
+                Paste Excel Type + Company columns into the first empty row.
               </span>
             </div>
             <div className="flex items-center gap-2 text-xs text-ink-muted">
               <span className={`h-2 w-2 rounded-full ${refreshing ? "bg-warning" : "bg-ok"}`} />
-              {loading ? "Loading…" : refreshing ? "Updating…" : "Live · auto-saved"}
+              {loading
+                ? "Loading…"
+                : pasting
+                  ? "Matching pasted companies…"
+                  : refreshing
+                    ? "Updating…"
+                    : "Live · auto-saved"}
             </div>
           </div>
 
@@ -1052,6 +1250,13 @@ export default function WeeklyOutreachPage() {
                       <select
                         ref={registerGridCell(items.length + draftIndex, 0)}
                         value={row.outreachType}
+                        onPaste={(event) =>
+                          void handleSheetPaste(
+                            event,
+                            items.length + draftIndex,
+                            0,
+                          )
+                        }
                         onKeyDown={(event) =>
                           handleGridNavigation(event, items.length + draftIndex, 0)
                         }
@@ -1086,6 +1291,13 @@ export default function WeeklyOutreachPage() {
                           }
                         }}
                         value={row.accountName}
+                        onPaste={(event) =>
+                          void handleSheetPaste(
+                            event,
+                            items.length + draftIndex,
+                            1,
+                          )
+                        }
                         onChange={(event) => handleCompanyChange(row, event.target.value)}
                         onKeyDown={(event) =>
                           handleCompanyKeyDown(event, row, items.length + draftIndex)
