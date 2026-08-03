@@ -212,10 +212,14 @@ export async function scrapeWithJina(
   const collected: string[] = [homepageText];
   let total = homepageText.length;
 
-  // Crawl sub-pages for richer product/service coverage
-  for (const p of CRAWL_PATHS) {
+  // Crawl sub-pages in parallel, preserving the configured priority order when
+  // assembling the capped text.
+  const subpages = await Promise.all(
+    CRAWL_PATHS.map((p) => fetchPageText(base + p, 8000)),
+  );
+  for (let i = 0; i < CRAWL_PATHS.length; i++) {
     if (total >= maxTotalChars) break;
-    const text = await fetchPageText(base + p, 8000);
+    const text = subpages[i];
     if (text && text.length > 200) {
       const trimmed = text.slice(0, maxTotalChars - total);
       collected.push(trimmed);
@@ -807,7 +811,8 @@ export async function extractAddress(
   client: Anthropic,
   currentText: string,
   url: string,
-  companyName?: string
+  companyName?: string,
+  options?: { allowWebSearch?: boolean },
 ): Promise<AddressResolution> {
   // Attempt 1: Extract from already-scraped text
   const fromText = await askClaudeForAddress(client, currentText);
@@ -818,6 +823,10 @@ export async function extractAddress(
       sourceUrl: url.startsWith("http") ? url : `https://${url}`,
       confidence: addressConfidence(fromText),
     };
+  }
+
+  if (options?.allowWebSearch === false) {
+    return { address: null, source: null, sourceUrl: null, confidence: "none" };
   }
 
   // Attempt 2: Use Claude web search to find the headquarters address
@@ -1273,6 +1282,7 @@ export type GroupMatch = {
   /** Main industry group folder, e.g. "Manufacturing" — null for legacy root-level files */
   mainGroup: string | null;
   confidence: number | null;
+  warning?: string | null;
 };
 
 /**
@@ -1336,6 +1346,15 @@ Return a JSON object (no markdown) with this format:
     }
 
     const resolvedFile = resolveMatchedFile(parsed.file, groups);
+    if (!resolvedFile) {
+      return {
+        matched: false,
+        group: null,
+        mainGroup: null,
+        confidence: parsed.confidence ?? null,
+        warning: `AI returned an unknown group file: ${parsed.file}`,
+      };
+    }
     const { mainGroup } = splitGroupKey(resolvedFile);
     return {
       matched: true,
@@ -1350,6 +1369,15 @@ Return a JSON object (no markdown) with this format:
       return { matched: false, group: null, mainGroup: null, confidence: null };
     }
     const resolvedFile = resolveMatchedFile(text, groups);
+    if (!resolvedFile) {
+      return {
+        matched: false,
+        group: null,
+        mainGroup: null,
+        confidence: null,
+        warning: `AI returned an unknown group: ${text}`,
+      };
+    }
     const { mainGroup } = splitGroupKey(resolvedFile);
     return {
       matched: true,
@@ -1363,7 +1391,7 @@ Return a JSON object (no markdown) with this format:
 function resolveMatchedFile(
   matched: string,
   groups: Record<string, string>
-): string {
+): string | null {
   if (matched in groups) return matched;
   const lower = matched.toLowerCase();
   const lowerBase = splitGroupKey(matched).fileName.toLowerCase();
@@ -1380,7 +1408,7 @@ function resolveMatchedFile(
       return key;
     }
   }
-  return Object.keys(groups)[0];
+  return null;
 }
 
 /** Convert 'Manufacturing/aftermarket-service.md' → 'Aftermarket Service' */

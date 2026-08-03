@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { fetchCalendarEvents } from "@/lib/microsoft";
-import { findAccountByDomain, findExistingCallTasks } from "@/lib/salesforce-calls";
+import { findAccountsByDomains, findExistingCallTasks } from "@/lib/salesforce-calls";
 
 // Domains to exclude (internal organizations)
 const EXCLUDED_DOMAINS = [
@@ -63,6 +63,22 @@ export async function GET(request: NextRequest) {
     // Step 1: Fetch all calendar events for the week
     const events = await fetchCalendarEvents(start, end);
 
+    // Collect every external domain first, then resolve them in one Salesforce
+    // query. This replaces the former one-query-per-domain slow path.
+    const weekDomains = new Set<string>();
+    for (const event of events) {
+      const emails = [
+        event.organizer?.email,
+        ...event.attendees.map((a) => a.email),
+        ...extractEmailsFromBody(event.bodyText),
+      ].filter(Boolean) as string[];
+      for (const email of emails) {
+        const domain = email.split("@")[1]?.toLowerCase();
+        if (domain && !EXCLUDED_DOMAINS.includes(domain)) weekDomains.add(domain);
+      }
+    }
+    const accountByDomain = await findAccountsByDomains(Array.from(weekDomains));
+
     // Step 2: Process each event — filter attendees, match to Salesforce
     const meetings: MeetingMatch[] = [];
 
@@ -107,18 +123,14 @@ export async function GET(request: NextRequest) {
       // Step 3: Match each external domain to a Salesforce Account
       const allMatches: MeetingMatch["allMatches"] = [];
       for (const domain of externalDomains) {
-        try {
-          const match = await findAccountByDomain(domain);
-          if (match) {
-            allMatches.push({
-              accountId: match.accountId,
-              accountName: match.accountName,
-              accountUrl: match.accountUrl,
-              domain,
-            });
-          }
-        } catch {
-          // If one domain lookup fails, continue with the others
+        const match = accountByDomain.get(domain);
+        if (match) {
+          allMatches.push({
+            accountId: match.accountId,
+            accountName: match.accountName,
+            accountUrl: match.accountUrl,
+            domain,
+          });
         }
       }
 

@@ -15,6 +15,7 @@ import {
   resolveEntries,
   type BulkSourcingItem,
 } from "@/lib/jobs/sourcing-bulk-runner";
+import { getSupabaseAdmin } from "@/lib/supabase";
 
 // Bulk sourcing. Each company is processed as its OWN `step.run`, so every
 // Inngest invocation stays well under the platform's per-invocation limit
@@ -30,7 +31,7 @@ export const sourcingBulkJob = inngest.createFunction(
   async ({ event, step }) => {
     const { jobId, input } = event.data as {
       jobId: string;
-      input: { entries: string[] };
+      input: { entries: string[]; weeklyOutreachIds?: string[] };
     };
 
     await step.run("mark-running", () => markRunning(jobId));
@@ -45,54 +46,58 @@ export const sourcingBulkJob = inngest.createFunction(
       let done = 0;
       const processed: BulkSourcingItem[] = [];
 
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-
-        // Unresolvable entries (no URL / lookup error) pass straight through.
-        if (!item.url || item.error) {
-          processed.push(item);
-        } else {
-          const url = item.url;
-          const outcome = await step.run(`source-${i}`, async () => {
-            // Reuse a recent single-sourcing result if one exists (≤90 days).
-            const cached = await findRecentSourcingByUrl(
-              normalizeSourcingUrl(url),
-              90,
-            );
-            if (cached && cached.result) {
-              return {
-                cached: true,
-                result: cached.result as unknown as SourcingResult,
+      const concurrency = 3;
+      for (let start = 0; start < items.length; start += concurrency) {
+        const chunk = items.slice(start, start + concurrency);
+        const chunkResults = await Promise.all(
+          chunk.map(async (item, offset): Promise<BulkSourcingItem> => {
+            const i = start + offset;
+            if (!item.url || item.error) return item;
+            const url = item.url;
+            const outcome = await step.run(`source-${i}`, async () => {
+              const cached = await findRecentSourcingByUrl(normalizeSourcingUrl(url), 90);
+              if (cached?.result) {
+                return { cached: true, result: cached.result as unknown as SourcingResult };
+              }
+              const result = await runFullSourcing({ url });
+              const trimmed: SourcingResult = {
+                ...result,
+                currentText: typeof result.currentText === "string" ? result.currentText.slice(0, 500) : "",
               };
-            }
-            // Otherwise run the full pipeline; trim the huge currentText field
-            // before persisting (mirrors the single-sourcing Inngest fn).
-            const result = await runFullSourcing({ url });
-            const trimmed: SourcingResult = {
-              ...result,
-              currentText:
-                typeof result.currentText === "string"
-                  ? result.currentText.slice(0, 500)
-                  : "",
-            };
-            return { cached: false, result: trimmed };
-          });
-
-          processed.push({
-            ...item,
-            cached: outcome.cached,
-            result: outcome.result,
-          });
-        }
-
-        done += 1;
+              return { cached: false, result: trimmed };
+            });
+            return { ...item, cached: outcome.cached, result: outcome.result };
+          }),
+        );
+        processed.push(...chunkResults);
+        done += chunk.length;
         const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-        await step.run(`progress-${i}`, () =>
+        await step.run(`progress-${done}`, () =>
           updateProgress(jobId, {
             step: `Sourced ${done} of ${total}`,
             pct,
           }),
         );
+      }
+
+      if (Array.isArray(input.weeklyOutreachIds)) {
+        const supabase = getSupabaseAdmin();
+        for (let i = 0; i < Math.min(input.weeklyOutreachIds.length, processed.length); i++) {
+          const item = processed[i];
+          if (!item.result || item.error) continue;
+          const packaged = item.result.prepackagedEmail;
+          const draft = packaged && !packaged.skipped
+            ? [packaged.subject, packaged.body].filter(Boolean).join("\n\n")
+            : null;
+          await supabase
+            .from("weekly_outreach")
+            .update({
+              status: draft ? "draft_ready" : "needs_context",
+              draft,
+              context_summary: item.result.emailHook ?? null,
+            })
+            .eq("id", input.weeklyOutreachIds[i]);
+        }
       }
 
       await step.run("mark-succeeded", () =>

@@ -12,10 +12,6 @@ import { getValidCredentials } from "./token-manager";
 // of truth — change here to retune the flag everywhere.
 export const RECONTACT_THRESHOLD_DAYS = 60;
 
-// How many name searches to run against Salesforce at once. Keeps a 30-name
-// paste fast without hammering the API.
-const MATCH_CONCURRENCY = 6;
-
 export type RecheckStatus = "matched" | "multiple" | "not_found";
 
 export type RecheckRow = {
@@ -43,10 +39,10 @@ function escapeSoql(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-async function sfQuery<T>(soql: string): Promise<T[]> {
-  const credentials = await getValidCredentials();
-  if (!credentials) throw new Error("NOT_CONNECTED");
-
+async function sfQuery<T>(
+  credentials: NonNullable<Awaited<ReturnType<typeof getValidCredentials>>>,
+  soql: string,
+): Promise<T[]> {
   const response = await fetch(
     `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`,
     {
@@ -66,13 +62,6 @@ async function sfQuery<T>(soql: string): Promise<T[]> {
   return data.records ?? [];
 }
 
-// The instance URL is needed to build account links. Fetched once and reused.
-async function getInstanceUrl(): Promise<string> {
-  const credentials = await getValidCredentials();
-  if (!credentials) throw new Error("NOT_CONNECTED");
-  return credentials.instance_url;
-}
-
 type NameMatch = {
   input: string;
   status: RecheckStatus;
@@ -80,15 +69,7 @@ type NameMatch = {
   matchCount: number;
 };
 
-// Find the best-matching account for a single name.
-async function matchOneName(input: string): Promise<NameMatch> {
-  const soql =
-    `SELECT Id, Name, Owner.Name FROM Account ` +
-    `WHERE Name LIKE '%${escapeSoql(input)}%' ` +
-    `ORDER BY Name ASC LIMIT 5`;
-
-  const records = await sfQuery<SfAccount>(soql);
-
+function chooseNameMatch(input: string, records: SfAccount[]): NameMatch {
   if (records.length === 0) {
     return { input, status: "not_found", account: null, matchCount: 0 };
   }
@@ -111,24 +92,32 @@ async function matchOneName(input: string): Promise<NameMatch> {
   return { input, status: "multiple", account: records[0], matchCount: records.length };
 }
 
-// Run name searches with bounded concurrency, preserving input order.
-async function matchAccountsByNames(names: string[]): Promise<NameMatch[]> {
-  const results: NameMatch[] = new Array(names.length);
-  let cursor = 0;
-
-  async function worker() {
-    while (cursor < names.length) {
-      const i = cursor++;
-      results[i] = await matchOneName(names[i]);
-    }
+// Salesforce credentials are fetched once and names are matched in a few
+// combined queries instead of one round trip per pasted company.
+async function matchAccountsByNames(
+  credentials: NonNullable<Awaited<ReturnType<typeof getValidCredentials>>>,
+  names: string[],
+): Promise<NameMatch[]> {
+  const allAccounts: SfAccount[] = [];
+  for (let i = 0; i < names.length; i += 20) {
+    const chunk = names.slice(i, i + 20);
+    const where = chunk
+      .map((name) => `Name LIKE '%${escapeSoql(name)}%'`)
+      .join(" OR ");
+    const rows = await sfQuery<SfAccount>(
+      credentials,
+      `SELECT Id, Name, Owner.Name FROM Account WHERE ${where} ORDER BY Name ASC LIMIT 2000`,
+    );
+    allAccounts.push(...rows);
   }
-
-  const workers = Array.from(
-    { length: Math.min(MATCH_CONCURRENCY, names.length) },
-    () => worker()
-  );
-  await Promise.all(workers);
-  return results;
+  const unique = Array.from(new Map(allAccounts.map((a) => [a.Id, a])).values());
+  return names.map((input) => {
+    const needle = input.trim().toLowerCase();
+    const candidates = unique
+      .filter((a) => a.Name.toLowerCase().includes(needle))
+      .slice(0, 5);
+    return chooseNameMatch(input, candidates);
+  });
 }
 
 // Last logged-Task date per matched account. WhatId ties a Task to its Account.
@@ -139,22 +128,20 @@ async function matchAccountsByNames(names: string[]): Promise<NameMatch[]> {
 // first (= latest) one we see per account. Results are paginated; we follow
 // nextRecordsUrl and stop early once every account has a date.
 async function lastTaskDatesForAccounts(
+  credentials: NonNullable<Awaited<ReturnType<typeof getValidCredentials>>>,
   accountIds: string[]
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (accountIds.length === 0) return map;
 
-  const credentials = await getValidCredentials();
-  if (!credentials) throw new Error("NOT_CONNECTED");
-
   const idList = accountIds.map((id) => `'${escapeSoql(id)}'`).join(",");
   const soql =
-    `SELECT WhatId, ActivityDate ` +
+    `SELECT WhatId, ActivityDate, CreatedDate ` +
     `FROM Task ` +
-    `WHERE WhatId IN (${idList}) AND ActivityDate != null ` +
-    `ORDER BY ActivityDate DESC`;
+    `WHERE WhatId IN (${idList}) ` +
+    `ORDER BY CreatedDate DESC`;
 
-  type Row = { WhatId: string; ActivityDate: string };
+  type Row = { WhatId: string; ActivityDate: string | null; CreatedDate: string };
   type QueryResponse = {
     records?: Row[];
     done?: boolean;
@@ -178,14 +165,14 @@ async function lastTaskDatesForAccounts(
 
     const data = (await response.json()) as QueryResponse;
     for (const r of data.records ?? []) {
-      // Ordered DESC, so the first time we see an account is its latest task.
-      if (r.WhatId && r.ActivityDate && !map.has(r.WhatId)) {
-        map.set(r.WhatId, r.ActivityDate);
+      const effectiveDate = r.ActivityDate ?? r.CreatedDate?.slice(0, 10);
+      const existing = map.get(r.WhatId);
+      if (r.WhatId && effectiveDate && (!existing || effectiveDate > existing)) {
+        map.set(r.WhatId, effectiveDate);
       }
     }
 
-    // Stop once every account has a date, or there are no more pages.
-    if (map.size >= accountIds.length || data.done || !data.nextRecordsUrl) {
+    if (data.done || !data.nextRecordsUrl) {
       break;
     }
     url = `${credentials.instance_url}${data.nextRecordsUrl}`;
@@ -202,8 +189,10 @@ function daysBetween(fromIso: string, now: Date): number {
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export async function checkRecontact(names: string[]): Promise<RecheckRow[]> {
-  const matches = await matchAccountsByNames(names);
-  const instanceUrl = await getInstanceUrl();
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("NOT_CONNECTED");
+  const matches = await matchAccountsByNames(credentials, names);
+  const instanceUrl = credentials.instance_url;
 
   const matchedIds = Array.from(
     new Set(
@@ -212,7 +201,7 @@ export async function checkRecontact(names: string[]): Promise<RecheckRow[]> {
         .map((m) => m.account!.Id)
     )
   );
-  const lastTaskByAccount = await lastTaskDatesForAccounts(matchedIds);
+  const lastTaskByAccount = await lastTaskDatesForAccounts(credentials, matchedIds);
 
   const now = new Date();
 

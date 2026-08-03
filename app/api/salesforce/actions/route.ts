@@ -6,6 +6,7 @@ import {
   delayTask,
   logAction,
 } from "@/lib/salesforce";
+import { addAccountToWeeklyOutreach } from "@/lib/weekly-outreach";
 
 type ActionItem = {
   taskId: string;
@@ -100,5 +101,29 @@ export async function POST(request: NextRequest) {
   const successCount = results.filter((r) => r.success).length;
   const failCount = results.filter((r) => !r.success).length;
 
-  return NextResponse.json({ results, successCount, failCount });
+  // Successful RCE actions also feed this week's outreach list. Salesforce is
+  // the source of truth for the account details; queue failures never undo a
+  // task action that already succeeded, but they are surfaced to the user.
+  const successfulRces = actions.filter((action) => {
+    const result = results.find((r) => r.taskId === action.taskId);
+    return result?.success && action.actionType === "complete_reschedule" && action.accountId;
+  });
+  const queueOutcomes = await Promise.allSettled(
+    successfulRces.map((action) =>
+      addAccountToWeeklyOutreach({
+        accountId: action.accountId!,
+        outreachType: "RCE",
+        source: "tasks",
+        sourceReference: action.taskId,
+        rceDays: action.days ?? null,
+      }),
+    ),
+  );
+  const queueWarnings = queueOutcomes.flatMap((outcome, index) =>
+    outcome.status === "rejected"
+      ? [`${successfulRces[index].accountName ?? "Account"}: ${outcome.reason instanceof Error ? outcome.reason.message : "could not add to Weekly Outreach"}`]
+      : [],
+  );
+
+  return NextResponse.json({ results, successCount, failCount, queueWarnings });
 }

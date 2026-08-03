@@ -30,6 +30,7 @@ import {
   buildPrepackagedEmail,
   type PrepackagedEmail,
 } from "@/lib/email-prepackage";
+import { findBusinessLocation, findBusinessDinnerRestaurants } from "@/lib/geocoding";
 
 export type SourcingResult = {
   url: string;
@@ -42,6 +43,7 @@ export type SourcingResult = {
     /** Main industry group folder, e.g. "Manufacturing" */
     mainGroup?: string | null;
     confidence?: number | null;
+    warning?: string | null;
   };
   archiveUrl: string | null;
   archiveYear: string | null;
@@ -233,6 +235,7 @@ export async function runFullSourcing(input: {
     logs.push(`Best match: ${groupLabel}${conf}`);
   } else {
     logs.push("No portfolio group is a strong fit for this company.");
+    if (portfolioMatch.warning) logs.push(`WARNING: ${portfolioMatch.warning}. No email template was assigned.`);
   }
   onProgress?.("history", 30);
 
@@ -288,30 +291,32 @@ export async function runFullSourcing(input: {
       .toLowerCase();
     const domainOnly = parsed.hostname.replace("www.", "");
 
-    let validCount = 0;
-    for (const candidate of candidates) {
-      if (validCount >= 3) break;
-      const year = candidate.timestamp.slice(0, 4);
-      const result = await fetchWaybackSnapshot(candidate.url, domainStem);
+    const fetchedSnapshots = await Promise.all(
+      candidates.map(async (candidate) => ({
+        candidate,
+        result: await fetchWaybackSnapshot(candidate.url, domainStem),
+      })),
+    );
+    for (const { candidate, result } of fetchedSnapshots) {
       if (result.skipReason) {
-        logs.push(`Skipping ${year} snapshot — ${result.skipReason}.`);
-        continue;
-      }
-      if (result.text) {
-        if (!archiveUrl) {
-          archiveUrl = candidate.url;
-          archiveTimestamp = candidate.timestamp;
-        }
-        logs.push(`Valid snapshot found from ${year}.`);
-        const ps = await extractProducts(
-          anthropic,
-          result.text,
-          `archived (${year})`,
-        );
-        if (ps.length > 0) allOldProducts.push(...ps);
-        validCount++;
+        logs.push(`Skipping ${candidate.timestamp.slice(0, 4)} snapshot — ${result.skipReason}.`);
       }
     }
+    const validSnapshots = fetchedSnapshots
+      .filter((x) => Boolean(x.result.text) && !x.result.skipReason)
+      .slice(0, 3);
+    if (validSnapshots.length > 0) {
+      archiveUrl = validSnapshots[0].candidate.url;
+      archiveTimestamp = validSnapshots[0].candidate.timestamp;
+    }
+    const snapshotProducts = await Promise.all(
+      validSnapshots.map(({ candidate, result }) => {
+        const year = candidate.timestamp.slice(0, 4);
+        logs.push(`Valid snapshot found from ${year}.`);
+        return extractProducts(anthropic, result.text!, `archived (${year})`);
+      }),
+    );
+    snapshotProducts.forEach((ps) => allOldProducts.push(...ps));
 
     // Probe interior product/solution/services pages
     const interiorKeywords = [
@@ -416,8 +421,9 @@ export async function runFullSourcing(input: {
   logs.push("Finding company address...");
   const outreachLogs: string[] = [];
   const sourceCompanyName = quickCompanyName(normalized);
-  const [addressInfo, outreachParagraph] = await Promise.all([
-    extractAddress(anthropic, currentText, normalized, sourceCompanyName),
+  const [websiteAddressInfo, mapsLocation, outreachParagraph] = await Promise.all([
+    extractAddress(anthropic, currentText, normalized, sourceCompanyName, { allowWebSearch: false }),
+    findBusinessLocation(sourceCompanyName, normalized).catch(() => null),
     generateOutreach(
       anthropic,
       normalized,
@@ -427,6 +433,20 @@ export async function runFullSourcing(input: {
       outreachLogs,
     ),
   ]);
+  let addressInfo = websiteAddressInfo;
+  if (!addressInfo.address && mapsLocation) {
+    addressInfo = {
+      address: mapsLocation.formattedAddress,
+      source: "Google Maps",
+      sourceUrl: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapsLocation.formattedAddress)}`,
+      confidence: /\d/.test(mapsLocation.formattedAddress) ? "exact" : "city",
+    };
+  }
+  // Preserve the old full web-search behavior as a fallback so the efficiency
+  // change can never turn a formerly-resolvable company into a blank location.
+  if (!addressInfo.address) {
+    addressInfo = await extractAddress(anthropic, currentText, normalized, sourceCompanyName);
+  }
   let address = addressInfo.address;
   let addressSource = addressInfo.source;
   let addressSourceUrl = addressInfo.sourceUrl;
@@ -449,11 +469,12 @@ export async function runFullSourcing(input: {
   // Always attempt a restaurant search — pass the company name so it can find
   // a city even when no address was resolved.
   logs.push("Searching for business dinner restaurants...");
-  const restaurantResult = await findRestaurants(
-    anthropic,
-    address,
-    sourceCompanyName,
-  );
+  const mapsRestaurants = address
+    ? await findBusinessDinnerRestaurants(address).catch(() => [])
+    : [];
+  const restaurantResult = mapsRestaurants.length > 0
+    ? { restaurants: mapsRestaurants, city: address }
+    : await findRestaurants(anthropic, address, sourceCompanyName);
   const restaurants = restaurantResult.restaurants;
   if (restaurants.length > 0) {
     logs.push(`Found ${restaurants.length} restaurant recommendation(s).`);

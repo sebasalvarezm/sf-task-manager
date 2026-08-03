@@ -3,7 +3,7 @@ import type { SourcingResult } from "@/lib/jobs/sourcing-runner";
 
 // A bulk batch is capped so it stays within background-processing limits
 // (each company takes 30-90s; see the per-company step design in the Inngest fn).
-export const MAX_BULK_ENTRIES = 10;
+export const MAX_BULK_ENTRIES = 50;
 
 // One row of a bulk sourcing run. `input` is the raw pasted line; `url` is what
 // we resolved it to (null if unresolvable). `result` is the full sourcing

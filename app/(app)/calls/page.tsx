@@ -65,6 +65,7 @@ function CallsPageContent() {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
+  const [activeCallsJobId, setActiveCallsJobId] = useState<string | null>(null);
 
   const [completedWeeks, setCompletedWeeks] = useState<Set<string>>(
     () => getCompletedWeeks()
@@ -210,7 +211,8 @@ function CallsPageContent() {
   const syncedCallsLogId = useRef<string | null>(null);
 
   useEffect(() => {
-    const latest = jobs.find((j) => j.kind === "calls_log");
+    if (!activeCallsJobId) return;
+    const latest = jobs.find((j) => j.id === activeCallsJobId && j.kind === "calls_log");
     if (!latest) return;
 
     if (latest.status === "queued" || latest.status === "running") {
@@ -225,6 +227,7 @@ function CallsPageContent() {
       const r = (latest.result ?? {}) as SubmitResult;
       setSubmitResult(r);
       setSubmitting(false);
+      setActiveCallsJobId(null);
       // Dismiss meetings whose eventId succeeded
       const successfulEventIds = new Set(
         (r.results ?? [])
@@ -250,17 +253,15 @@ function CallsPageContent() {
         results: [],
       });
       setSubmitting(false);
+      setActiveCallsJobId(null);
     }
-  }, [jobs]);
+  }, [jobs, activeCallsJobId]);
 
   // ── Cancel an in-flight calls_log job ───────────────────────────────────
   async function handleCancelSubmit() {
-    const stuck = jobs.find(
-      (j) =>
-        j.kind === "calls_log" &&
-        (j.status === "queued" || j.status === "running"),
-    );
+    const stuck = jobs.find((j) => j.id === activeCallsJobId);
     setSubmitting(false);
+    setActiveCallsJobId(null);
     if (stuck) {
       try {
         await fetch(`/api/jobs/${stuck.id}`, { method: "DELETE" });
@@ -343,6 +344,8 @@ function CallsPageContent() {
         });
         setSubmitting(false);
       } else {
+        const data = (await res.json()) as { jobId: string };
+        setActiveCallsJobId(data.jobId);
         refetchJobs();
       }
     } catch {

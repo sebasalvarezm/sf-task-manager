@@ -92,6 +92,8 @@ export default function CallLoggerTable({
 
   // Notes panel state — tracks which rows have the notes text area open
   const [notesOpen, setNotesOpen] = useState<Set<string>>(new Set());
+  const [suggesting, setSuggesting] = useState<Set<string>>(new Set());
+  const [suggestErrors, setSuggestErrors] = useState<Map<string, string>>(new Map());
 
   // Account search state
   const [searchInputs, setSearchInputs] = useState<Map<string, string>>(new Map());
@@ -120,6 +122,40 @@ export default function CallLoggerTable({
     const entry = getEntry(meeting.eventId);
     if (meeting.allMatches.length === 0) return null;
     return meeting.allMatches[entry.selectedAccountIdx] ?? meeting.allMatches[0];
+  }
+
+  async function suggestFromNotes(meeting: MeetingRow) {
+    const entry = getEntry(meeting.eventId);
+    if (!entry.notes.trim()) return;
+    setSuggesting((prev) => new Set(prev).add(meeting.eventId));
+    setSuggestErrors((prev) => { const next = new Map(prev); next.delete(meeting.eventId); return next; });
+    try {
+      const res = await fetch("/api/calls/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: entry.notes,
+          meetingTitle: meeting.subject,
+          accountName: getSelectedMatch(meeting)?.accountName,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Suggestion failed");
+      const suggestion = data.suggestion as { callType?: "C1" | "RCC"; commentary?: string; followUpDays?: number | null };
+      const next: CallEntry = {
+        ...entry,
+        callType: suggestion.callType === "RCC" ? "RCC" : "C1",
+        commentary: suggestion.commentary ?? entry.commentary,
+        followUpDays: typeof suggestion.followUpDays === "number" ? suggestion.followUpDays : null,
+      };
+      onEntryChange(meeting.eventId, next);
+      setTypeRawValues((prev) => new Map(prev).set(meeting.eventId, next.callType));
+      setFollowUpRawValues((prev) => new Map(prev).set(meeting.eventId, next.followUpDays ? `RCE${next.followUpDays}` : ""));
+    } catch (err) {
+      setSuggestErrors((prev) => new Map(prev).set(meeting.eventId, err instanceof Error ? err.message : "Suggestion failed"));
+    } finally {
+      setSuggesting((prev) => { const next = new Set(prev); next.delete(meeting.eventId); return next; });
+    }
   }
 
   function hasAccountMatch(meeting: MeetingRow): boolean {
@@ -718,11 +754,22 @@ export default function CallLoggerTable({
                         className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white resize-y"
                       />
                       {entry.notes && (
-                        <div className="flex justify-end mt-1.5">
+                        <div className="flex items-center justify-between gap-3 mt-1.5">
+                          <button
+                            type="button"
+                            onClick={() => suggestFromNotes(meeting)}
+                            disabled={suggesting.has(meeting.eventId)}
+                            className="rounded-md bg-navy px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                          >
+                            {suggesting.has(meeting.eventId) ? "Reviewing notes…" : "Suggest call log"}
+                          </button>
                           <span className="text-xs text-gray-400">
                             {entry.notes.length} characters
                           </span>
                         </div>
+                      )}
+                      {suggestErrors.get(meeting.eventId) && (
+                        <p className="mt-1 text-xs text-red-600">{suggestErrors.get(meeting.eventId)}</p>
                       )}
                     </div>
                   </td>

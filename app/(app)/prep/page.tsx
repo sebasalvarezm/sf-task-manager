@@ -111,6 +111,10 @@ type MeetingMatch = {
 
 type OnePagerContent = {
   companyName: string;
+  generatedOn?: string;
+  quickBrief?: string;
+  businessModel?: string;
+  relationshipCatchUp?: string;
   whatTheyDo: string;
   customers: string;
   companyHistory: string;
@@ -125,6 +129,8 @@ type PrepMeeting = MeetingMatch & {
   // Background-job id that's currently producing the one-pager for this row.
   // Cleared once the job has been synced into local state.
   jobId: string | null;
+  generationCacheKey: string | null;
+  prepMode: "first_call" | "reconnect";
 };
 
 // ── Page wrapper ─────────────────────────────────────────────────────────────
@@ -164,7 +170,7 @@ function PrepPageContent() {
 
   // Manual Salesforce account search (for unmatched meetings)
   const [manualMatches, setManualMatches] = useState<
-    Map<string, { accountId: string; accountName: string; accountUrl: string }>
+    Map<string, { accountId: string; accountName: string; accountUrl: string; website?: string | null }>
   >(new Map());
   const [searchInputs, setSearchInputs] = useState<Map<string, string>>(
     new Map()
@@ -237,6 +243,8 @@ function PrepPageContent() {
             generateError: null,
             downloading: false,
             jobId: null,
+            generationCacheKey: null,
+            prepMode: "first_call",
           };
         }),
       );
@@ -294,6 +302,8 @@ function PrepPageContent() {
             generateError: null,
             downloading: false,
             jobId: null,
+            generationCacheKey: null,
+            prepMode: "first_call",
           };
         })
       );
@@ -332,7 +342,7 @@ function PrepPageContent() {
         if (job.status === "succeeded") {
           const r = (job.result ?? {}) as { onePager?: OnePagerContent };
           const onePager = r.onePager ?? null;
-          const cacheKey = getCacheKey(m);
+          const cacheKey = m.generationCacheKey ?? getCacheKey(m);
           if (cacheKey && onePager) saveOnePagerToCache(cacheKey, onePager);
           changed = true;
           return {
@@ -341,6 +351,7 @@ function PrepPageContent() {
             generating: false,
             generateError: null,
             jobId: null,
+            generationCacheKey: null,
           };
         }
         if (job.status === "failed" || job.status === "cancelled") {
@@ -411,7 +422,7 @@ function PrepPageContent() {
     if (manualMatch) {
       // Manual override: scrape the linked Salesforce account's website. Email-
       // derived domains/matches come from the wrong company and must be ignored.
-      if (manualMatch.accountUrl) payload.website = manualMatch.accountUrl;
+      if (manualMatch.website) payload.website = manualMatch.website;
     } else {
       // Auto path: prefer a domain from the email's external matches.
       const matchWithWebsite = meeting.allMatches.find((m) => m.domain);
@@ -428,6 +439,7 @@ function PrepPageContent() {
 
     const labelName =
       payload.accountName || payload.domain || payload.website || "Meeting";
+    payload.prepMode = meeting.prepMode;
 
     try {
       const res = await fetch("/api/jobs/start", {
@@ -450,7 +462,9 @@ function PrepPageContent() {
       // Stamp the jobId on the meeting so useEffect can sync the result
       setMeetings((prev) =>
         prev.map((m) =>
-          m.eventId === eventId ? { ...m, jobId: data.jobId } : m,
+          m.eventId === eventId
+            ? { ...m, jobId: data.jobId, generationCacheKey: sfMatch?.accountId ?? null }
+            : m,
         ),
       );
       // Auto-expand the row so the user sees progress
@@ -561,7 +575,7 @@ function PrepPageContent() {
 
   function handleSelectSearchResult(
     eventId: string,
-    account: { accountId: string; accountName: string; accountUrl: string }
+    account: { accountId: string; accountName: string; accountUrl: string; website?: string | null }
   ) {
     setManualMatches((prev) => new Map(prev).set(eventId, account));
     setSearchResults((prev) => {
@@ -789,6 +803,11 @@ function PrepPageContent() {
                               )
                             }
                             onGenerate={() => handleGenerate(meeting.eventId)}
+                            onModeChange={(prepMode) =>
+                              setMeetings((prev) => prev.map((m) =>
+                                m.eventId === meeting.eventId ? { ...m, prepMode } : m,
+                              ))
+                            }
                             onCancelGenerate={() =>
                               handleCancelGenerate(meeting.eventId)
                             }
@@ -860,6 +879,7 @@ function MeetingRow({
   expanded,
   onToggleExpand,
   onGenerate,
+  onModeChange,
   onCancelGenerate,
   onDownload,
   manualMatch,
@@ -878,16 +898,17 @@ function MeetingRow({
   expanded: boolean;
   onToggleExpand: () => void;
   onGenerate: () => void;
+  onModeChange: (mode: "first_call" | "reconnect") => void;
   onCancelGenerate: () => void;
   onDownload: () => void;
-  manualMatch: { accountId: string; accountName: string; accountUrl: string } | null;
+  manualMatch: { accountId: string; accountName: string; accountUrl: string; website?: string | null } | null;
   searchInput: string;
   searchResult: Array<{ accountId: string; accountName: string; accountUrl: string; website: string | null }> | null;
   isSearchLoading: boolean;
   isEditing: boolean;
   onSearchInputChange: (val: string) => void;
   onSearch: () => void;
-  onSelectResult: (account: { accountId: string; accountName: string; accountUrl: string }) => void;
+  onSelectResult: (account: { accountId: string; accountName: string; accountUrl: string; website?: string | null }) => void;
   onStartEdit: (currentName: string) => void;
   onCancelEdit: () => void;
 }) {
@@ -1013,6 +1034,16 @@ function MeetingRow({
         </td>
         <td className="px-4 py-3">
           <div className="flex items-center justify-center gap-2">
+            <select
+              value={meeting.prepMode}
+              onChange={(e) => onModeChange(e.target.value as "first_call" | "reconnect")}
+              disabled={meeting.generating}
+              className="rounded border border-gray-200 bg-white px-2 py-1.5 text-xs text-navy"
+              aria-label="Briefing mode"
+            >
+              <option value="first_call">First Call</option>
+              <option value="reconnect">Reconnect</option>
+            </select>
             {/* Generate button (shown when no one-pager exists) */}
             {!hasOnePager && !meeting.generating && (
               <button
@@ -1111,6 +1142,32 @@ function MeetingRow({
               <h3 className="text-lg font-semibold text-navy mb-4">
                 {meeting.onePager.companyName}
               </h3>
+              {meeting.onePager.generatedOn && (
+                <p className="-mt-3 mb-4 text-xs text-gray-400">
+                  Generated {new Date(meeting.onePager.generatedOn).toLocaleString()}
+                </p>
+              )}
+
+              {meeting.onePager.quickBrief && (
+                <div className="mb-4 rounded-lg border border-brand-orange/30 bg-orange-50 p-4">
+                  <h4 className="text-sm font-semibold text-navy uppercase tracking-wide mb-1">60-Second Brief</h4>
+                  <p className="text-sm text-gray-700 leading-relaxed">{meeting.onePager.quickBrief}</p>
+                </div>
+              )}
+
+              {meeting.onePager.businessModel && (
+                <div className="mb-4">
+                  <h4 className="text-sm font-semibold text-navy uppercase tracking-wide mb-1">Business Model</h4>
+                  <p className="text-sm text-gray-700 leading-relaxed">{meeting.onePager.businessModel}</p>
+                </div>
+              )}
+
+              {meeting.onePager.relationshipCatchUp && (
+                <div className="mb-4">
+                  <h4 className="text-sm font-semibold text-navy uppercase tracking-wide mb-1">Relationship Catch-Up</h4>
+                  <p className="text-sm text-gray-700 leading-relaxed">{meeting.onePager.relationshipCatchUp}</p>
+                </div>
+              )}
 
               {/* What They Do */}
               <div className="mb-4">

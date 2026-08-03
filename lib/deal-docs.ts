@@ -248,7 +248,7 @@ function tryParseMetrics(
   }
 }
 
-// Tolerant parser (mirrors parseOnePagerJson in app/api/prep/generate/route.ts):
+// Tolerant AI JSON parser:
 // direct parse → fenced block → first brace block.
 export function parseMetricsJson(
   raw: string,
@@ -299,8 +299,7 @@ Rules for hq, num_customers, growth_rate, churn:
 
 // Send a base64 PDF to Claude and extract the 7 metrics. Returns null if the
 // AI is not configured or the response can't be parsed — callers treat that as
-// "extraction failed" and fall back to manual entry. Mirrors the Anthropic
-// usage in app/api/prep/generate/route.ts.
+// "extraction failed" and fall back to manual entry.
 export async function extractMetricsFromPdf(
   base64: string,
   filename: string,

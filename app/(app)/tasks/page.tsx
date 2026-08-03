@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { SalesforceTask } from "@/lib/salesforce";
 import WeekSelector, { WeekRange, generateWeeks, currentWeekIndex } from "@/app/components/WeekSelector";
-import TaskTable, { TaskAction, PortfolioMatch } from "@/app/components/TaskTable";
+import TaskTable, { TaskAction } from "@/app/components/TaskTable";
 import ConnectSalesforce from "@/app/components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
@@ -46,33 +46,6 @@ function saveDraftActions(actions: Map<string, TaskAction>) {
   }
 }
 
-// ── Portfolio match localStorage cache ───────────────────────────────────────
-const PORTFOLIO_CACHE_KEY = "portfolio_matches_v7";
-
-function getPortfolioCache(): Map<string, PortfolioMatch> {
-  if (typeof window === "undefined") return new Map();
-  try {
-    const raw = localStorage.getItem(PORTFOLIO_CACHE_KEY);
-    if (!raw) return new Map();
-    const obj = JSON.parse(raw) as Record<string, PortfolioMatch>;
-    return new Map(Object.entries(obj));
-  } catch {
-    return new Map();
-  }
-}
-
-function saveToPortfolioCache(accountId: string, match: PortfolioMatch) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = localStorage.getItem(PORTFOLIO_CACHE_KEY);
-    const obj: Record<string, PortfolioMatch> = raw ? JSON.parse(raw) : {};
-    obj[accountId] = { matched: match.matched, group: match.group };
-    localStorage.setItem(PORTFOLIO_CACHE_KEY, JSON.stringify(obj));
-  } catch {
-    // localStorage full or unavailable — non-critical
-  }
-}
-
 type ApplyResult = {
   successCount: number;
   failCount: number;
@@ -83,6 +56,7 @@ type ApplyResult = {
     success: boolean;
     error?: string;
   }>;
+  queueWarnings?: string[];
 };
 
 export default function TasksPage() {
@@ -124,8 +98,12 @@ function TasksPageContent() {
     saveDraftActions(actions);
   }, [actions, draftRestored]);
 
-  const [portfolioMatches, setPortfolioMatches] = useState<Map<string, PortfolioMatch>>(() => getPortfolioCache());
-  const fetchingAccounts = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (actions.size === 0) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [actions.size]);
 
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
@@ -160,8 +138,6 @@ function TasksPageContent() {
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
     setTasksError(null);
-    fetchingAccounts.current = new Set();
-    setPortfolioMatches(getPortfolioCache());
     try {
       const res = await fetch("/api/salesforce/tasks");
       if (!res.ok) {
@@ -183,79 +159,12 @@ function TasksPageContent() {
     }
   }, []);
 
-  function runPortfolioMatching(tasks: SalesforceTask[]) {
-    const seen = new Set<string>();
-    const toMatch: { accountId: string; accountName: string; accountWebsite: string | null }[] = [];
-    for (const task of tasks) {
-      if (task.AccountId && task.AccountName && !seen.has(task.AccountId)) {
-        seen.add(task.AccountId);
-        const existing = portfolioMatches.get(task.AccountId);
-        const inFlight = fetchingAccounts.current.has(task.AccountId);
-        if (!existing && !inFlight) {
-          fetchingAccounts.current.add(task.AccountId);
-          toMatch.push({ accountId: task.AccountId, accountName: task.AccountName, accountWebsite: task.AccountWebsite ?? null });
-        }
-      }
-    }
-    if (toMatch.length === 0) return;
-
-    setPortfolioMatches((prev) => {
-      const next = new Map(prev);
-      for (const { accountId } of toMatch) {
-        next.set(accountId, { matched: false, group: null, loading: true });
-      }
-      return next;
-    });
-
-    toMatch.forEach(({ accountId, accountName, accountWebsite }, i) => {
-      setTimeout(() => {
-        fetch("/api/portfolio/match", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accountName, accountWebsite }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            fetchingAccounts.current.delete(accountId);
-            const result = {
-              matched: data.matched ?? false,
-              group: data.group ?? null,
-              unavailable: data.unavailable ?? false,
-            };
-            setPortfolioMatches((prev) => {
-              const next = new Map(prev);
-              next.set(accountId, result);
-              return next;
-            });
-            if (!result.unavailable) {
-              saveToPortfolioCache(accountId, result);
-            }
-          })
-          .catch(() => {
-            fetchingAccounts.current.delete(accountId);
-            setPortfolioMatches((prev) => {
-              const next = new Map(prev);
-              next.set(accountId, { matched: false, group: null, unavailable: true });
-              return next;
-            });
-          });
-      }, i * 250);
-    });
-  }
-
   const weekTasks = selectedWeek
     ? allTasks.filter((t) => {
         if (!t.ActivityDate) return false;
         return t.ActivityDate >= selectedWeek.start && t.ActivityDate <= selectedWeek.end;
       })
     : [];
-
-  useEffect(() => {
-    if (weekTasks.length > 0) {
-      runPortfolioMatching(weekTasks);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekTasks]);
 
   function handleActionChange(taskId: string, action: TaskAction) {
     setActions((prev) => {
@@ -327,7 +236,6 @@ function TasksPageContent() {
     await fetch("/api/salesforce/status", { method: "DELETE" });
     setConnected(false);
     setAllTasks([]);
-    setPortfolioMatches(getPortfolioCache());
   }
 
   const activeActionCount = Array.from(actions.values()).filter(
@@ -352,10 +260,10 @@ function TasksPageContent() {
               <WeekSelector
                 selected={selectedWeek}
                 onChange={(week) => {
+                  if (actions.size > 0 && !window.confirm("You have unsaved queued actions. Switch weeks and discard them?")) return;
                   setSelectedWeek(week);
                   setActions(new Map());
                   setApplyResult(null);
-                  fetchingAccounts.current = new Set();
                 }}
               />
               <Button
@@ -408,7 +316,6 @@ function TasksPageContent() {
               <TaskTable
                 tasks={weekTasks}
                 actions={actions}
-                portfolioMatches={portfolioMatches}
                 onActionChange={handleActionChange}
               />
             )}
@@ -434,6 +341,9 @@ function TasksPageContent() {
                       .map((r) => `${r.accountName}: ${r.error}`)
                       .join("; ")}
                   </span>
+                )}
+                {(applyResult.queueWarnings?.length ?? 0) > 0 && (
+                  <span> Salesforce actions succeeded, but Weekly Outreach needs attention: {applyResult.queueWarnings!.join("; ")}</span>
                 )}
               </Alert>
             )}

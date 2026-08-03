@@ -82,3 +82,23 @@ export async function fetchAccountDetails(
     sfUrl: `${credentials.instance_url}/${r.Id}`,
   };
 }
+
+export async function fetchRecentAccountActivity(accountId: string): Promise<string[]> {
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("NOT_CONNECTED");
+  const soql =
+    `SELECT Subject, Description, ActivityDate, CreatedDate, Status ` +
+    `FROM Task WHERE WhatId = '${accountId.replace(/'/g, "\\'")}' ` +
+    `ORDER BY CreatedDate DESC LIMIT 12`;
+  const response = await fetch(
+    `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`,
+    { headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" } },
+  );
+  if (!response.ok) return [];
+  const data = (await response.json()) as { records?: Array<{ Subject?: string; Description?: string; ActivityDate?: string; CreatedDate?: string; Status?: string }> };
+  return (data.records ?? []).map((row) => {
+    const date = row.ActivityDate ?? row.CreatedDate?.slice(0, 10) ?? "unknown date";
+    const description = row.Description?.trim() ? ` — ${row.Description.trim().slice(0, 500)}` : "";
+    return `${date}: ${row.Subject ?? "Activity"} (${row.Status ?? "unknown"})${description}`;
+  });
+}

@@ -11,6 +11,7 @@ import {
   Search,
   BarChart3,
   MapPin,
+  CalendarRange,
   type LucideIcon,
 } from "lucide-react";
 import { Card } from "@/app/components/ui/Card";
@@ -29,70 +30,15 @@ type Tool = {
 };
 
 const TOOLS: Tool[] = [
-  {
-    href: "/tasks",
-    title: "Tasks",
-    description:
-      "Manage your open Salesforce tasks — view by week, delete, reschedule, or delay in bulk.",
-    icon: ListChecks,
-    needs: ["sf"],
-  },
-  {
-    href: "/outreach",
-    title: "Outreach Queue",
-    description:
-      "Surface accounts due for a 2nd hit or post-cooldown restart, and push the next contact to SF + Outreach.",
-    icon: Send,
-    needs: ["sf", "outreach"],
-  },
-  {
-    href: "/calls",
-    title: "Call Logger",
-    description:
-      "Log calls from your Outlook calendar to Salesforce — match meetings to accounts automatically.",
-    icon: Phone,
-    needs: ["sf", "ms"],
-  },
-  {
-    href: "/prep",
-    title: "Call Prep",
-    description:
-      "Generate AI-powered one-pager briefings for your upcoming meetings — download as Word docs.",
-    icon: FileText,
-    needs: ["sf", "ms"],
-  },
-  {
-    href: "/accounts",
-    title: "Account Creator",
-    description:
-      "Paste a company URL to auto-fill and create a new Salesforce account in seconds.",
-    icon: Building2,
-    needs: ["sf"],
-  },
-  {
-    href: "/sourcing",
-    title: "Sourcing",
-    description:
-      "Research a company by URL — products, portfolio match, and personalized outreach paragraph.",
-    icon: Search,
-    needs: [],
-  },
-  {
-    href: "/stats",
-    title: "Weekly Stats",
-    description:
-      "CDM group dashboard — outreach, calls, F2F, and BRO pipeline across this week, last quarter, or YTD.",
-    icon: BarChart3,
-    needs: ["sf"],
-  },
-  {
-    href: "/trip",
-    title: "Trip Planner",
-    description:
-      "Find nearby CDM accounts and discover new targets when traveling — ranked by driving distance.",
-    icon: MapPin,
-    needs: ["sf"],
-  },
+  { href: "/tasks", title: "Tasks", description: "Manage open Salesforce tasks by week and send reconnects into Weekly Outreach.", icon: ListChecks, needs: ["sf"] },
+  { href: "/prep", title: "Call Prep", description: "Generate a 60-second briefing plus a complete business and relationship refresher.", icon: FileText, needs: ["sf", "ms"] },
+  { href: "/weekly-outreach", title: "Weekly Outreach", description: "Build this week's E1 and RCE list from Tasks, Re-Contact, or Salesforce names.", icon: CalendarRange, needs: ["sf", "ms"] },
+  { href: "/sourcing", title: "Sourcing", description: "Research companies and produce personalized, ready-to-review E1 outreach.", icon: Search, needs: [] },
+  { href: "/calls", title: "Call Logger", description: "Review Outlook meetings and log calls and follow-ups to Salesforce.", icon: Phone, needs: ["sf", "ms"] },
+  { href: "/outreach", title: "Outreach Queue", description: "Surface accounts due for another contact and push the next step to Salesforce and Outreach.", icon: Send, needs: ["sf", "outreach"] },
+  { href: "/accounts", title: "Account Creator", description: "Create a Salesforce account from a company URL.", icon: Building2, needs: ["sf"] },
+  { href: "/stats", title: "Weekly Stats", description: "Review CDM outreach, calls, meetings, and pipeline.", icon: BarChart3, needs: ["sf"] },
+  { href: "/trip", title: "Trip Planner", description: "Find nearby accounts and discover targets around a trip.", icon: MapPin, needs: ["sf"] },
 ];
 
 // Interns only get the Sourcing card. Enforcement is in middleware.ts.

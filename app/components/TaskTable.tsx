@@ -15,13 +15,6 @@ export type TaskAction = {
   days: number;
 };
 
-export type PortfolioMatch = {
-  matched: boolean;
-  group: string | null;
-  unavailable?: boolean;
-  loading?: boolean;
-};
-
 // ── Shortcode parser ──────────────────────────────────────────────────────────
 
 function parseShortcode(
@@ -37,17 +30,16 @@ function parseShortcode(
 }
 
 // ── Column indexes (used for keyboard navigation) ─────────────────────────────
-// 0=row#, 1=account, 2=sf-link, 3=subject, 4=due-date, 5=portfolio, 6=next-steps
+// 0=row#, 1=account, 2=sf-link, 3=subject, 4=due-date, 5=next-steps
 const FIRST_COL = 1;
-const LAST_COL = 6;
-const INTERACTIVE_COL = 6;
+const LAST_COL = 5;
+const INTERACTIVE_COL = 5;
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 type Props = {
   tasks: SalesforceTask[];
   actions: Map<string, TaskAction>;
-  portfolioMatches: Map<string, PortfolioMatch>;
   onActionChange: (taskId: string, action: TaskAction) => void;
 };
 
@@ -56,7 +48,6 @@ type Props = {
 export default function TaskTable({
   tasks,
   actions,
-  portfolioMatches,
   onActionChange,
 }: Props) {
   const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
@@ -195,21 +186,6 @@ export default function TaskTable({
     writeAction(task, "", "none", 0);
   }
 
-  // ── Portfolio display ─────────────────────────────────────────────────────────
-
-  function renderPortfolio(task: SalesforceTask) {
-    if (!task.AccountId) return <span className="text-gray-300 text-xs">—</span>;
-    const match = portfolioMatches.get(task.AccountId);
-    if (!match || match.loading) {
-      return <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-brand-orange rounded-full animate-spin" />;
-    }
-    if (match.unavailable) return <span className="text-orange-400 text-xs" title="Portfolio API unavailable">~</span>;
-    if (match.matched && match.group) {
-      return <span className="text-green-600 text-xs font-medium whitespace-nowrap">✅ {match.group}</span>;
-    }
-    return <span className="text-gray-400 text-xs">✗</span>;
-  }
-
   // ── Badge display ─────────────────────────────────────────────────────────────
 
   function renderBadge(taskId: string) {
@@ -229,6 +205,24 @@ export default function TaskTable({
     if (a === "complete_reschedule") return "border-green-400 bg-green-50";
     if (a === "delay") return "border-blue-400 bg-blue-50";
     return "border-gray-200 bg-white";
+  }
+
+  function isInvalidCode(taskId: string) {
+    const value = inputValues.get(taskId)?.trim() ?? "";
+    return value.length > 0 && parseShortcode(value) === null;
+  }
+
+  function quickActions(task: SalesforceTask) {
+    const action = getAction(task.Id);
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button type="button" onClick={() => toggleDelete(task)} className={`min-h-[34px] rounded-md border px-2 text-xs font-semibold ${action.actionType === "hard_delete" ? "border-red-500 bg-red-500 text-white" : "border-red-200 bg-red-50 text-red-700"}`}>Delete</button>
+        <button type="button" onClick={() => bumpDelay(task, 7)} className="min-h-[34px] rounded-md border border-blue-200 bg-blue-50 px-2 text-xs font-semibold text-blue-700">+7d</button>
+        <button type="button" onClick={() => bumpDelay(task, 30)} className="min-h-[34px] rounded-md border border-blue-200 bg-blue-50 px-2 text-xs font-semibold text-blue-700">+30d</button>
+        <button type="button" onClick={() => writeAction(task, "RCE7", "complete_reschedule", 7)} className="min-h-[34px] rounded-md border border-green-200 bg-green-50 px-2 text-xs font-semibold text-green-700">Complete+Recreate</button>
+        {action.actionType !== "none" && <button type="button" onClick={() => clearAction(task)} aria-label="Clear action" className="min-h-[34px] w-8 rounded-md border border-gray-200 text-gray-500">×</button>}
+      </div>
+    );
   }
 
   function isCellActive(row: number, col: number) {
@@ -270,8 +264,7 @@ export default function TaskTable({
             <th>Salesforce</th>
             <th>Task Subject</th>
             <th>Due Date</th>
-            <th>Portfolio</th>
-            <th className="min-w-[220px]">
+            <th className="min-w-[420px]">
               <span className="flex items-center gap-1.5">
                 Next Steps
                 {/* ⓘ shortcode help tooltip */}
@@ -388,23 +381,13 @@ export default function TaskTable({
                 )}
               </td>
 
-              {/* Portfolio match — col 5 */}
-              <td
-                tabIndex={0}
-                onClick={() => setActiveCell({ row: rowIdx, col: 5 })}
-                onFocus={() => setActiveCell({ row: rowIdx, col: 5 })}
-                className={`${cellBase} ${isCellActive(rowIdx, 5) ? cellActive : ""}`}
-              >
-                {renderPortfolio(task)}
-              </td>
-
-              {/* Next Steps shortcode input — col 6 */}
+              {/* Next Steps shortcode input — col 5 */}
               <td
                 tabIndex={-1}
                 onClick={() => focusCell(rowIdx, INTERACTIVE_COL)}
                 className={`p-1.5 ${cellBase} ${isCellActive(rowIdx, INTERACTIVE_COL) ? cellActive : ""}`}
               >
-                <div className="flex flex-col gap-0.5">
+                <div className="flex flex-col gap-1.5">
                   <input
                     ref={(el) => {
                       if (el) inputRefs.current.set(task.Id, el);
@@ -426,7 +409,9 @@ export default function TaskTable({
                     }}
                     className={`w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors ${getInputBorderClass(task.Id)}`}
                   />
+                  {isInvalidCode(task.Id) && <span className="text-xs font-medium text-red-600" role="alert">Invalid code. Use D, P7, P30, RCE7, RCE12, etc.</span>}
                   {renderBadge(task.Id)}
+                  {quickActions(task)}
                 </div>
               </td>
             </tr>
@@ -444,8 +429,6 @@ export default function TaskTable({
             ? task.AccountWebsite
             : `https://${task.AccountWebsite}`
           : null;
-        const portfolio = task.AccountId ? portfolioMatches.get(task.AccountId) : undefined;
-
         return (
           <div
             key={task.Id}
@@ -463,7 +446,7 @@ export default function TaskTable({
               </span>
             </div>
 
-            {/* Meta chips: due date, SF link, portfolio */}
+            {/* Meta chips: due date and SF link */}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-sm">
               {task.ActivityDate &&
                 (website ? (
@@ -487,11 +470,6 @@ export default function TaskTable({
                 >
                   Open in Salesforce ↗
                 </a>
-              )}
-              {portfolio?.matched && portfolio.group && (
-                <span className="text-green-600 text-xs font-medium">
-                  ✅ {portfolio.group}
-                </span>
               )}
             </div>
 
@@ -522,6 +500,13 @@ export default function TaskTable({
               >
                 +30d
               </button>
+              <button
+                type="button"
+                onClick={() => writeAction(task, "RCE7", "complete_reschedule", 7)}
+                className="flex-[2] min-h-[44px] rounded-lg border border-green-200 bg-green-50 px-2 text-green-700 text-sm font-semibold active:bg-green-100 transition-colors"
+              >
+                Complete+Recreate
+              </button>
               {action.actionType !== "none" && (
                 <button
                   type="button"
@@ -543,6 +528,7 @@ export default function TaskTable({
               onChange={(e) => handleInputChange(task, e.target.value)}
               className={`w-full border rounded-lg px-3 min-h-[44px] text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors mt-2 ${getInputBorderClass(task.Id)}`}
             />
+            {isInvalidCode(task.Id) && <div className="mt-1 text-xs font-medium text-red-600" role="alert">Invalid code. Use D, P7, P30, RCE7, RCE12, etc.</div>}
             <div className="mt-1">{renderBadge(task.Id)}</div>
           </div>
         );

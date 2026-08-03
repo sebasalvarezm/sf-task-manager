@@ -239,7 +239,7 @@ export async function findRecentSourcingByUrl(
   normalizedUrl: string,
   maxAgeDays = 90,
   sessionId: string = DEFAULT_SESSION,
-): Promise<Job | null> {
+): Promise<(Job & { matchedCompanyUrl?: string }) | null> {
   if (!normalizedUrl) return null;
   const supabase = getSupabaseAdmin();
   const sinceIso = new Date(
@@ -249,7 +249,7 @@ export async function findRecentSourcingByUrl(
     .from("jobs")
     .select("*")
     .eq("session_id", sessionId)
-    .eq("kind", "sourcing")
+    .in("kind", ["sourcing", "sourcing_bulk"])
     .eq("status", "succeeded")
     .gte("created_at", sinceIso)
     .order("created_at", { ascending: false })
@@ -258,10 +258,29 @@ export async function findRecentSourcingByUrl(
     throw new Error(`Failed to look up cached sourcing run: ${error.message}`);
   }
   for (const row of (data ?? []) as Job[]) {
-    const inputUrl =
-      typeof row.input?.url === "string" ? (row.input.url as string) : "";
-    if (normalizeSourcingUrl(inputUrl) === normalizedUrl) {
-      return row;
+    if (row.kind === "sourcing") {
+      const inputUrl = typeof row.input?.url === "string" ? (row.input.url as string) : "";
+      if (normalizeSourcingUrl(inputUrl) === normalizedUrl) return row;
+      continue;
+    }
+    const items = Array.isArray(row.result?.items)
+      ? (row.result.items as Array<Record<string, unknown>>)
+      : [];
+    for (const item of items) {
+      const itemUrl = typeof item.url === "string" ? item.url : "";
+      const result = item.result && typeof item.result === "object"
+        ? (item.result as Record<string, unknown>)
+        : null;
+      if (normalizeSourcingUrl(itemUrl) === normalizedUrl && result) {
+        // Consumers that need the actual result (including another bulk run)
+        // receive the company result, while the original batch job id remains
+        // available for UI navigation.
+        return {
+          ...row,
+          result,
+          matchedCompanyUrl: normalizedUrl,
+        };
+      }
     }
   }
   return null;

@@ -53,6 +53,35 @@ export async function findAccountByDomain(
   };
 }
 
+export async function findAccountsByDomains(
+  domains: string[],
+): Promise<Map<string, SalesforceAccountMatch>> {
+  const clean = Array.from(new Set(domains.map((d) => d.trim().toLowerCase()).filter(Boolean)));
+  const matches = new Map<string, SalesforceAccountMatch>();
+  if (clean.length === 0) return matches;
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("NOT_CONNECTED");
+  const escapeSoql = (value: string) => value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  const where = clean.map((d) => `Website LIKE '%${escapeSoql(d)}%'`).join(" OR ");
+  const soql = `SELECT Id, Name, Website FROM Account WHERE ${where} ORDER BY Name ASC LIMIT 2000`;
+  const response = await fetch(
+    `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`,
+    { headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" } },
+  );
+  if (!response.ok) throw new Error(`Salesforce query failed: ${await response.text()}`);
+  const data = (await response.json()) as { records?: Array<{ Id: string; Name: string; Website?: string }> };
+  for (const domain of clean) {
+    const row = (data.records ?? []).find((r) => (r.Website ?? "").toLowerCase().includes(domain));
+    if (row) matches.set(domain, {
+      accountId: row.Id,
+      accountName: row.Name,
+      accountUrl: `${credentials.instance_url}/${row.Id}`,
+      website: row.Website ?? null,
+    });
+  }
+  return matches;
+}
+
 // ── Check for existing call tasks in a date range ────────────────────────────
 
 export async function findExistingCallTasks(

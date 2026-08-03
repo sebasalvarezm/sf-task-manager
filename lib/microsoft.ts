@@ -311,6 +311,59 @@ export async function fetchEmailThread(
   );
 }
 
+export type OutlookRelationshipEmail = {
+  id: string;
+  subject: string;
+  fromEmail: string;
+  toEmails: string[];
+  sentDateTime: string;
+  bodyText: string;
+};
+
+/** Search all Outlook folders, including Sent Items, for relationship context. */
+export async function searchMailboxMessages(
+  searchTerm: string,
+  limit = 25,
+): Promise<OutlookRelationshipEmail[]> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const safe = searchTerm.replace(/"/g, "");
+  const params = new URLSearchParams({
+    $search: `"${safe}"`,
+    $select: "id,subject,from,toRecipients,sentDateTime,body",
+    $top: String(Math.min(50, Math.max(1, limit))),
+  });
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        ConsistencyLevel: "eventual",
+        Prefer: 'outlook.body-content-type="text"',
+      },
+    },
+  );
+  if (!response.ok) throw new Error(`Failed to search Outlook: ${await response.text()}`);
+  const data = (await response.json()) as {
+    value?: Array<{
+      id: string;
+      subject?: string;
+      from?: { emailAddress?: { address?: string } };
+      toRecipients?: Array<{ emailAddress?: { address?: string } }>;
+      sentDateTime?: string;
+      body?: { content?: string };
+    }>;
+  };
+  return (data.value ?? []).map((m) => ({
+    id: m.id,
+    subject: m.subject ?? "(No subject)",
+    fromEmail: (m.from?.emailAddress?.address ?? "").toLowerCase(),
+    toEmails: (m.toRecipients ?? []).map((r) => (r.emailAddress?.address ?? "").toLowerCase()).filter(Boolean),
+    sentDateTime: m.sentDateTime ?? "",
+    bodyText: (m.body?.content ?? "").slice(0, 5000),
+  }));
+}
+
 // ── Send Email API ───────────────────────────────────────────────────────────
 
 export async function sendEmail(params: {

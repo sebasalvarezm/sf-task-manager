@@ -31,6 +31,49 @@ export type CallsLogRunResult = {
   failCount: number;
 };
 
+export async function runOneCallLog(entry: CallLogEntry): Promise<CallLogResult> {
+  try {
+    const subject = entry.commentary ? `${entry.callType} - ${entry.commentary}` : entry.callType;
+    await createCompletedCallTask({
+      accountId: entry.accountId,
+      subject,
+      subjectType: entry.callType,
+      meetingDate: entry.meetingDate,
+    });
+    let followUpCreated = false;
+    if (entry.followUpDays && entry.followUpDays > 0) {
+      await createFollowUpTask({
+        accountId: entry.accountId,
+        subject: "RCE",
+        subjectType: "RCE1",
+        meetingDate: entry.meetingDate,
+        daysFromMeeting: entry.followUpDays,
+      });
+      followUpCreated = true;
+    }
+    let noteCreated = false;
+    if (entry.notes && entry.notes.trim()) {
+      await createAccountNote({
+        accountId: entry.accountId,
+        title: `${entry.callType} Notes`,
+        content: entry.notes.trim(),
+      });
+      noteCreated = true;
+    }
+    return { eventId: entry.eventId, accountName: entry.accountName, callType: entry.callType, success: true, followUpCreated, noteCreated };
+  } catch (err) {
+    return {
+      eventId: entry.eventId,
+      accountName: entry.accountName,
+      callType: entry.callType,
+      success: false,
+      error: err instanceof Error ? err.message : "Unknown error",
+      followUpCreated: false,
+      noteCreated: false,
+    };
+  }
+}
+
 export async function runCallsLog(input: {
   entries: CallLogEntry[];
 }): Promise<CallsLogRunResult> {
@@ -39,62 +82,9 @@ export async function runCallsLog(input: {
   let failCount = 0;
 
   for (const entry of input.entries) {
-    try {
-      const subject = entry.commentary
-        ? `${entry.callType} - ${entry.commentary}`
-        : entry.callType;
-
-      await createCompletedCallTask({
-        accountId: entry.accountId,
-        subject,
-        subjectType: entry.callType,
-        meetingDate: entry.meetingDate,
-      });
-
-      let followUpCreated = false;
-      if (entry.followUpDays && entry.followUpDays > 0) {
-        await createFollowUpTask({
-          accountId: entry.accountId,
-          subject: "RCE",
-          subjectType: "RCE1",
-          meetingDate: entry.meetingDate,
-          daysFromMeeting: entry.followUpDays,
-        });
-        followUpCreated = true;
-      }
-
-      let noteCreated = false;
-      if (entry.notes && entry.notes.trim()) {
-        await createAccountNote({
-          accountId: entry.accountId,
-          title: `${entry.callType} Notes`,
-          content: entry.notes.trim(),
-        });
-        noteCreated = true;
-      }
-
-      results.push({
-        eventId: entry.eventId,
-        accountName: entry.accountName,
-        callType: entry.callType,
-        success: true,
-        followUpCreated,
-        noteCreated,
-      });
-      successCount++;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      results.push({
-        eventId: entry.eventId,
-        accountName: entry.accountName,
-        callType: entry.callType,
-        success: false,
-        error: message,
-        followUpCreated: false,
-        noteCreated: false,
-      });
-      failCount++;
-    }
+    const result = await runOneCallLog(entry);
+    results.push(result);
+    if (result.success) successCount++; else failCount++;
   }
 
   return { results, successCount, failCount };

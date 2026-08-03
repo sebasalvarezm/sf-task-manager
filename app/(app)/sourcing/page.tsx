@@ -30,6 +30,7 @@ type PortfolioMatch = {
   /** Main industry group folder, e.g. "Manufacturing" */
   mainGroup?: string | null;
   confidence?: number | null;
+  warning?: string | null;
 };
 
 type WaybackStatus =
@@ -311,10 +312,11 @@ function SourcingPageContent() {
           if (cacheRes.ok) {
             const cacheData = (await cacheRes.json()) as
               | { found: false }
-              | { found: true; jobId: string; ageDays: number };
+              | { found: true; jobId: string; ageDays: number; companyUrl?: string | null };
             if (cacheData.found) {
               setUrl("");
-              router.push(`/sourcing?jobId=${cacheData.jobId}&cached=1`);
+              const company = cacheData.companyUrl ? `&company=${encodeURIComponent(cacheData.companyUrl)}` : "";
+              router.push(`/sourcing?jobId=${cacheData.jobId}&cached=1${company}`);
               return;
             }
           }
@@ -1019,6 +1021,12 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
           </div>
         </div>
       </div>
+
+      {result.portfolioMatch.warning && (
+        <Alert variant="warn" title="Portfolio group needs review">
+          {result.portfolioMatch.warning}. No group email template was assigned automatically.
+        </Alert>
+      )}
 
       {/* Email Opening Hook — full width, above the 3-col grid */}
       {result.emailHook && (

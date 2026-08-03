@@ -107,6 +107,29 @@ export async function findBusinessLocation(
   };
 }
 
+export async function findBusinessDinnerRestaurants(
+  location: string,
+): Promise<Array<{ name: string; description: string }>> {
+  const key = getApiKey();
+  const query = `best upscale business dinner restaurants near ${location}`;
+  const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&type=restaurant&key=${key}`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = (await res.json()) as {
+    status: string;
+    results?: Array<{ name: string; rating?: number; user_ratings_total?: number; formatted_address?: string; price_level?: number }>;
+  };
+  if (data.status !== "OK") return [];
+  return (data.results ?? [])
+    .filter((r) => (r.rating ?? 0) >= 4 && (r.user_ratings_total ?? 0) >= 20)
+    .sort((a, b) => ((b.rating ?? 0) * Math.log10((b.user_ratings_total ?? 0) + 10)) - ((a.rating ?? 0) * Math.log10((a.user_ratings_total ?? 0) + 10)))
+    .slice(0, 3)
+    .map((r) => ({
+      name: r.name,
+      description: `${r.rating?.toFixed(1) ?? "Well"}-rated restaurant${r.formatted_address ? ` near ${r.formatted_address}` : ""}, suitable for a sit-down business dinner.`,
+    }));
+}
+
 // ── Haversine distance (pure math, no API) ───────────────────────────────────
 
 export function haversineDistance(

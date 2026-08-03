@@ -51,6 +51,8 @@ export default function RecheckPage() {
   // How the results table is ordered. "input" = as pasted; "oldest" = most
   // overdue (longest since last contact) first; "newest" = most recent first.
   const [sortMode, setSortMode] = useState<"input" | "oldest" | "newest">("input");
+  const [sentAccountIds, setSentAccountIds] = useState<Set<string>>(new Set());
+  const [resultMessage, setResultMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/salesforce/status")
@@ -126,6 +128,51 @@ export default function RecheckPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function resultsCsv(): string {
+    const header = ["Input", "Matched Account", "Last Task", "Days Quiet", "Ready", "Owner", "Salesforce"];
+    const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    return [header, ...sortedRows.map((r) => [r.input, r.accountName, r.lastTaskDate, r.daysSince, r.readyToRecontact ? "Yes" : "No", r.owner, r.accountUrl])]
+      .map((row) => row.map(quote).join(","))
+      .join("\n");
+  }
+
+  async function copyResults() {
+    await navigator.clipboard.writeText(resultsCsv());
+    setResultMessage("Results copied as CSV.");
+  }
+
+  function downloadResults() {
+    const blob = new Blob([resultsCsv()], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "re-contact-results.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function sendToWeeklyOutreach(row: RecheckRow) {
+    if (!row.accountId) return;
+    setError(null);
+    const res = await fetch("/api/weekly-outreach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        outreachType: "E1",
+        accountId: row.accountId,
+        source: "recheck",
+        sourceReference: row.input,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error ?? "Could not send to Weekly Outreach");
+      return;
+    }
+    setSentAccountIds((prev) => new Set(prev).add(row.accountId!));
+    setResultMessage(`${row.accountName} added to this week's E1 list.`);
   }
 
   // ── Connection gate ──────────────────────────────────────────────────────
@@ -206,6 +253,9 @@ export default function RecheckPage() {
                         of {rows.length} checked
                       </span>
                     </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="secondary" size="sm" onClick={copyResults}>Copy results</Button>
+                      <Button variant="secondary" size="sm" onClick={downloadResults}>Download CSV</Button>
                     {/* Sort toggle — orders by how long since last contact */}
                     <div className="flex items-center gap-1.5 text-xs">
                       <span className="text-ink-muted">Sort:</span>
@@ -231,7 +281,9 @@ export default function RecheckPage() {
                         ))}
                       </div>
                     </div>
+                    </div>
                   </div>
+                  {resultMessage && <Alert variant="ok" onDismiss={() => setResultMessage(null)}>{resultMessage}</Alert>}
 
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -243,6 +295,7 @@ export default function RecheckPage() {
                           <th className="py-2 pr-4 font-medium">Status</th>
                           <th className="py-2 pr-4 font-medium">Owner</th>
                           <th className="py-2 font-medium">Salesforce</th>
+                          <th className="py-2 pl-4 font-medium">Weekly Outreach</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -306,6 +359,18 @@ export default function RecheckPage() {
                               ) : (
                                 <span className="text-ink-muted">—</span>
                               )}
+                            </td>
+                            <td className="py-2.5 pl-4 whitespace-nowrap">
+                              {r.readyToRecontact && r.accountId && r.status !== "multiple" ? (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  disabled={sentAccountIds.has(r.accountId)}
+                                  onClick={() => sendToWeeklyOutreach(r)}
+                                >
+                                  {sentAccountIds.has(r.accountId) ? "Added" : "Send E1"}
+                                </Button>
+                              ) : <span className="text-ink-muted">—</span>}
                             </td>
                           </tr>
                         ))}

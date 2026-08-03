@@ -35,7 +35,12 @@ export async function POST(req: Request) {
     }
     const ageMs = Date.now() - new Date(job.created_at).getTime();
     const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
-    return NextResponse.json({ found: true, jobId: job.id, ageDays });
+    return NextResponse.json({
+      found: true,
+      jobId: job.id,
+      ageDays,
+      companyUrl: job.matchedCompanyUrl ?? null,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: message }, { status: 500 });
