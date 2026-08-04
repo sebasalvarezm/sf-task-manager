@@ -116,6 +116,20 @@ function sortItems(items: WeeklyOutreachItem[]): WeeklyOutreachItem[] {
   return [...items].sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
+function isE1ReadyForSourcing(
+  item: WeeklyOutreachItem,
+  retryableJobIds: Set<string>,
+): boolean {
+  if (item.outreach_type !== "E1" || item.status === "sent") return false;
+  if (item.sourcing_job_id) return retryableJobIds.has(item.sourcing_job_id);
+  return (
+    !item.draft &&
+    item.status !== "researching" &&
+    item.status !== "draft_ready" &&
+    item.status !== "approved"
+  );
+}
+
 export default function WeeklyOutreachPage() {
   const router = useRouter();
   const { jobs } = useJobs();
@@ -133,6 +147,7 @@ export default function WeeklyOutreachPage() {
   const [reviewDraft, setReviewDraft] = useState("");
   const [reviewSaving, setReviewSaving] = useState(false);
   const [outlookReconnectRequired, setOutlookReconnectRequired] = useState(false);
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const loadingRef = useRef(false);
   const searchTimers = useRef<Map<string, number>>(new Map());
   const companyInputs = useRef<Map<string, HTMLInputElement>>(new Map());
@@ -172,6 +187,7 @@ export default function WeeklyOutreachPage() {
     setDraftRows(createDraftRows());
     setError(null);
     setMessage(null);
+    setSelectedRowId(null);
     void load(false);
 
     const interval = window.setInterval(() => void load(true), LIVE_REFRESH_MS);
@@ -230,6 +246,13 @@ export default function WeeklyOutreachPage() {
       ),
     [jobs],
   );
+  const e1ToSourceCount = useMemo(
+    () =>
+      items.filter((item) =>
+        isE1ReadyForSourcing(item, retryableSourcingJobIds),
+      ).length,
+    [items, retryableSourcingJobIds],
+  );
   const totalGridRows = items.length + visibleDraftRows.length;
   const reviewingRce = reviewingRceId
     ? items.find((item) => item.id === reviewingRceId) ?? null
@@ -255,6 +278,28 @@ export default function WeeklyOutreachPage() {
     let nextRow = rowIndex;
     let nextColumn = columnIndex;
     const element = event.currentTarget;
+    const savedRow = rowIndex < items.length ? items[rowIndex] : null;
+
+    if (event.shiftKey && (event.key === " " || event.code === "Space")) {
+      if (!savedRow) return false;
+      event.preventDefault();
+      setSelectedRowId(savedRow.id);
+      return true;
+    }
+
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      (event.key === "-" ||
+        event.code === "Minus" ||
+        event.code === "NumpadSubtract")
+    ) {
+      const selectedRow =
+        items.find((item) => item.id === selectedRowId) ?? savedRow;
+      if (!selectedRow) return false;
+      event.preventDefault();
+      void removeRow(selectedRow);
+      return true;
+    }
 
     if (event.key === "Enter") {
       nextRow += event.shiftKey ? -1 : 1;
@@ -633,14 +678,13 @@ export default function WeeklyOutreachPage() {
       return;
     }
     setItems((previous) => previous.filter((row) => row.id !== item.id));
+    setSelectedRowId((selected) => (selected === item.id ? null : selected));
+    setMessage(`${item.account_name} was removed from this week's outreach list.`);
   }
 
   async function prepareE1s() {
     const e1s = items.filter(
-      (item) =>
-        item.outreach_type === "E1" &&
-        item.status !== "sent" &&
-        (!item.sourcing_job_id || retryableSourcingJobIds.has(item.sourcing_job_id)),
+      (item) => isE1ReadyForSourcing(item, retryableSourcingJobIds),
     );
     if (e1s.length === 0) {
       setMessage("There are no unsourced E1s in this week.");
@@ -918,8 +962,8 @@ export default function WeeklyOutreachPage() {
               >
                 Prepare RCE Drafts ({counts.rceToDraft})
               </Button>
-              <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={pasting || saving || counts.e1 === 0}>
-                Prepare E1 Sourcing Batch
+              <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={pasting || saving || e1ToSourceCount === 0}>
+                Prepare E1 Sourcing Batch ({e1ToSourceCount})
               </Button>
               <Button className="w-full sm:w-auto" variant="secondary" onClick={copyCsv} disabled={items.length === 0}>
                 Copy CSV
@@ -1191,9 +1235,22 @@ export default function WeeklyOutreachPage() {
               </thead>
               <tbody>
                 {items.map((item, index) => (
-                  <tr key={item.id} className="h-10 hover:bg-brand-soft/30">
+                  <tr
+                    key={item.id}
+                    aria-selected={selectedRowId === item.id}
+                    className={`h-10 hover:bg-brand-soft/30 ${
+                      selectedRowId === item.id ? "bg-brand-soft/70" : ""
+                    }`}
+                  >
                     <td className="border-b border-r border-line bg-surface-2 px-2 text-center text-ink-muted">
-                      {index + 1}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRowId(item.id)}
+                        className="h-10 w-full font-medium focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        aria-label={`Select row ${index + 1}, ${item.account_name}`}
+                      >
+                        {index + 1}
+                      </button>
                     </td>
                     <td className="border-b border-r border-line p-0">
                       <select
@@ -1210,17 +1267,27 @@ export default function WeeklyOutreachPage() {
                       </select>
                     </td>
                     <td className="border-b border-r border-line p-0">
-                      <input
-                        ref={registerGridCell(index, 1)}
-                        defaultValue={item.account_name}
-                        onKeyDown={(event) => handleGridNavigation(event, index, 1)}
-                        onBlur={(event) => {
-                          if (event.target.value.trim() !== item.account_name) {
-                            void updateRow(item, { accountName: event.target.value });
-                          }
-                        }}
-                        className="h-10 w-full border-0 bg-transparent px-2 font-medium text-ink focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
-                      />
+                      <div className="flex h-10 items-center">
+                        <input
+                          ref={registerGridCell(index, 1)}
+                          defaultValue={item.account_name}
+                          onKeyDown={(event) => handleGridNavigation(event, index, 1)}
+                          onBlur={(event) => {
+                            if (event.target.value.trim() !== item.account_name) {
+                              void updateRow(item, { accountName: event.target.value });
+                            }
+                          }}
+                          className="h-10 min-w-0 flex-1 border-0 bg-transparent px-2 font-medium text-ink focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void removeRow(item)}
+                          className="h-10 shrink-0 border-l border-line px-2 text-[11px] font-semibold text-danger hover:bg-danger-soft"
+                          aria-label={`Remove ${item.account_name} from this week`}
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </td>
                     <td className="border-b border-r border-line p-0">
                       <input ref={registerGridCell(index, 2)} defaultValue={item.industry ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 2)} onBlur={(event) => void updateRow(item, { industry: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
@@ -1468,7 +1535,7 @@ export default function WeeklyOutreachPage() {
         </div>
 
         <p className="mt-3 text-xs text-ink-muted">
-          Entries from Open Tasks and Re-Contact are added to the bottom automatically. The sheet keeps five empty rows after the weekly target and continues expanding beyond 30.
+          Entries from Open Tasks and Re-Contact are added to the bottom automatically. The sheet keeps five empty rows after the weekly target and continues expanding beyond 30. On desktop, Shift + Space selects a saved row and Ctrl + - removes it.
         </p>
 
         {reviewingRce ? (
