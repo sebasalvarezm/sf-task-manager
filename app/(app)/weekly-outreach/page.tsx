@@ -695,9 +695,6 @@ export default function WeeklyOutreachPage() {
   }
 
   async function confirmSecondRceSent(item: WeeklyOutreachItem) {
-    if (!window.confirm(`Confirm the second reconnect email to ${item.account_name} was sent?`)) {
-      return;
-    }
     await updateRow(item, { status: "sent", rceSecondSent: true });
     setMessage(`${item.account_name} is complete after the second reconnect email.`);
   }
