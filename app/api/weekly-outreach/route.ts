@@ -138,6 +138,7 @@ export async function PATCH(request: NextRequest) {
     tier?: string | null;
     groupName?: string | null;
     rceDraftEnabled?: boolean;
+    rceSecondSent?: boolean;
   };
   const ids = body.ids ?? (body.id ? [body.id] : []);
   if (ids.length === 0) return NextResponse.json({ error: "Missing row id" }, { status: 400 });
@@ -161,10 +162,10 @@ export async function PATCH(request: NextRequest) {
   if (body.city !== undefined) updates.city = body.city?.trim() || null;
   if (body.tier !== undefined) updates.tier = body.tier?.trim() || null;
   if (body.groupName !== undefined) updates.group_name = body.groupName?.trim() || null;
-  if (body.rceDraftEnabled !== undefined) {
+  if (body.rceDraftEnabled !== undefined || body.rceSecondSent !== undefined) {
     if (ids.length !== 1) {
       return NextResponse.json(
-        { error: "RCE drafting can only be changed one row at a time" },
+        { error: "RCE follow-up settings can only be changed one row at a time" },
         { status: 400 },
       );
     }
@@ -177,7 +178,12 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Weekly Outreach row not found" }, { status: 404 });
     }
     const metadata = readWeeklyOutreachSourceMetadata(existing.source_reference);
-    metadata.rceDraftEnabled = body.rceDraftEnabled;
+    if (body.rceDraftEnabled !== undefined) {
+      metadata.rceDraftEnabled = body.rceDraftEnabled;
+    }
+    if (body.rceSecondSent !== undefined) {
+      metadata.rceSecondSent = body.rceSecondSent;
+    }
     updates.source_reference = writeWeeklyOutreachSourceMetadata(metadata);
   }
   const { data, error } = await getSupabaseAdmin()

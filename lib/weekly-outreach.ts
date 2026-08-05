@@ -36,6 +36,7 @@ export type WeeklyOutreachItem = {
   created_at: string;
   updated_at: string;
   rce_draft_enabled?: boolean;
+  rce_second_sent?: boolean;
   outlook_draft_ready?: boolean;
   outlook_reply_subject?: string | null;
 };
@@ -46,6 +47,7 @@ export type WeeklyOutreachSourceMetadata = {
   replyToMessageId: string | null;
   replySubject: string | null;
   rceDraftEnabled: boolean;
+  rceSecondSent: boolean;
 };
 
 export function readWeeklyOutreachSourceMetadata(
@@ -58,6 +60,7 @@ export function readWeeklyOutreachSourceMetadata(
       replyToMessageId: null,
       replySubject: null,
       rceDraftEnabled: true,
+      rceSecondSent: false,
     };
   }
   try {
@@ -71,6 +74,7 @@ export function readWeeklyOutreachSourceMetadata(
         replyToMessageId: parsed.replyToMessageId ?? null,
         replySubject: parsed.replySubject ?? null,
         rceDraftEnabled: parsed.rceDraftEnabled !== false,
+        rceSecondSent: parsed.rceSecondSent === true,
       };
     }
   } catch {
@@ -82,6 +86,7 @@ export function readWeeklyOutreachSourceMetadata(
     replyToMessageId: null,
     replySubject: null,
     rceDraftEnabled: true,
+    rceSecondSent: false,
   };
 }
 
@@ -92,7 +97,8 @@ export function writeWeeklyOutreachSourceMetadata(
     !metadata.outlookDraftId &&
     !metadata.replyToMessageId &&
     !metadata.replySubject &&
-    metadata.rceDraftEnabled
+    metadata.rceDraftEnabled &&
+    !metadata.rceSecondSent
   ) {
     return metadata.originalReference;
   }
@@ -106,6 +112,7 @@ export function withWeeklyOutreachClientMetadata(
   return {
     ...item,
     rce_draft_enabled: metadata.rceDraftEnabled,
+    rce_second_sent: metadata.rceSecondSent,
     outlook_draft_ready: Boolean(metadata.outlookDraftId),
     outlook_reply_subject: metadata.replySubject,
   };

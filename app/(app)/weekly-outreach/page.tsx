@@ -64,6 +64,7 @@ type WeeklyRowChanges = {
   tier?: string | null;
   groupName?: string | null;
   rceDraftEnabled?: boolean;
+  rceSecondSent?: boolean;
 };
 
 type GridCellElement = HTMLInputElement | HTMLSelectElement | HTMLButtonElement;
@@ -128,6 +129,14 @@ function isE1ReadyForSourcing(
     item.status !== "draft_ready" &&
     item.status !== "approved"
   );
+}
+
+function sentRowTone(item: WeeklyOutreachItem): string {
+  if (item.status !== "sent") return "bg-white hover:bg-brand-soft/30";
+  if (item.outreach_type === "RCE" && item.rce_second_sent !== true) {
+    return "bg-emerald-50 hover:bg-emerald-100/70";
+  }
+  return "bg-emerald-100 hover:bg-emerald-200/70";
 }
 
 export default function WeeklyOutreachPage() {
@@ -656,6 +665,9 @@ export default function WeeklyOutreachPage() {
     if (changes.rceDraftEnabled !== undefined) {
       optimisticChanges.rce_draft_enabled = changes.rceDraftEnabled;
     }
+    if (changes.rceSecondSent !== undefined) {
+      optimisticChanges.rce_second_sent = changes.rceSecondSent;
+    }
     setItems((previous) =>
       previous.map((row) => (row.id === item.id ? { ...row, ...optimisticChanges } : row)),
     );
@@ -680,6 +692,14 @@ export default function WeeklyOutreachPage() {
     setItems((previous) => previous.filter((row) => row.id !== item.id));
     setSelectedRowId((selected) => (selected === item.id ? null : selected));
     setMessage(`${item.account_name} was removed from this week's outreach list.`);
+  }
+
+  async function confirmSecondRceSent(item: WeeklyOutreachItem) {
+    if (!window.confirm(`Confirm the second reconnect email to ${item.account_name} was sent?`)) {
+      return;
+    }
+    await updateRow(item, { status: "sent", rceSecondSent: true });
+    setMessage(`${item.account_name} is complete after the second reconnect email.`);
   }
 
   async function prepareE1s() {
@@ -896,6 +916,12 @@ export default function WeeklyOutreachPage() {
     setMessage("Weekly Outreach copied as CSV.");
   }
 
+  function downloadExcel() {
+    window.location.assign(
+      `/api/weekly-outreach/export?weekStart=${encodeURIComponent(weekStart)}`,
+    );
+  }
+
   return (
     <>
       <PageHeader
@@ -964,6 +990,9 @@ export default function WeeklyOutreachPage() {
               </Button>
               <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={pasting || saving || e1ToSourceCount === 0}>
                 Prepare E1 Sourcing Batch ({e1ToSourceCount})
+              </Button>
+              <Button className="w-full sm:w-auto" variant="secondary" onClick={downloadExcel} disabled={items.length === 0}>
+                Download Excel
               </Button>
               <Button className="w-full sm:w-auto" variant="secondary" onClick={copyCsv} disabled={items.length === 0}>
                 Copy CSV
@@ -1058,7 +1087,7 @@ export default function WeeklyOutreachPage() {
           ) : null}
 
           {items.map((item, index) => (
-            <div key={item.id} className="rounded-xl border border-line bg-white p-4 shadow-sm">
+            <div key={item.id} className={`rounded-xl border border-line p-4 shadow-sm ${sentRowTone(item)}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -1077,9 +1106,16 @@ export default function WeeklyOutreachPage() {
                 </div>
                 <select
                   value={item.status}
-                  onChange={(event) =>
-                    updateRow(item, { status: event.target.value as WeeklyOutreachStatus })
-                  }
+                  onChange={(event) => {
+                    const status = event.target.value as WeeklyOutreachStatus;
+                    updateRow(item, {
+                      status,
+                      rceSecondSent:
+                        item.outreach_type === "RCE" && status !== "sent"
+                          ? false
+                          : undefined,
+                    });
+                  }}
                   className="h-9 rounded-md border border-line bg-white px-2 text-xs"
                 >
                   {STATUSES.map((status) => (
@@ -1157,7 +1193,20 @@ export default function WeeklyOutreachPage() {
 
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {item.outreach_type === "RCE" ? (
-                  item.draft ? (
+                  item.status === "sent" ? (
+                    item.rce_second_sent ? (
+                      <div className="col-span-2 rounded-lg bg-emerald-200/60 px-3 py-2 text-center text-sm font-semibold text-emerald-900">
+                        Reconnect complete
+                      </div>
+                    ) : (
+                      <Button
+                        className="col-span-2 w-full"
+                        onClick={() => void confirmSecondRceSent(item)}
+                      >
+                        Confirm second email sent
+                      </Button>
+                    )
+                  ) : item.draft ? (
                     <Button className="col-span-2 w-full" onClick={() => openRceReview(item)}>
                       Review reconnect
                     </Button>
@@ -1238,8 +1287,8 @@ export default function WeeklyOutreachPage() {
                   <tr
                     key={item.id}
                     aria-selected={selectedRowId === item.id}
-                    className={`h-10 hover:bg-brand-soft/30 ${
-                      selectedRowId === item.id ? "bg-brand-soft/70" : ""
+                    className={`h-10 ${
+                      selectedRowId === item.id ? "bg-brand-soft/70" : sentRowTone(item)
                     }`}
                   >
                     <td className="border-b border-r border-line bg-surface-2 px-2 text-center text-ink-muted">
@@ -1312,11 +1361,16 @@ export default function WeeklyOutreachPage() {
                         ref={registerGridCell(index, 8)}
                         value={item.status}
                         onKeyDown={(event) => handleGridNavigation(event, index, 8)}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          const status = event.target.value as WeeklyOutreachStatus;
                           updateRow(item, {
-                            status: event.target.value as WeeklyOutreachStatus,
-                          })
-                        }
+                            status,
+                            rceSecondSent:
+                              item.outreach_type === "RCE" && status !== "sent"
+                                ? false
+                                : undefined,
+                          });
+                        }}
                         className="h-8 w-full border-0 bg-transparent px-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand"
                       >
                         {STATUSES.map((status) => (
@@ -1332,7 +1386,23 @@ export default function WeeklyOutreachPage() {
                       ) : null}
                     </td>
                     <td className="border-b border-r border-line p-0">
-                      {item.outreach_type === "RCE" && !item.draft ? (
+                      {item.outreach_type === "RCE" && item.status === "sent" ? (
+                        item.rce_second_sent ? (
+                          <span className="flex h-10 items-center px-2 font-semibold text-emerald-800">
+                            Complete
+                          </span>
+                        ) : (
+                          <button
+                            ref={registerGridCell(index, 9)}
+                            type="button"
+                            onKeyDown={(event) => handleGridNavigation(event, index, 9)}
+                            onClick={() => void confirmSecondRceSent(item)}
+                            className="h-10 w-full px-2 text-left font-semibold text-emerald-800 hover:bg-emerald-100"
+                          >
+                            Confirm 2nd sent
+                          </button>
+                        )
+                      ) : item.outreach_type === "RCE" && !item.draft ? (
                         <div className="flex h-10 items-center gap-2 px-2">
                           <input
                             ref={registerGridCell(index, 9)}
