@@ -152,6 +152,7 @@ export default function WeeklyOutreachPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [preparingRces, setPreparingRces] = useState<Set<string>>(new Set());
+  const [movingRows, setMovingRows] = useState<Set<string>>(new Set());
   const [reviewingRceId, setReviewingRceId] = useState<string | null>(null);
   const [reviewDraft, setReviewDraft] = useState("");
   const [reviewSaving, setReviewSaving] = useState(false);
@@ -694,6 +695,40 @@ export default function WeeklyOutreachPage() {
     setMessage(`${item.account_name} was removed from this week's outreach list.`);
   }
 
+  async function moveRowToNextWeek(item: WeeklyOutreachItem) {
+    if (movingRows.has(item.id)) return;
+    setMovingRows((previous) => new Set(previous).add(item.id));
+    setError(null);
+    try {
+      const res = await fetch("/api/weekly-outreach", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: item.id,
+          moveToNextWeekFrom: item.week_start,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not move row to next week");
+      setItems((previous) => previous.filter((row) => row.id !== item.id));
+      setSelectedRowId((selected) => (selected === item.id ? null : selected));
+      setMessage(
+        `${item.account_name} moved to ${weekLabel(data.movedToWeekStart)}. Its draft and prepared information were kept.`,
+      );
+    } catch (moveError) {
+      setError(
+        moveError instanceof Error ? moveError.message : "Could not move row to next week",
+      );
+      await load(true);
+    } finally {
+      setMovingRows((previous) => {
+        const next = new Set(previous);
+        next.delete(item.id);
+        return next;
+      });
+    }
+  }
+
   async function confirmSecondRceSent(item: WeeklyOutreachItem) {
     await updateRow(item, { status: "sent", rceSecondSent: true });
     setMessage(`${item.account_name} is complete after the second reconnect email.`);
@@ -1230,8 +1265,16 @@ export default function WeeklyOutreachPage() {
                 ) : null}
                 <button
                   type="button"
+                  onClick={() => void moveRowToNextWeek(item)}
+                  disabled={movingRows.has(item.id)}
+                  className="py-2 text-sm font-semibold text-brand disabled:opacity-50"
+                >
+                  {movingRows.has(item.id) ? "Moving…" : "Move to next week"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => removeRow(item)}
-                  className="col-span-2 py-2 text-sm font-medium text-danger"
+                  className="py-2 text-sm font-medium text-danger"
                 >
                   Remove from week
                 </button>
@@ -1261,7 +1304,7 @@ export default function WeeklyOutreachPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1500px] border-collapse text-xs">
+            <table className="w-full min-w-[1580px] border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-surface-3 text-left font-semibold text-ink-muted">
                 <tr>
                   <th className="w-10 border-b border-r border-line px-2 py-2 text-center">#</th>
@@ -1276,7 +1319,7 @@ export default function WeeklyOutreachPage() {
                   <th className="w-32 border-b border-r border-line px-2 py-2">Status</th>
                   <th className="w-36 border-b border-r border-line px-2 py-2">Draft RCE?</th>
                   <th className="min-w-52 border-b border-r border-line px-2 py-2">Trip / Notes</th>
-                  <th className="w-12 border-b border-line px-2 py-2" />
+                  <th className="w-32 border-b border-line px-2 py-2 text-center">Next week</th>
                 </tr>
               </thead>
               <tbody>
@@ -1459,11 +1502,12 @@ export default function WeeklyOutreachPage() {
                     <td className="border-b border-line px-2 text-center">
                       <button
                         type="button"
-                        onClick={() => removeRow(item)}
-                        className="text-base text-ink-muted hover:text-danger"
-                        aria-label={`Remove ${item.account_name}`}
+                        onClick={() => void moveRowToNextWeek(item)}
+                        disabled={movingRows.has(item.id)}
+                        className="whitespace-nowrap font-semibold text-brand hover:underline disabled:opacity-50"
+                        aria-label={`Move ${item.account_name} to next week`}
                       >
-                        ×
+                        {movingRows.has(item.id) ? "Moving…" : "Move →"}
                       </button>
                     </td>
                   </tr>

@@ -5,6 +5,7 @@ import {
   addAccountToWeeklyOutreach,
   addWeeklyOutreachBatch,
   currentWeekStart,
+  followingWeekStart,
   parseManualWeeklyEntry,
   readWeeklyOutreachSourceMetadata,
   resolveWeeklyAccountByName,
@@ -139,9 +140,42 @@ export async function PATCH(request: NextRequest) {
     groupName?: string | null;
     rceDraftEnabled?: boolean;
     rceSecondSent?: boolean;
+    moveToNextWeekFrom?: string;
   };
   const ids = body.ids ?? (body.id ? [body.id] : []);
   if (ids.length === 0) return NextResponse.json({ error: "Missing row id" }, { status: 400 });
+  if (body.moveToNextWeekFrom !== undefined) {
+    if (ids.length !== 1 || !/^\d{4}-\d{2}-\d{2}$/.test(body.moveToNextWeekFrom)) {
+      return NextResponse.json({ error: "Invalid week move request" }, { status: 400 });
+    }
+    const movedToWeekStart = followingWeekStart(body.moveToNextWeekFrom);
+    const { data, error } = await getSupabaseAdmin()
+      .from("weekly_outreach")
+      .update({
+        week_start: movedToWeekStart,
+        created_at: new Date().toISOString(),
+      })
+      .eq("id", ids[0])
+      .eq("week_start", body.moveToNextWeekFrom)
+      .select("*");
+    if (error?.code === "23505") {
+      return NextResponse.json(
+        { error: "This company is already in next week's outreach list." },
+        { status: 409 },
+      );
+    }
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!data?.[0]) {
+      return NextResponse.json(
+        { error: "This row has already moved or changed. Refresh and try again." },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({
+      item: withWeeklyOutreachClientMetadata(data[0]),
+      movedToWeekStart,
+    });
+  }
   const updates: Record<string, unknown> = {};
   if (body.status !== undefined) updates.status = body.status;
   if (body.notes !== undefined) updates.notes = body.notes;

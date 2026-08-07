@@ -1,4 +1,4 @@
-import { startOfWeek, format } from "date-fns";
+import { addDays, startOfWeek, format } from "date-fns";
 import { getSupabaseAdmin } from "./supabase";
 import { getValidCredentials } from "./token-manager";
 
@@ -139,6 +139,10 @@ function escapeSoql(value: string): string {
 
 export function currentWeekStart(date = new Date()): string {
   return format(startOfWeek(date, { weekStartsOn: 1 }), "yyyy-MM-dd");
+}
+
+export function followingWeekStart(weekStart: string): string {
+  return format(addDays(new Date(`${weekStart}T12:00:00`), 7), "yyyy-MM-dd");
 }
 
 async function accountFields(credentials: SfCredentials): Promise<Set<string>> {
