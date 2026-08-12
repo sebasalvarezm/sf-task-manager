@@ -940,6 +940,14 @@ async function askClaudeForAddress(
 ): Promise<string | null> {
   if (!text || text.length < 100) return null;
 
+  // Addresses are commonly in the contact/footer area, beyond the first few
+  // thousand characters. Keep the prompt compact but include both the start
+  // and end of the scrape so the legal office address is not missed.
+  const addressEvidence =
+    text.length <= 4000
+      ? text
+      : `${text.slice(0, 1500)}\n\n[CONTACT / FOOTER AREA]\n${text.slice(-2500)}`;
+
   const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
     max_tokens: 100,
@@ -959,7 +967,7 @@ Return ONLY the address/location as a single line — no preamble, no commentary
 If no location at all is present, return exactly: null
 
 Text:
-${text.slice(0, 4000)}`,
+${addressEvidence}`,
       },
     ],
   });

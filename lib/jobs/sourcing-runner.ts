@@ -31,7 +31,11 @@ import {
   buildPrepackagedEmail,
   type PrepackagedEmail,
 } from "@/lib/email-prepackage";
-import { findBusinessLocation, findBusinessDinnerRestaurants } from "@/lib/geocoding";
+import {
+  findBusinessLocation,
+  findBusinessDinnerRestaurants,
+  locationMatchesWebsiteCountry,
+} from "@/lib/geocoding";
 
 export type SourcingResult = {
   url: string;
@@ -467,6 +471,13 @@ export async function runFullSourcing(input: {
     ),
   ]);
   let addressInfo = websiteAddressInfo;
+  if (
+    addressInfo.address &&
+    !locationMatchesWebsiteCountry(addressInfo.address, normalized)
+  ) {
+    logs.push(`Rejected location that conflicts with the website's country: ${addressInfo.address}`);
+    addressInfo = { address: null, source: null, sourceUrl: null, confidence: "none" };
+  }
   if (!addressInfo.address && mapsLocation) {
     addressInfo = {
       address: mapsLocation.formattedAddress,
@@ -479,6 +490,13 @@ export async function runFullSourcing(input: {
   // change can never turn a formerly-resolvable company into a blank location.
   if (!addressInfo.address) {
     addressInfo = await extractAddress(anthropic, currentText, normalized, sourceCompanyName);
+    if (
+      addressInfo.address &&
+      !locationMatchesWebsiteCountry(addressInfo.address, normalized)
+    ) {
+      logs.push(`Rejected web-search location that conflicts with the website's country: ${addressInfo.address}`);
+      addressInfo = { address: null, source: null, sourceUrl: null, confidence: "none" };
+    }
   }
   let address = addressInfo.address;
   let addressSource = addressInfo.source;
@@ -518,7 +536,11 @@ export async function runFullSourcing(input: {
   // Address rescue: if address extraction failed but the restaurant search
   // located the company's city, keep that city as the location so the result
   // always shows at least "City, ST".
-  if (!address && restaurantResult.city) {
+  if (
+    !address &&
+    restaurantResult.city &&
+    locationMatchesWebsiteCountry(restaurantResult.city, normalized)
+  ) {
     address = restaurantResult.city;
     addressSource = "web search (restaurant lookup)";
     addressSourceUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(

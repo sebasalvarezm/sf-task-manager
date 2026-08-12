@@ -291,10 +291,10 @@ function SourcingPageContent() {
   }
 
   async function handleSubmit(
-    e: React.FormEvent,
+    e?: React.FormEvent,
     opts: { forceFresh?: boolean; urlOverride?: string } = {},
   ) {
-    e.preventDefault();
+    e?.preventDefault();
     const rawUrl = opts.urlOverride ?? url;
     if (!rawUrl.trim() || submitting) return;
     setSubmitting(true);
@@ -525,13 +525,16 @@ function SourcingPageContent() {
               variant="secondary"
               size="sm"
               loading={submitting}
-              onClick={(e) => {
+              onClick={() => {
                 const cachedUrl =
                   typeof selectedJob.input?.url === "string"
                     ? (selectedJob.input.url as string)
-                    : "";
-                if (!cachedUrl) return;
-                void handleSubmit(e as unknown as React.FormEvent, {
+                    : expandCompany ?? "";
+                if (!cachedUrl) {
+                  setSubmitError("Could not identify the company URL from this cached run.");
+                  return;
+                }
+                void handleSubmit(undefined, {
                   forceFresh: true,
                   urlOverride: cachedUrl,
                 });

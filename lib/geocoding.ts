@@ -34,6 +34,42 @@ export type GeocodeAccountResult = {
   addressSource: "billing" | "places";
 };
 
+const COUNTRY_TERMS_BY_CCTLD: Record<string, string[]> = {
+  no: ["norway", "norge"],
+  nl: ["netherlands", "nederland"],
+  uk: ["united kingdom", "england", "scotland", "wales", "northern ireland"],
+  ie: ["ireland"],
+  dk: ["denmark", "danmark"],
+  se: ["sweden", "sverige"],
+  fi: ["finland", "suomi"],
+  de: ["germany", "deutschland"],
+  fr: ["france"],
+  be: ["belgium", "belgique", "belgie", "belgië"],
+  ch: ["switzerland", "schweiz", "suisse", "svizzera"],
+  at: ["austria", "österreich"],
+  ca: ["canada"],
+  au: ["australia"],
+  nz: ["new zealand"],
+};
+
+/** Reject a location that contradicts a reliable country-code domain. */
+export function locationMatchesWebsiteCountry(
+  location: string,
+  website?: string | null,
+): boolean {
+  if (!website) return true;
+  try {
+    const parsed = new URL(website.startsWith("http") ? website : `https://${website}`);
+    const tld = parsed.hostname.toLowerCase().split(".").pop() ?? "";
+    const expectedTerms = COUNTRY_TERMS_BY_CCTLD[tld];
+    if (!expectedTerms) return true;
+    const normalizedLocation = location.toLowerCase();
+    return expectedTerms.some((term) => normalizedLocation.includes(term));
+  } catch {
+    return true;
+  }
+}
+
 // ── Geocode an address string ────────────────────────────────────────────────
 
 export async function geocodeAddress(address: string): Promise<GeoPoint | null> {
@@ -99,7 +135,10 @@ export async function findBusinessLocation(
 
   if (data.status !== "OK" || !data.results?.length) return null;
 
-  const r = data.results[0];
+  const r = data.results.find((candidate) =>
+    locationMatchesWebsiteCountry(candidate.formatted_address, website),
+  );
+  if (!r) return null;
   return {
     lat: r.geometry.location.lat,
     lng: r.geometry.location.lng,
