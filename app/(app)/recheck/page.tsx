@@ -28,6 +28,59 @@ type RecheckRow = {
   readyToRecontact: boolean;
 };
 
+type SavedRecheckRun = {
+  version: 1;
+  savedAt: string;
+  text: string;
+  rows: RecheckRow[];
+  thresholdDays: number;
+  sortMode: "input" | "oldest" | "newest";
+  sentAccountIds: string[];
+};
+
+const LAST_RECHECK_RUN_KEY = "salesforce-agent:last-recontact-run:v1";
+
+function readSavedRun(): SavedRecheckRun | null {
+  try {
+    const raw = window.localStorage.getItem(LAST_RECHECK_RUN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SavedRecheckRun>;
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.savedAt !== "string" ||
+      typeof parsed.text !== "string" ||
+      !Array.isArray(parsed.rows)
+    ) {
+      return null;
+    }
+    return {
+      version: 1,
+      savedAt: parsed.savedAt,
+      text: parsed.text,
+      rows: parsed.rows as RecheckRow[],
+      thresholdDays:
+        typeof parsed.thresholdDays === "number" ? parsed.thresholdDays : 60,
+      sortMode:
+        parsed.sortMode === "oldest" || parsed.sortMode === "newest"
+          ? parsed.sortMode
+          : "input",
+      sentAccountIds: Array.isArray(parsed.sentAccountIds)
+        ? parsed.sentAccountIds.filter((id): id is string => typeof id === "string")
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveRun(run: SavedRecheckRun) {
+  try {
+    window.localStorage.setItem(LAST_RECHECK_RUN_KEY, JSON.stringify(run));
+  } catch {
+    // The results still work for this visit if browser storage is unavailable.
+  }
+}
+
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
   try {
@@ -53,6 +106,8 @@ export default function RecheckPage() {
   const [sortMode, setSortMode] = useState<"input" | "oldest" | "newest">("input");
   const [sentAccountIds, setSentAccountIds] = useState<Set<string>>(new Set());
   const [resultMessage, setResultMessage] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [savedInputText, setSavedInputText] = useState("");
 
   useEffect(() => {
     fetch("/api/salesforce/status")
@@ -60,6 +115,31 @@ export default function RecheckPage() {
       .then((d) => setSfConnected(Boolean(d.connected)))
       .catch(() => setSfConnected(false));
   }, []);
+
+  useEffect(() => {
+    const saved = readSavedRun();
+    if (!saved) return;
+    setText(saved.text);
+    setRows(saved.rows);
+    setThresholdDays(saved.thresholdDays);
+    setSortMode(saved.sortMode);
+    setSentAccountIds(new Set(saved.sentAccountIds));
+    setSavedAt(saved.savedAt);
+    setSavedInputText(saved.text);
+  }, []);
+
+  useEffect(() => {
+    if (!rows || !savedAt || !savedInputText) return;
+    saveRun({
+      version: 1,
+      savedAt,
+      text: savedInputText,
+      rows,
+      thresholdDays,
+      sortMode,
+      sentAccountIds: [...sentAccountIds],
+    });
+  }, [rows, savedAt, savedInputText, thresholdDays, sortMode, sentAccountIds]);
 
   // Parsed preview of how many names will be checked (trim + drop blanks + dedupe).
   const parsedNames = useMemo(() => {
@@ -121,8 +201,24 @@ export default function RecheckPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Check failed");
-      setRows(data.rows as RecheckRow[]);
-      if (typeof data.thresholdDays === "number") setThresholdDays(data.thresholdDays);
+      const nextRows = data.rows as RecheckRow[];
+      const nextThreshold =
+        typeof data.thresholdDays === "number" ? data.thresholdDays : thresholdDays;
+      const nextSavedAt = new Date().toISOString();
+      setRows(nextRows);
+      setThresholdDays(nextThreshold);
+      setSentAccountIds(new Set());
+      setSavedAt(nextSavedAt);
+      setSavedInputText(parsedNames.join("\n"));
+      saveRun({
+        version: 1,
+        savedAt: nextSavedAt,
+        text: parsedNames.join("\n"),
+        rows: nextRows,
+        thresholdDays: nextThreshold,
+        sortMode,
+        sentAccountIds: [],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error — try again");
     } finally {
@@ -252,6 +348,16 @@ export default function RecheckPage() {
                       <span className="text-ink-muted">
                         of {rows.length} checked
                       </span>
+                      {savedAt ? (
+                        <span className="text-xs text-ink-muted">
+                          · saved {new Date(savedAt).toLocaleString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button variant="secondary" size="sm" onClick={copyResults}>Copy results</Button>
