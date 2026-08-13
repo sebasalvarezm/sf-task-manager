@@ -814,7 +814,21 @@ export async function extractAddress(
   companyName?: string,
   options?: { allowWebSearch?: boolean },
 ): Promise<AddressResolution> {
-  // Attempt 1: Extract from already-scraped text
+  // Attempt 1: Prefer an explicit postal address already present in the
+  // website scrape. This avoids losing a clear contact/footer address to an
+  // AI extraction miss (for example: "NO-4460 Moi, Norway").
+  const explicitAddress = extractExplicitAddressFromText(currentText);
+  if (explicitAddress) {
+    return {
+      address: explicitAddress,
+      source: "company website",
+      sourceUrl: url.startsWith("http") ? url : `https://${url}`,
+      confidence: addressConfidence(explicitAddress),
+    };
+  }
+
+  // Attempt 2: Extract from already-scraped text with AI when no explicit
+  // postal/contact line could be identified deterministically.
   const fromText = await askClaudeForAddress(client, currentText);
   if (fromText) {
     return {
@@ -829,7 +843,7 @@ export async function extractAddress(
     return { address: null, source: null, sourceUrl: null, confidence: "none" };
   }
 
-  // Attempt 2: Use Claude web search to find the headquarters address
+  // Attempt 3: Use Claude web search to find the headquarters address
   try {
     const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
     const domain = parsed.hostname.replace("www.", "");
@@ -879,7 +893,7 @@ If you cannot find any location for this specific company, return exactly: null`
     // Non-critical
   }
 
-  // Attempt 3: Web search by COMPANY NAME (city-level is acceptable).
+  // Attempt 4: Web search by COMPANY NAME (city-level is acceptable).
   // This is the fallback when the site has no address and the domain search
   // came up empty — e.g. "<name> software headquarters address".
   const name = companyName || quickCompanyName(url);
@@ -932,6 +946,55 @@ If you cannot find any location for this specific company, return exactly: null`
   }
 
   return { address: null, source: null, sourceUrl: null, confidence: "none" };
+}
+
+/**
+ * Pull an address directly from contact/footer text before asking AI. Website
+ * scrapes commonly expose a full postal line next to Office, Headquarters, or
+ * Contact; country-prefixed postal codes are particularly strong evidence.
+ */
+export function extractExplicitAddressFromText(text: string): string | null {
+  if (!text) return null;
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .replace(/^\s{0,3}(?:#{1,6}|[-*•])\s*/, "")
+        .replace(/^\s*>\s*/, "")
+        .trim(),
+    )
+    .filter(Boolean);
+
+  const looksPostal = (line: string) => {
+    if (/https?:\/\/|@|\b(?:phone|tel|fax|e-?mail)\b/i.test(line)) return false;
+    if (!/\d/.test(line) || !/,/.test(line)) return false;
+    return (
+      /\b[A-Z]{2}[-\s]?\d{4,6}\b/i.test(line) ||
+      /\b\d{4,6}\s+[A-Za-zÀ-ÖØ-öø-ÿ][^,]*,\s*[A-Za-zÀ-ÖØ-öø-ÿ ]+$/i.test(line) ||
+      /\b(?:Norway|Norge|Netherlands|Nederland|United Kingdom|Canada|Australia|Germany|France|Belgium|Sweden|Denmark|Finland)\b/i.test(line)
+    );
+  };
+
+  // Strongest signal first: an explicit international postal/country line.
+  for (const line of lines) {
+    if (looksPostal(line)) {
+      const validated = validateAddress(line);
+      if (validated) return validated;
+    }
+  }
+
+  // Then inspect the lines immediately following a contact-location heading.
+  for (let index = 0; index < lines.length; index++) {
+    if (!/^(?:office|headquarters|hq|main office|address|contact(?: us)?)\s*:?​?$/i.test(lines[index])) {
+      continue;
+    }
+    for (const candidate of lines.slice(index + 1, index + 5)) {
+      if (!looksPostal(candidate)) continue;
+      const validated = validateAddress(candidate);
+      if (validated) return validated;
+    }
+  }
+  return null;
 }
 
 async function askClaudeForAddress(

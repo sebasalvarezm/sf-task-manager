@@ -180,7 +180,9 @@ function parseCity(address: string): string | null {
   for (let i = parts.length - 1; i >= 0; i--) {
     // Strip a postal code fused to the city in one segment, e.g. the Dutch
     // "3844 DG Harderwijk" → "Harderwijk".
-    const p = parts[i].replace(/^\d{3,}\s*[A-Za-z]{0,3}\s+/, "").trim();
+    const p = parts[i]
+      .replace(/^(?:[A-Z]{2}[-\s]?)?\d{3,6}\s*[A-Za-z]{0,3}\s+/i, "")
+      .trim();
     if (!p) continue;
     if (COUNTRY_NAMES.has(p.toLowerCase())) continue;
     if (/\d/.test(p)) continue; // postal / zip / "ST 30097"
