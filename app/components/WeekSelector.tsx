@@ -84,14 +84,14 @@ export default function WeekSelector({ selected, onChange, completedWeeks }: Pro
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
       <label className="text-sm font-medium text-navy whitespace-nowrap">
         Select week:
       </label>
       <select
         value={currentValue}
         onChange={handleChange}
-        className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-orange min-w-[260px]"
+        className="min-h-11 w-full min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange sm:min-h-0 sm:w-auto sm:min-w-[260px]"
       >
         {weeks.map((w) => {
           const key = `${w.start}|${w.end}`;

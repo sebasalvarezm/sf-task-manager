@@ -44,7 +44,7 @@ export function MobileShell({ children }: { children: ReactNode }) {
         />
       )}
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="sticky top-0 z-20 flex items-center gap-2 bg-navy text-ink-inverse px-3 h-14 border-b border-navy-light md:hidden">
           <button
             type="button"

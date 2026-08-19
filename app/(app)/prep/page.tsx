@@ -705,15 +705,15 @@ function PrepPageContent() {
         {msReady && (
           <>
             {/* Controls bar */}
-            <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-              <div>
+            <div className="mb-5 flex flex-col items-stretch gap-4 md:mb-6 md:flex-row md:items-center md:justify-between">
+              <div className="hidden md:block">
                 <h2 className="text-xl font-semibold text-navy">Call Prep</h2>
                 <p className="text-sm text-gray-400 mt-0.5">
                   Prepare one-pager briefings for your upcoming meetings
                 </p>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex w-full flex-col gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm md:w-auto md:flex-row md:items-center md:gap-4 md:rounded-none md:border-0 md:bg-transparent md:p-0 md:shadow-none">
                 <WeekSelector
                   selected={selectedWeek}
                   onChange={(week) => {
@@ -723,14 +723,14 @@ function PrepPageContent() {
                   }}
                 />
                 {hasLoaded && lastLoadedAt && (
-                  <span className="text-xs text-gray-400">
+                  <span className="text-center text-xs text-gray-400 md:text-left">
                     {formatLoadedAt(lastLoadedAt)}
                   </span>
                 )}
                 <button
                   onClick={handleLoad}
                   disabled={loading}
-                  className="bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg transition-colors text-sm"
+                  className="min-h-11 w-full rounded-lg bg-brand-orange px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-orange-hover disabled:opacity-50 md:min-h-0 md:w-auto"
                 >
                   {loading
                     ? "Loading..."
@@ -777,9 +777,9 @@ function PrepPageContent() {
                     </p>
                   </div>
                 ) : (
-                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead>
+                  <div className="md:overflow-hidden md:rounded-xl md:border md:border-gray-200 md:bg-white md:shadow-sm">
+                    <table className="block w-full text-sm md:table">
+                      <thead className="hidden md:table-header-group">
                         <tr className="bg-navy text-white text-xs font-semibold uppercase tracking-wider">
                           <th className="px-4 py-3 text-left w-10">#</th>
                           <th className="px-4 py-3 text-left">Meeting</th>
@@ -791,7 +791,7 @@ function PrepPageContent() {
                           </th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody className="block md:table-row-group">
                         {meetings.map((meeting, idx) => (
                           <MeetingRow
                             key={meeting.eventId}
@@ -919,8 +919,6 @@ function MeetingRow({
   // Manual pick wins over the auto-detected match — consistent with how
   // handleGenerate resolves which account to research.
   const effectiveMatch = manualMatch ?? meeting.match;
-  const accountName =
-    effectiveMatch?.accountName || meeting.externalDomains[0] || "Unknown";
   // Show the search UI when there's nothing matched yet, OR the user clicked
   // "Change" to re-pick an already-matched account.
   const showSearch = !effectiveMatch || isEditing;
@@ -928,43 +926,70 @@ function MeetingRow({
   return (
     <>
       {/* Main row */}
-      <tr className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
-        <td className="px-4 py-3 text-gray-400 font-mono text-xs">
+      <tr
+        className={`block overflow-hidden border border-gray-200 bg-white shadow-sm transition-colors hover:bg-gray-50 md:table-row md:rounded-none md:border-x-0 md:border-b-0 md:border-t md:border-gray-100 md:shadow-none ${
+          expanded ? "rounded-t-xl" : "mb-3 rounded-xl"
+        }`}
+      >
+        <td className="hidden px-4 py-3 font-mono text-xs text-gray-400 md:table-cell">
           {index + 1}
         </td>
-        <td className="px-4 py-3">
-          <div className="font-medium text-navy">{meeting.subject}</div>
+        <td className="block px-4 pb-3 pt-4 md:table-cell md:py-3">
+          <div className="text-base font-semibold leading-snug text-navy md:text-sm md:font-medium">
+            {meeting.subject}
+          </div>
           {meeting.startTime && (
-            <div className="text-xs text-gray-400 mt-0.5">
+            <div className="mt-0.5 hidden text-xs text-gray-400 md:block">
               {meeting.startTime}
             </div>
           )}
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500 md:hidden">
+            <span className="rounded-full bg-gray-100 px-2.5 py-1">
+              {meeting.meetingDate}
+            </span>
+            {meeting.startTime && (
+              <span className="rounded-full bg-gray-100 px-2.5 py-1">
+                {meeting.startTime}
+              </span>
+            )}
+          </div>
         </td>
-        <td className="px-4 py-3 text-gray-600">{meeting.meetingDate}</td>
-        <td className="px-4 py-3">
+        <td className="hidden px-4 py-3 text-gray-600 md:table-cell">{meeting.meetingDate}</td>
+        <td className="block border-t border-gray-100 px-4 py-3 md:table-cell md:border-0">
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400 md:hidden">
+            Salesforce account
+          </div>
           {!showSearch && effectiveMatch ? (
             /* Matched account (auto or manually linked) */
-            <div>
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium text-navy">
                 {effectiveMatch.accountName}
               </span>
               {manualMatch && (
-                <span className="ml-2 inline-flex items-center gap-1 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
+                <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-600">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
                   Manually linked
                 </span>
               )}
               <button
                 onClick={() => onStartEdit(effectiveMatch.accountName)}
-                className="ml-2 text-xs text-gray-400 hover:text-brand-orange underline underline-offset-2 transition-colors"
+                className="text-xs text-gray-400 underline underline-offset-2 transition-colors hover:text-brand-orange"
               >
                 Change
               </button>
+              <a
+                href={effectiveMatch.accountUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto rounded-md border border-gray-200 px-2.5 py-1 text-xs font-medium text-blue-600 hover:border-blue-300 hover:text-blue-800 md:hidden"
+              >
+                Open SF
+              </a>
             </div>
           ) : (
             /* No match yet, or user is re-picking — show search UI */
             <div className="space-y-1">
-              <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center gap-2">
                 <input
                   type="text"
                   value={searchInput}
@@ -977,19 +1002,19 @@ function MeetingRow({
                     }
                   }}
                   autoFocus={isEditing}
-                  className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                  className="min-h-11 w-full min-w-0 rounded border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange md:min-h-0 md:flex-1 md:px-2 md:py-1"
                 />
                 <button
                   onClick={onSearch}
                   disabled={isSearchLoading}
-                  className="shrink-0 bg-navy hover:bg-navy/80 disabled:opacity-50 text-white text-xs font-medium px-2 py-1 rounded transition-colors"
+                  className="min-h-10 flex-1 rounded bg-navy px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-navy/80 disabled:opacity-50 md:min-h-0 md:flex-none md:px-2 md:py-1"
                 >
                   {isSearchLoading ? "..." : "Search"}
                 </button>
                 {isEditing && effectiveMatch && (
                   <button
                     onClick={onCancelEdit}
-                    className="shrink-0 text-xs text-gray-400 hover:text-red-500 underline underline-offset-2 transition-colors"
+                    className="min-h-10 flex-1 text-xs text-gray-400 underline underline-offset-2 transition-colors hover:text-red-500 md:min-h-0 md:flex-none"
                   >
                     Cancel
                   </button>
@@ -1021,7 +1046,7 @@ function MeetingRow({
             </div>
           )}
         </td>
-        <td className="px-4 py-3">
+        <td className="hidden px-4 py-3 md:table-cell">
           {effectiveMatch ? (
             <a
               href={effectiveMatch.accountUrl}
@@ -1035,13 +1060,16 @@ function MeetingRow({
             <span className="text-gray-300 text-xs">—</span>
           )}
         </td>
-        <td className="px-4 py-3">
-          <div className="flex items-center justify-center gap-2">
+        <td className="block border-t border-gray-100 px-4 py-3 md:table-cell md:border-0">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400 md:hidden">
+            Briefing
+          </div>
+          <div className="flex w-full flex-col gap-2 md:flex-row md:items-center md:justify-center">
             <select
               value={meeting.prepMode}
               onChange={(e) => onModeChange(e.target.value as "first_call" | "reconnect")}
               disabled={meeting.generating}
-              className="rounded border border-gray-200 bg-white px-2 py-1.5 text-xs text-navy"
+              className="min-h-11 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-navy md:min-h-0 md:w-auto md:rounded md:px-2 md:py-1.5 md:text-xs"
               aria-label="Briefing mode"
             >
               <option value="first_call">First Call</option>
@@ -1051,7 +1079,7 @@ function MeetingRow({
             {!hasOnePager && !meeting.generating && (
               <button
                 onClick={onGenerate}
-                className="bg-brand-orange hover:bg-brand-orange-hover text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors"
+                className="min-h-11 w-full rounded-lg bg-brand-orange px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-orange-hover md:min-h-0 md:w-auto md:px-3 md:py-1.5 md:text-xs"
               >
                 Generate
               </button>
@@ -1059,7 +1087,7 @@ function MeetingRow({
 
             {/* Generating spinner + Cancel link */}
             {meeting.generating && (
-              <div className="flex items-center gap-2 text-xs text-gray-500">
+              <div className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-gray-50 px-3 text-xs text-gray-500 md:min-h-0 md:w-auto md:bg-transparent md:px-0">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-brand-orange" />
                 Generating...
                 <button
@@ -1073,13 +1101,13 @@ function MeetingRow({
 
             {/* Error */}
             {meeting.generateError && (
-              <div className="flex items-center gap-2">
+              <div className="flex w-full flex-col items-stretch gap-2 md:w-auto md:flex-row md:items-center">
                 <span className="text-xs text-red-500">
                   {meeting.generateError}
                 </span>
                 <button
                   onClick={onGenerate}
-                  className="text-xs text-brand-orange hover:underline"
+                  className="min-h-10 rounded-lg border border-brand-orange/30 px-3 text-xs font-semibold text-brand-orange hover:bg-orange-50 md:min-h-0 md:border-0 md:px-0 md:hover:bg-transparent md:hover:underline"
                 >
                   Retry
                 </button>
@@ -1091,21 +1119,22 @@ function MeetingRow({
               <>
                 <button
                   onClick={onGenerate}
-                  className="text-xs text-gray-400 hover:text-brand-orange transition-colors"
+                  className="min-h-10 w-full rounded-lg border border-gray-200 px-3 text-xs font-medium text-gray-500 transition-colors hover:border-brand-orange hover:text-brand-orange md:min-h-0 md:w-auto md:border-0 md:px-0 md:text-gray-400"
                   title="Regenerate one-pager"
                 >
-                  ↻
+                  <span className="md:hidden">Regenerate</span>
+                  <span className="hidden md:inline">↻</span>
                 </button>
                 <button
                   onClick={onToggleExpand}
-                  className="text-xs font-medium text-navy hover:text-brand-orange transition-colors px-2 py-1.5 rounded border border-gray-200 hover:border-brand-orange"
+                  className="min-h-10 w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-navy transition-colors hover:border-brand-orange hover:text-brand-orange md:min-h-0 md:w-auto md:px-2 md:py-1.5"
                 >
                   {expanded ? "Hide" : "View"}
                 </button>
                 <button
                   onClick={onDownload}
                   disabled={meeting.downloading}
-                  className="bg-navy hover:bg-navy-dark disabled:opacity-50 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
+                  className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-navy-dark disabled:opacity-50 md:min-h-0 md:w-auto md:py-1.5"
                 >
                   {meeting.downloading ? (
                     <>
@@ -1139,8 +1168,11 @@ function MeetingRow({
 
       {/* Expanded preview row */}
       {expanded && meeting.onePager && (
-        <tr>
-          <td colSpan={6} className="px-4 py-6 bg-gray-50 border-t border-gray-100">
+        <tr className="mb-3 block md:table-row md:mb-0">
+          <td
+            colSpan={6}
+            className="block rounded-b-xl border border-t-0 border-gray-200 bg-gray-50 px-4 py-5 md:table-cell md:rounded-none md:border-x-0 md:border-b-0 md:border-t md:border-gray-100 md:py-6"
+          >
             <div className="max-w-3xl mx-auto">
               <h3 className="text-lg font-semibold text-navy mb-4">
                 {meeting.onePager.companyName}
