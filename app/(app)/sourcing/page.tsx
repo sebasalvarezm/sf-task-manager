@@ -39,7 +39,10 @@ type WaybackStatus =
   | "timeout"
   | "http_error"
   | "network_error"
-  | "fallback_used";
+  | "fallback_used"
+  | "snapshot_timeout"
+  | "snapshot_http_error"
+  | "snapshot_network_error";
 
 type SourcingResult = {
   url: string;
@@ -145,6 +148,12 @@ function waybackEmptyMessage(
     case "http_error":
     case "network_error":
       return "Wayback Machine is currently unreachable. Retry later.";
+    case "snapshot_timeout":
+      return "Wayback found archived snapshots, but their pages timed out after automatic retries. Retry later.";
+    case "snapshot_http_error":
+      return "Wayback found archived snapshots, but Archive.org rejected their page downloads after automatic retries. Retry later.";
+    case "snapshot_network_error":
+      return "Wayback found archived snapshots, but their pages could not be downloaded after automatic retries. Retry later.";
     case "ok":
       return `Wayback returned snapshots for ${wbLabel}, but none passed validity checks (e.g. parked page or prior domain owner).`;
     default:

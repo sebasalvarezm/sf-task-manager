@@ -24,6 +24,7 @@ import {
   researchCompanyAnchors,
   findGroupFileName,
   type WaybackStatus,
+  type WaybackSnapshotFailure,
   type CompanyAnchor,
   type GroupMatch,
 } from "@/lib/scout";
@@ -105,6 +106,15 @@ function dedup(items: string[]): string[] {
     }
   }
   return result;
+}
+
+function snapshotFailureStatus(
+  failure: WaybackSnapshotFailure | null,
+): WaybackStatus | null {
+  if (failure === "timeout") return "snapshot_timeout";
+  if (failure === "http_error") return "snapshot_http_error";
+  if (failure === "network_error") return "snapshot_network_error";
+  return null;
 }
 
 async function identifyCompetitors(
@@ -295,11 +305,13 @@ export async function runFullSourcing(input: {
   }
 
   logs.push(`Fetching Wayback Machine snapshots from ${wbLabel}...`);
-  const { candidates, status: waybackStatus } = await getWaybackCandidates(
+  const waybackLookup = await getWaybackCandidates(
     normalized,
     wbFrom,
     wbTo,
   );
+  const { candidates } = waybackLookup;
+  let waybackStatus = waybackLookup.status;
 
   if (waybackStatus === "fallback_used") {
     logs.push(
@@ -328,21 +340,49 @@ export async function runFullSourcing(input: {
       .toLowerCase();
     const domainOnly = parsed.hostname.replace("www.", "");
 
-    const fetchedSnapshots = await Promise.all(
-      candidates.map(async (candidate) => ({
-        candidate,
-        result: await fetchWaybackSnapshot(candidate.url, domainStem),
-      })),
-    );
-    for (const { candidate, result } of fetchedSnapshots) {
+    const validSnapshots: Array<{
+      candidate: (typeof candidates)[number];
+      result: Awaited<ReturnType<typeof fetchWaybackSnapshot>>;
+    }> = [];
+    let consecutiveTransportFailures = 0;
+    let snapshotPlaybackAvailable = true;
+
+    // Archive.org rejects request bursts. Fetch one snapshot at a time and
+    // stop as soon as the three pages used by the analysis are available.
+    for (const candidate of candidates) {
+      if (validSnapshots.length >= 3) break;
+      const result = await fetchWaybackSnapshot(candidate.url, domainStem);
       if (result.skipReason) {
         logs.push(`Skipping ${candidate.timestamp.slice(0, 4)} snapshot — ${result.skipReason}.`);
       }
+
+      const transportStatus = snapshotFailureStatus(result.failureType);
+      if (transportStatus) {
+        consecutiveTransportFailures++;
+        waybackStatus = transportStatus;
+        // Each snapshot has already been retried three times. Allow a few bad
+        // years because Wayback commonly serves an isolated 503 and then
+        // recovers, but stop after a sustained block rather than hammering it.
+        if (consecutiveTransportFailures >= 4) {
+          snapshotPlaybackAvailable = false;
+          logs.push(
+            "Stopped archived-page downloads after repeated Wayback transport failures; snapshot records exist, but their pages could not be retrieved.",
+          );
+          break;
+        }
+        continue;
+      }
+
+      consecutiveTransportFailures = 0;
+      if (result.text && !result.skipReason) {
+        validSnapshots.push({ candidate, result });
+      }
     }
-    const validSnapshots = fetchedSnapshots
-      .filter((x) => Boolean(x.result.text) && !x.result.skipReason)
-      .slice(0, 3);
+
     if (validSnapshots.length > 0) {
+      // Intermittent playback failures were recovered; retain the successful
+      // lookup status instead of presenting the run as a Wayback outage.
+      waybackStatus = waybackLookup.status;
       archiveUrl = validSnapshots[0].candidate.url;
       archiveTimestamp = validSnapshots[0].candidate.timestamp;
     }
@@ -355,7 +395,9 @@ export async function runFullSourcing(input: {
     );
     snapshotProducts.forEach((ps) => allOldProducts.push(...ps));
 
-    // Probe interior product/solution/services pages
+    // Probe interior product/solution/services pages only when snapshot
+    // playback is healthy. If it is blocked, extra CDX/playback calls make the
+    // throttling worse and cannot improve the result.
     const interiorKeywords = [
       "product",
       "solution",
@@ -364,7 +406,7 @@ export async function runFullSourcing(input: {
       "software",
     ];
     let interiorChecked = 0;
-    for (const keyword of interiorKeywords) {
+    for (const keyword of snapshotPlaybackAvailable ? interiorKeywords : []) {
       if (interiorChecked >= 3) break;
       const ics = await getInteriorCandidates(
         domainOnly,
@@ -391,7 +433,7 @@ export async function runFullSourcing(input: {
     }
 
     // Fallback: news/press/blog
-    if (allOldProducts.length < 3 && archiveUrl) {
+    if (snapshotPlaybackAvailable && allOldProducts.length < 3 && archiveUrl) {
       const newsKeywords = [
         "news",
         "press",

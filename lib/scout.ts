@@ -45,6 +45,123 @@ const WAYBACK_HEADERS: Record<string, string> = {
   Accept: "application/json",
 };
 
+const WAYBACK_SNAPSHOT_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml",
+};
+
+// Archive.org is sensitive to request bursts. Keep all Wayback traffic in a
+// worker on one paced queue, including CDX lookups and snapshot playback.
+const WAYBACK_MIN_REQUEST_GAP_MS = 400;
+const WAYBACK_MAX_ATTEMPTS = 3;
+const WAYBACK_RETRY_BASE_MS = 750;
+const WAYBACK_RETRYABLE_STATUSES = new Set([
+  408, 425, 429, 498, 500, 502, 503, 504,
+]);
+
+type WaybackRequestFailure = "timeout" | "http_error" | "network_error";
+
+type WaybackTextResponse =
+  | { ok: true; body: string; status: number; attempts: number }
+  | {
+      ok: false;
+      failure: WaybackRequestFailure;
+      status: number | null;
+      attempts: number;
+    };
+
+let waybackRequestQueue: Promise<void> = Promise.resolve();
+let waybackNextRequestAt = 0;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function enqueueWaybackRequest<T>(request: () => Promise<T>): Promise<T> {
+  // Pace request starts without holding the queue for the entire network
+  // response. Bulk sourcing can therefore make limited forward progress (at
+  // most one in-flight request per company) without recreating the old burst.
+  const ready = waybackRequestQueue.then(async () => {
+    const remaining = waybackNextRequestAt - Date.now();
+    if (remaining > 0) await wait(remaining);
+    waybackNextRequestAt = Date.now() + WAYBACK_MIN_REQUEST_GAP_MS;
+  });
+  waybackRequestQueue = ready.then(
+    () => undefined,
+    () => undefined,
+  );
+  return ready.then(request);
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "TimeoutError" || error.name === "AbortError")
+  );
+}
+
+async function fetchWaybackText(
+  url: string,
+  options: {
+    timeoutMs: number;
+    headers?: Record<string, string>;
+    maxAttempts?: number;
+  },
+): Promise<WaybackTextResponse> {
+  const maxAttempts = options.maxAttempts ?? WAYBACK_MAX_ATTEMPTS;
+  let lastFailure: WaybackTextResponse = {
+    ok: false,
+    failure: "network_error",
+    status: null,
+    attempts: 0,
+  };
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await enqueueWaybackRequest(async (): Promise<WaybackTextResponse> => {
+      try {
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(options.timeoutMs),
+          headers: options.headers ?? WAYBACK_HEADERS,
+          redirect: "follow",
+        });
+        const body = await response.text();
+        if (response.ok) {
+          return { ok: true, body, status: response.status, attempts: attempt };
+        }
+        return {
+          ok: false,
+          failure: "http_error",
+          status: response.status,
+          attempts: attempt,
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          failure: isTimeoutError(error) ? "timeout" : "network_error",
+          status: null,
+          attempts: attempt,
+        };
+      }
+    });
+
+    if (result.ok) return result;
+    lastFailure = result;
+
+    const retryable =
+      result.failure !== "http_error" ||
+      (result.status !== null && WAYBACK_RETRYABLE_STATUSES.has(result.status));
+    if (!retryable || attempt === maxAttempts) break;
+
+    const backoff =
+      WAYBACK_RETRY_BASE_MS * 2 ** (attempt - 1) +
+      Math.floor(Math.random() * 250);
+    await wait(backoff);
+  }
+
+  return lastFailure;
+}
+
 /** Sub-pages to crawl after the homepage for richer product coverage */
 const CRAWL_PATHS = [
   "/about",
@@ -126,18 +243,27 @@ async function fetchRawText(
   url: string,
   timeoutMs = 20000,
   maxChars = 8000
-): Promise<string | null> {
+): Promise<{
+  text: string | null;
+  failure: WaybackRequestFailure | null;
+  status: number | null;
+  attempts: number;
+}> {
+  const fetched = await fetchWaybackText(url, {
+    timeoutMs,
+    headers: WAYBACK_SNAPSHOT_HEADERS,
+  });
+  if (!fetched.ok) {
+    return {
+      text: null,
+      failure: fetched.failure,
+      status: fetched.status,
+      attempts: fetched.attempts,
+    };
+  }
+
   try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
-      redirect: "follow",
-    });
-    if (!res.ok) return null;
-    let html = await res.text();
+    let html = fetched.body;
     // Remove Wayback Machine toolbar (injected into every archived page)
     // Marked by HTML comments or specific div IDs
     html = html.replace(
@@ -172,9 +298,19 @@ async function fetchRawText(
       .replace(/\s+/g, " ")
       .trim()
       .replace(/[^\x20-\x7E\xA0-\xFF]/g, "");
-    return text.slice(0, maxChars) || null;
+    return {
+      text: text.slice(0, maxChars) || null,
+      failure: null,
+      status: fetched.status,
+      attempts: fetched.attempts,
+    };
   } catch {
-    return null;
+    return {
+      text: null,
+      failure: "network_error",
+      status: fetched.status,
+      attempts: fetched.attempts,
+    };
   }
 }
 
@@ -425,11 +561,12 @@ export async function getEarliestSnapshotYear(
       `?url=${domain}&output=json&limit=1` +
       `&filter=statuscode:200&fl=timestamp`;
 
-    const res = await fetch(cdxUrl, {
+    const response = await fetchWaybackText(cdxUrl, {
       headers: WAYBACK_HEADERS,
-      signal: AbortSignal.timeout(20000),
+      timeoutMs: 20000,
     });
-    const data = await res.json();
+    if (!response.ok) return null;
+    const data = JSON.parse(response.body);
 
     if (data.length < 2) return null;
     const timestamp = data[1][0];
@@ -503,7 +640,10 @@ export type WaybackStatus =
   | "timeout"
   | "http_error"
   | "network_error"
-  | "fallback_used";
+  | "fallback_used"
+  | "snapshot_timeout"
+  | "snapshot_http_error"
+  | "snapshot_network_error";
 
 export type WaybackLookupResult = {
   candidates: WaybackCandidate[];
@@ -538,14 +678,14 @@ export async function getWaybackCandidates(
       `&limit=15&filter=statuscode:200` +
       `&collapse=timestamp:4&fl=timestamp,original`;
 
-    const res = await fetch(cdxUrl, {
+    const response = await fetchWaybackText(cdxUrl, {
       headers: WAYBACK_HEADERS,
-      signal: AbortSignal.timeout(30000),
+      timeoutMs: 30000,
     });
-    if (!res.ok) {
-      primaryStatus = "http_error";
+    if (!response.ok) {
+      primaryStatus = response.failure;
     } else {
-      const data = await res.json();
+      const data = JSON.parse(response.body);
       if (data.length < 2) {
         primaryStatus = "empty";
       } else {
@@ -592,15 +732,15 @@ export async function getWaybackFallbackSnapshot(
       url: domain,
       timestamp: String(targetYear),
     });
-    const res = await fetch(
+    const response = await fetchWaybackText(
       `https://archive.org/wayback/available?${params.toString()}`,
       {
         headers: WAYBACK_HEADERS,
-        signal: AbortSignal.timeout(15000),
+        timeoutMs: 15000,
       }
     );
-    if (!res.ok) return null;
-    const data = await res.json();
+    if (!response.ok) return null;
+    const data = JSON.parse(response.body);
     const closest = data?.archived_snapshots?.closest;
     if (
       closest &&
@@ -621,15 +761,64 @@ export async function getWaybackFallbackSnapshot(
  * Uses fetchRawText (not Jina Reader — Jina can't handle Wayback URLs).
  * Returns text content + skip reason if rejected.
  */
+export type WaybackSnapshotFailure =
+  | "too_little_content"
+  | "parked_page"
+  | "prior_owner"
+  | "timeout"
+  | "http_error"
+  | "network_error";
+
+export type WaybackSnapshotResult = {
+  text: string | null;
+  skipReason: string | null;
+  failureType: WaybackSnapshotFailure | null;
+  httpStatus: number | null;
+  attempts: number;
+};
+
 export async function fetchWaybackSnapshot(
   archiveUrl: string,
   domainStem: string
-): Promise<{ text: string | null; skipReason: string | null }> {
-  const text = await fetchRawText(archiveUrl, 20000, 8000);
+): Promise<WaybackSnapshotResult> {
+  const secureArchiveUrl = archiveUrl.replace(/^http:/i, "https:");
+  const fetched = await fetchRawText(secureArchiveUrl, 20000, 8000);
+  if (fetched.failure) {
+    const statusDetail = fetched.status ? ` HTTP ${fetched.status}` : "";
+    const attemptDetail = fetched.attempts > 1
+      ? ` after ${fetched.attempts} attempts`
+      : "";
+    const label = fetched.failure === "timeout"
+      ? "Wayback snapshot timed out"
+      : fetched.failure === "http_error"
+        ? `Wayback snapshot returned${statusDetail}`
+        : "Wayback snapshot request failed";
+    return {
+      text: null,
+      skipReason: `${label}${attemptDetail}`,
+      failureType: fetched.failure,
+      httpStatus: fetched.status,
+      attempts: fetched.attempts,
+    };
+  }
+
+  const text = fetched.text;
   if (!text || text.length < 300)
-    return { text: null, skipReason: "too little content" };
+    return {
+      text: null,
+      skipReason: "too little content",
+      failureType: "too_little_content",
+      httpStatus: fetched.status,
+      attempts: fetched.attempts,
+    };
   if (isParkedPage(text))
-    return { text: null, skipReason: "looks like a parked domain page" };
+    return {
+      text: null,
+      skipReason: "looks like a parked domain page",
+      failureType: "parked_page",
+      httpStatus: fetched.status,
+      attempts: fetched.attempts,
+    };
   // Check for domain stem — also try without spaces/hyphens (matches Python version)
   const textLower = text.toLowerCase();
   const stemLower = domainStem.toLowerCase();
@@ -638,8 +827,17 @@ export async function fetchWaybackSnapshot(
     return {
       text: null,
       skipReason: "company name not found (likely a prior domain owner)",
+      failureType: "prior_owner",
+      httpStatus: fetched.status,
+      attempts: fetched.attempts,
     };
-  return { text, skipReason: null };
+  return {
+    text,
+    skipReason: null,
+    failureType: null,
+    httpStatus: fetched.status,
+    attempts: fetched.attempts,
+  };
 }
 
 /**
@@ -663,11 +861,12 @@ export async function getInteriorCandidates(
       `&collapse=timestamp:4` +
       `&fl=timestamp,original`;
 
-    const res = await fetch(cdxUrl, {
+    const response = await fetchWaybackText(cdxUrl, {
       headers: WAYBACK_HEADERS,
-      signal: AbortSignal.timeout(15000),
+      timeoutMs: 15000,
     });
-    const data = await res.json();
+    if (!response.ok) return [];
+    const data = JSON.parse(response.body);
 
     if (data.length < 2) return [];
 
