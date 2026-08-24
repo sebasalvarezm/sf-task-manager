@@ -55,6 +55,7 @@ type DraftSheetRow = {
 type WeeklyRowChanges = {
   status?: WeeklyOutreachStatus;
   notes?: string | null;
+  draft?: string | null;
   outreachType?: WeeklyOutreachType;
   accountName?: string;
   website?: string | null;
@@ -220,6 +221,20 @@ export default function WeeklyOutreachPage() {
     [],
   );
 
+  // Kept on a ref so the Escape listener always sees the current draft text.
+  const closeRceReviewRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    closeRceReviewRef.current = () => void closeRceReview();
+  });
+  useEffect(() => {
+    if (!reviewingRceId) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closeRceReviewRef.current();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [reviewingRceId]);
+
   const counts = useMemo(
     () => ({
       total: items.length,
@@ -267,6 +282,25 @@ export default function WeeklyOutreachPage() {
   const reviewingRce = reviewingRceId
     ? items.find((item) => item.id === reviewingRceId) ?? null
     : null;
+  // Same rule that decides whether a row shows the Review button, in sheet order.
+  const pendingRceReviews = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          item.outreach_type === "RCE" && Boolean(item.draft) && item.status !== "sent",
+      ),
+    [items],
+  );
+  const nextPendingRceReview = useMemo(() => {
+    if (!reviewingRce) return null;
+    const index = pendingRceReviews.findIndex((item) => item.id === reviewingRce.id);
+    if (index >= 0 && index + 1 < pendingRceReviews.length) {
+      return pendingRceReviews[index + 1];
+    }
+    // Last in the queue (or opened from somewhere unexpected): wrap to the top so
+    // nothing above the current row gets skipped.
+    return pendingRceReviews.find((item) => item.id !== reviewingRce.id) ?? null;
+  }, [pendingRceReviews, reviewingRce]);
 
   function registerGridCell(rowIndex: number, columnIndex: number) {
     return (element: GridCellElement | null) => {
@@ -655,6 +689,7 @@ export default function WeeklyOutreachPage() {
     const optimisticChanges: Partial<WeeklyOutreachItem> = {};
     if (changes.status !== undefined) optimisticChanges.status = changes.status;
     if (changes.notes !== undefined) optimisticChanges.notes = changes.notes;
+    if (changes.draft !== undefined) optimisticChanges.draft = changes.draft;
     if (changes.outreachType !== undefined) optimisticChanges.outreach_type = changes.outreachType;
     if (changes.accountName !== undefined) optimisticChanges.account_name = changes.accountName;
     if (changes.website !== undefined) optimisticChanges.website = changes.website;
@@ -680,7 +715,9 @@ export default function WeeklyOutreachPage() {
     if (!res.ok) {
       setError((await res.json()).error ?? "Could not update row");
       await load(true);
+      return false;
     }
+    return true;
   }
 
   async function removeRow(item: WeeklyOutreachItem) {
@@ -858,19 +895,22 @@ export default function WeeklyOutreachPage() {
     setMessage("Reconnect draft copied. Paste it into the existing Outlook chain.");
   }
 
-  async function reviewRce(action: "save" | "send" | "dismiss") {
-    if (!reviewingRce || reviewSaving) return;
+  async function reviewRce(
+    action: "save" | "send" | "dismiss",
+    options?: { closeAfter?: boolean; silent?: boolean },
+  ) {
+    if (!reviewingRce || reviewSaving) return false;
     if (
       action === "send" &&
       !window.confirm(`Approve and send this reply to ${reviewingRce.account_name} through Outlook now?`)
     ) {
-      return;
+      return false;
     }
     if (
       action === "dismiss" &&
       !window.confirm("Dismiss this reconnect draft and remove the matching Outlook draft?")
     ) {
-      return;
+      return false;
     }
     setReviewSaving(true);
     setError(null);
@@ -895,7 +935,11 @@ export default function WeeklyOutreachPage() {
         previous.map((item) => (item.id === reviewingRce.id ? data.item : item)),
       );
       if (action === "save") {
-        setMessage("Draft saved in Weekly Outreach and Outlook.");
+        if (options?.closeAfter) {
+          setReviewingRceId(null);
+          setReviewDraft("");
+        }
+        if (!options?.silent) setMessage("Draft saved in Weekly Outreach and Outlook.");
       } else {
         setReviewingRceId(null);
         setReviewDraft("");
@@ -905,11 +949,61 @@ export default function WeeklyOutreachPage() {
             : `Reconnect draft for ${reviewingRce.account_name} dismissed.`,
         );
       }
+      return true;
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : "Could not review reconnect");
+      return false;
     } finally {
       setReviewSaving(false);
     }
+  }
+
+  // Manual copy-and-paste flow: the email was already sent from Outlook by hand, so this
+  // only records the row as sent and jumps straight to the next draft awaiting review.
+  async function markRceSentAndOpenNext() {
+    if (!reviewingRce || reviewSaving) return;
+    const sentItem = reviewingRce;
+    // Worked out before the update, because the row leaves the queue once it turns "sent".
+    const next = nextPendingRceReview;
+    const remaining = next ? Math.max(0, pendingRceReviews.length - 1) : 0;
+    setReviewSaving(true);
+    setError(null);
+    try {
+      const saved = await updateRow(sentItem, {
+        status: "sent",
+        draft: reviewDraft,
+      });
+      if (!saved) return;
+      if (next) {
+        openRceReview(next);
+        setMessage(
+          `${sentItem.account_name} marked sent. ${remaining} reconnect draft${remaining === 1 ? "" : "s"} left to review.`,
+        );
+      } else {
+        setReviewingRceId(null);
+        setReviewDraft("");
+        setMessage(
+          `${sentItem.account_name} marked sent. No reconnect drafts left to review this week.`,
+        );
+      }
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
+  // Used by the X button, a click on the dimmed backdrop, and the Escape key.
+  async function closeRceReview() {
+    if (!reviewingRce || reviewSaving) return;
+    const hasUnsavedEdits =
+      reviewDraft.trim().length > 0 && reviewDraft !== (reviewingRce.draft ?? "");
+    if (!hasUnsavedEdits) {
+      setReviewingRceId(null);
+      setReviewDraft("");
+      return;
+    }
+    // Save silently on the way out. If it fails the box stays open with the error showing,
+    // so edits are never lost without warning.
+    await reviewRce("save", { closeAfter: true, silent: true });
   }
 
   async function copyCsv() {
@@ -1650,12 +1744,25 @@ export default function WeeklyOutreachPage() {
         </p>
 
         {reviewingRce ? (
-          <div className="fixed inset-0 z-50 flex items-end bg-navy/50 sm:items-center sm:justify-center sm:p-6">
-            <div className="flex max-h-[95vh] w-full flex-col rounded-t-2xl bg-white shadow-2xl sm:max-w-3xl sm:rounded-2xl">
+          <div
+            className="fixed inset-0 z-50 flex items-end bg-navy/50 sm:items-center sm:justify-center sm:p-6"
+            role="presentation"
+            onMouseDown={(event) => {
+              // Only a press that lands on the dim area itself closes the box, so
+              // selecting text in the draft and releasing outside does not dismiss it.
+              if (event.target === event.currentTarget) void closeRceReview();
+            }}
+          >
+            <div
+              className="flex max-h-[95vh] w-full flex-col rounded-t-2xl bg-white shadow-2xl sm:max-w-3xl sm:rounded-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rce-review-title"
+            >
               <div className="flex items-start justify-between border-b border-line px-4 py-4 sm:px-6">
                 <div className="min-w-0">
                   <span className="text-xs font-bold uppercase tracking-wide text-brand">RCE review</span>
-                  <h2 className="mt-1 truncate text-xl font-semibold text-ink">
+                  <h2 id="rce-review-title" className="mt-1 truncate text-xl font-semibold text-ink">
                     {reviewingRce.account_name}
                   </h2>
                   <p className="mt-1 truncate text-sm text-ink-muted">
@@ -1664,7 +1771,7 @@ export default function WeeklyOutreachPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setReviewingRceId(null)}
+                  onClick={() => void closeRceReview()}
                   className="ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xl text-ink-muted"
                   aria-label="Close reconnect review"
                 >
@@ -1703,7 +1810,7 @@ export default function WeeklyOutreachPage() {
                   <p className="mt-2 text-xs text-ink-muted">
                     {reviewingRce.outlook_draft_ready
                       ? "Save keeps Outlook synchronized. Approve and Send sends this exact text as a reply in the existing chain."
-                      : "Edit if needed, save it here, then copy and paste it into the correct Outlook chain. Nothing can send from this tool until Outlook approval is available."}
+                      : "Edit if needed, copy and paste it into the correct Outlook chain, then use Sent & Next to mark this row sent and open the next draft. Nothing can send from this tool until Outlook approval is available."}
                   </p>
                 </section>
               </div>
@@ -1711,7 +1818,7 @@ export default function WeeklyOutreachPage() {
               <div className="grid grid-cols-2 gap-2 border-t border-line bg-surface-2 p-4 sm:flex sm:justify-between sm:px-6">
                 <Button
                   variant="ghost"
-                  className="order-3 col-span-2 text-danger sm:order-none sm:col-span-1"
+                  className="order-5 col-span-2 text-danger sm:order-none sm:col-span-1"
                   disabled={reviewSaving}
                   onClick={() => void reviewRce("dismiss")}
                 >
@@ -1720,7 +1827,7 @@ export default function WeeklyOutreachPage() {
                 <div className="contents sm:flex sm:gap-2">
                   <Button
                     variant="secondary"
-                    className="w-full"
+                    className="order-1 w-full sm:order-none"
                     loading={reviewSaving}
                     disabled={!reviewDraft.trim()}
                     onClick={() => void reviewRce("save")}
@@ -1729,19 +1836,33 @@ export default function WeeklyOutreachPage() {
                   </Button>
                   <Button
                     variant="secondary"
-                    className="w-full"
+                    className="order-2 w-full sm:order-none"
                     disabled={!reviewDraft.trim()}
                     onClick={() => void copyReviewDraft()}
                   >
                     Copy draft
                   </Button>
                   <Button
-                    className="col-span-2 w-full sm:col-span-1"
+                    variant="secondary"
+                    className="order-4 col-span-2 w-full sm:order-none sm:col-span-1"
                     loading={reviewSaving}
                     disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim()}
                     onClick={() => void reviewRce("send")}
                   >
                     Approve &amp; Send
+                  </Button>
+                  <Button
+                    className="order-3 col-span-2 w-full sm:order-none sm:col-span-1"
+                    loading={reviewSaving}
+                    disabled={!reviewDraft.trim()}
+                    title={
+                      nextPendingRceReview
+                        ? `Mark sent, then open ${nextPendingRceReview.account_name} (${pendingRceReviews.length - 1} left after this one)`
+                        : "Mark sent. This is the last reconnect draft to review."
+                    }
+                    onClick={() => void markRceSentAndOpenNext()}
+                  >
+                    {nextPendingRceReview ? "Sent & Next" : "Mark sent"}
                   </Button>
                 </div>
               </div>
