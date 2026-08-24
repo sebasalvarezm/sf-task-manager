@@ -140,6 +140,18 @@ function sentRowTone(item: WeeklyOutreachItem): string {
   return "bg-emerald-100 hover:bg-emerald-200/70";
 }
 
+/** Plain-English note explaining how the Outlook chain above the draft was chosen. */
+function replyMatchNote(item: WeeklyOutreachItem): string {
+  if (item.outlook_reply_confidence === "domain") {
+    return `Chain confirmed: ${item.outlook_reply_reason}`;
+  }
+  if (item.outlook_reply_reason) return item.outlook_reply_reason;
+  if (item.outlook_reply_subject) {
+    return "This chain was picked before thread checking existed, so it has not been verified. Re-prepare the draft to check it.";
+  }
+  return "No Outlook chain attached. Paste this into the right chain yourself.";
+}
+
 export default function WeeklyOutreachPage() {
   const router = useRouter();
   const { jobs } = useJobs();
@@ -1766,7 +1778,14 @@ export default function WeeklyOutreachPage() {
                     {reviewingRce.account_name}
                   </h2>
                   <p className="mt-1 truncate text-sm text-ink-muted">
-                    {reviewingRce.outlook_reply_subject || "Copyable reconnect draft"}
+                    {reviewingRce.outlook_reply_subject || "No Outlook chain attached"}
+                  </p>
+                  <p
+                    className={`mt-1 text-xs leading-5 ${
+                      reviewingRce.outlook_reply_confidence === "domain" ? "text-ok" : "text-warning"
+                    }`}
+                  >
+                    {replyMatchNote(reviewingRce)}
                   </p>
                 </div>
                 <button

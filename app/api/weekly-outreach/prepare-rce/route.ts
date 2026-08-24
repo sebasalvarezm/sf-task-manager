@@ -8,6 +8,7 @@ import {
   searchMailboxMessages,
 } from "@/lib/microsoft";
 import { fetchRecentAccountActivity } from "@/lib/salesforce-prep";
+import { matchRceReplyThread } from "@/lib/rce-thread-match";
 import {
   readWeeklyOutreachSourceMetadata,
   withWeeklyOutreachClientMetadata,
@@ -67,9 +68,16 @@ export async function POST(request: Request) {
       .filter((message) => !mailboxAddress || message.fromEmail === mailboxAddress)
       .map((message) => `${message.subject}\n${message.bodyText.slice(0, 1200)}`)
       .join("\n\n");
-    const replyTarget = [...relationshipEmails]
-      .reverse()
-      .find((message) => message.fromEmail && message.fromEmail !== mailboxAddress);
+    // The mailbox search is full text, so it also returns threads that merely mention
+    // the company in a body or attachment. Score the threads instead of taking the
+    // most recent one, which used to attach replies to unrelated chains.
+    const threadMatch = matchRceReplyThread(
+      relationshipEmails,
+      item.account_name,
+      domain,
+      mailboxAddress,
+    );
+    const replyTarget = threadMatch.replyTarget;
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1800,
@@ -97,8 +105,17 @@ Return ONLY JSON:
     const text = message.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n");
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text) as { contextSummary: string; draft: string };
     const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
-    let replySubject = metadata.replySubject;
+    metadata.replyConfidence = threadMatch.confidence;
+    metadata.replyReason = threadMatch.reason || null;
+    let replySubject: string | null = null;
     let outlookWarning: string | null = null;
+    if (!replyTarget) {
+      // Drop any chain a previous run attached, so a wrong subject cannot linger
+      // and Approve & Send stays disabled until a chain is chosen by hand.
+      metadata.replyToMessageId = null;
+      metadata.replySubject = null;
+      metadata.outlookDraftId = null;
+    }
     if (replyTarget) {
       metadata.replyToMessageId = replyTarget.id;
       metadata.replySubject = replyTarget.subject;
@@ -134,10 +151,10 @@ Return ONLY JSON:
       item: withWeeklyOutreachClientMetadata(updated),
       warning:
         outlookWarning ??
-        (replyTarget
-          ? null
-          : "No received Outlook thread was found. A copyable draft is ready, but choose the correct chain manually."),
+        (threadMatch.confidence === "domain" ? null : threadMatch.reason || null),
       replySubject,
+      replyConfidence: threadMatch.confidence,
+      replyReason: threadMatch.reason || null,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not prepare reconnect";

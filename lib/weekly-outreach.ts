@@ -1,6 +1,7 @@
 import { addDays, startOfWeek, format } from "date-fns";
 import { getSupabaseAdmin } from "./supabase";
 import { getValidCredentials } from "./token-manager";
+import type { RceThreadConfidence } from "./rce-thread-match";
 
 export type WeeklyOutreachType = "E1" | "RCE";
 export type WeeklyOutreachSource = "tasks" | "recheck" | "manual" | "sourcing";
@@ -39,6 +40,8 @@ export type WeeklyOutreachItem = {
   rce_second_sent?: boolean;
   outlook_draft_ready?: boolean;
   outlook_reply_subject?: string | null;
+  outlook_reply_confidence?: RceThreadConfidence;
+  outlook_reply_reason?: string | null;
 };
 
 export type WeeklyOutreachSourceMetadata = {
@@ -46,6 +49,9 @@ export type WeeklyOutreachSourceMetadata = {
   outlookDraftId: string | null;
   replyToMessageId: string | null;
   replySubject: string | null;
+  /** How the Outlook chain above was chosen. See lib/rce-thread-match.ts. */
+  replyConfidence: RceThreadConfidence;
+  replyReason: string | null;
   rceDraftEnabled: boolean;
   rceSecondSent: boolean;
 };
@@ -59,6 +65,8 @@ export function readWeeklyOutreachSourceMetadata(
       outlookDraftId: null,
       replyToMessageId: null,
       replySubject: null,
+      replyConfidence: "none",
+      replyReason: null,
       rceDraftEnabled: true,
       rceSecondSent: false,
     };
@@ -73,6 +81,10 @@ export function readWeeklyOutreachSourceMetadata(
         outlookDraftId: parsed.outlookDraftId ?? null,
         replyToMessageId: parsed.replyToMessageId ?? null,
         replySubject: parsed.replySubject ?? null,
+        // Rows drafted before thread matching existed have no stored confidence.
+        // They stay "none" with no reason, which the review box flags as unverified.
+        replyConfidence: parsed.replyConfidence ?? "none",
+        replyReason: parsed.replyReason ?? null,
         rceDraftEnabled: parsed.rceDraftEnabled !== false,
         rceSecondSent: parsed.rceSecondSent === true,
       };
@@ -85,6 +97,8 @@ export function readWeeklyOutreachSourceMetadata(
     outlookDraftId: null,
     replyToMessageId: null,
     replySubject: null,
+    replyConfidence: "none",
+    replyReason: null,
     rceDraftEnabled: true,
     rceSecondSent: false,
   };
@@ -97,6 +111,7 @@ export function writeWeeklyOutreachSourceMetadata(
     !metadata.outlookDraftId &&
     !metadata.replyToMessageId &&
     !metadata.replySubject &&
+    !metadata.replyReason &&
     metadata.rceDraftEnabled &&
     !metadata.rceSecondSent
   ) {
@@ -115,6 +130,8 @@ export function withWeeklyOutreachClientMetadata(
     rce_second_sent: metadata.rceSecondSent,
     outlook_draft_ready: Boolean(metadata.outlookDraftId),
     outlook_reply_subject: metadata.replySubject,
+    outlook_reply_confidence: metadata.replyConfidence,
+    outlook_reply_reason: metadata.replyReason,
   };
 }
 
