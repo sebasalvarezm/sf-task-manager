@@ -146,14 +146,18 @@ function waybackEmptyMessage(
     case "empty":
       return `Wayback Machine has no archived snapshots of this domain for ${wbLabel}.`;
     case "timeout":
-      return "Wayback Machine timed out — try re-running. (This is a Wayback-side issue, not the company.)";
+      return "The archived-snapshot list could not be read before Archive.org timed out, so we could not tell what exists for this domain. This is a Wayback-side issue, not a fact about the company — retry later.";
     case "http_error":
     case "network_error":
-      return "Wayback Machine is currently unreachable. Retry later.";
+      return "Wayback Machine is currently unreachable, so the archived-snapshot list could not be read. This says nothing about the company — retry later.";
     case "snapshot_timeout":
       return "Wayback found archived snapshots, but their pages timed out. Retry later.";
     case "snapshot_http_error":
-      // Naming the code matters: 429 clears on its own, 403 does not.
+      // Naming the code matters: 503 is their outage, 429 clears on its own,
+      // 403 does not. None of them mean the company has no history.
+      if (httpStatus === 503) {
+        return "The Internet Archive is temporarily offline (HTTP 503). That is an outage on their side, not a fact about this company — archived pages for this domain may well exist. Retry once their service is back.";
+      }
       if (httpStatus === 429) {
         return "Archive.org rate-limited the archived page downloads (HTTP 429). The snapshots exist — run this again in a few minutes, and any page already downloaded will be reused.";
       }
@@ -165,7 +169,7 @@ function waybackEmptyMessage(
       }
       return `Wayback found archived snapshots, but Archive.org would not serve their pages${httpStatus ? ` (HTTP ${httpStatus})` : ""}. Retry later.`;
     case "snapshot_network_error":
-      return "Wayback found archived snapshots, but their pages could not be downloaded. Retry later.";
+      return "Could not connect to the Internet Archive after several attempts. Their service may be down — check archive.org, then retry. Archived pages for this domain may still exist.";
     case "ok":
       return `Wayback returned snapshots for ${wbLabel}, but none passed validity checks (e.g. parked page or prior domain owner).`;
     default:

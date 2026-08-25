@@ -187,7 +187,9 @@ async function fetchWaybackText(
         if (response.ok) {
           return { ok: true, body, status: response.status, attempts: attempt };
         }
-        if (response.status === 429 && lane === "playback") {
+        // 429 is throttling; 503 is Archive.org's "temporarily offline" page.
+        // Both mean stop asking for a while, not retry in a second.
+        if ((response.status === 429 || response.status === 503) && lane === "playback") {
           const cooldown =
             parseRetryAfterMs(response.headers.get("retry-after")) ??
             WAYBACK_DEFAULT_COOLDOWN_MS;
@@ -220,9 +222,14 @@ async function fetchWaybackText(
       (result.status !== null && WAYBACK_RETRYABLE_STATUSES.has(result.status));
     if (!retryable || attempt === maxAttempts) break;
 
-    // A 429 on playback already set the shared cooldown, which the next loop
-    // waits on. Anything else uses the ordinary exponential backoff.
-    if (!(result.status === 429 && lane === "playback")) {
+    // A 429/503 on playback already set the shared cooldown, which the next
+    // loop waits on. Anything else uses the ordinary exponential backoff.
+    if (
+      !(
+        (result.status === 429 || result.status === 503) &&
+        lane === "playback"
+      )
+    ) {
       const backoff =
         WAYBACK_RETRY_BASE_MS * 2 ** (attempt - 1) +
         Math.floor(Math.random() * 250);
@@ -642,7 +649,9 @@ export async function getEarliestSnapshotYear(
 
     const response = await fetchWaybackText(cdxUrl, {
       headers: WAYBACK_HEADERS,
-      timeoutMs: 20000,
+      // CDX regularly takes 25s+ when Archive.org is busy. A tighter limit here
+      // silently drops the archive-based founding year on healthy responses.
+      timeoutMs: 30000,
     });
     if (!response.ok) return null;
     const data = JSON.parse(response.body);
@@ -727,6 +736,12 @@ export type WaybackStatus =
 export type WaybackLookupResult = {
   candidates: WaybackCandidate[];
   status: WaybackStatus;
+  /**
+   * Why the primary CDX lookup produced nothing, retained even when the
+   * Availability fallback then succeeds. Without it a CDX timeout is
+   * indistinguishable from "this domain has no archived snapshots".
+   */
+  primaryFailure: WaybackStatus | null;
 };
 
 /**
@@ -742,7 +757,8 @@ export type WaybackLookupResult = {
 export async function getWaybackCandidates(
   url: string,
   fromDate: string,
-  toDate: string
+  toDate: string,
+  timeoutMs = 45000
 ): Promise<WaybackLookupResult> {
   let primaryStatus: WaybackStatus = "empty";
   let domain = "";
@@ -759,7 +775,7 @@ export async function getWaybackCandidates(
 
     const response = await fetchWaybackText(cdxUrl, {
       headers: WAYBACK_HEADERS,
-      timeoutMs: 30000,
+      timeoutMs,
     });
     if (!response.ok) {
       primaryStatus = response.failure;
@@ -772,7 +788,7 @@ export async function getWaybackCandidates(
           url: `https://web.archive.org/web/${row[0]}/${row[1]}`,
           timestamp: row[0],
         }));
-        return { candidates, status: "ok" };
+        return { candidates, status: "ok", primaryFailure: null };
       }
     }
   } catch (err) {
@@ -790,11 +806,17 @@ export async function getWaybackCandidates(
     );
     const fallback = await getWaybackFallbackSnapshot(domain, targetYear);
     if (fallback) {
-      return { candidates: [fallback], status: "fallback_used" };
+      // Keep why CDX produced nothing. A timeout here means the snapshot list
+      // is incomplete, which is very different from the domain having none.
+      return {
+        candidates: [fallback],
+        status: "fallback_used",
+        primaryFailure: primaryStatus,
+      };
     }
   }
 
-  return { candidates: [], status: primaryStatus };
+  return { candidates: [], status: primaryStatus, primaryFailure: primaryStatus };
 }
 
 /**
@@ -971,7 +993,7 @@ export async function getInteriorCandidates(
 
     const response = await fetchWaybackText(cdxUrl, {
       headers: WAYBACK_HEADERS,
-      timeoutMs: 15000,
+      timeoutMs: 30000,
     });
     if (!response.ok) return [];
     const data = JSON.parse(response.body);

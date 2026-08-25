@@ -112,11 +112,18 @@ function dedup(items: string[]): string[] {
 }
 
 /**
- * Wall-clock ceiling for downloading archived pages. Archive.org cooldowns can
- * run 30-60s each and the platform kills the whole run at 300s, so the archive
- * stage gives up on its own rather than starving the rest of the research.
+ * Wall-clock ceiling for the whole archive phase — the CDX snapshot list plus
+ * every archived-page download. Archive.org cooldowns run 30-60s each and the
+ * platform kills the whole run at 300s, so the phase gives up on its own rather
+ * than starving the rest of the research.
  */
-const WAYBACK_STAGE_BUDGET_MS = 90_000;
+const WAYBACK_PHASE_BUDGET_MS = 120_000;
+
+/**
+ * CDX answers in 5-27s when Archive.org is busy, so this sits above the slowest
+ * healthy response measured rather than cutting one off as "no snapshots".
+ */
+const WAYBACK_CDX_TIMEOUT_MS = 45_000;
 
 function snapshotFailureStatus(
   failure: WaybackSnapshotFailure | null,
@@ -315,18 +322,26 @@ export async function runFullSourcing(input: {
   }
 
   logs.push(`Fetching Wayback Machine snapshots from ${wbLabel}...`);
+  // One budget covers the snapshot list AND the page downloads, so a slow CDX
+  // response cannot push the whole run toward the platform's 300s kill.
+  const waybackDeadlineAt = Date.now() + WAYBACK_PHASE_BUDGET_MS;
   const waybackLookup = await getWaybackCandidates(
     normalized,
     wbFrom,
     wbTo,
+    Math.min(WAYBACK_CDX_TIMEOUT_MS, Math.max(5_000, waybackDeadlineAt - Date.now())),
   );
   const { candidates } = waybackLookup;
   let waybackStatus = waybackLookup.status;
   let waybackHttpStatus: number | null = null;
 
   if (waybackStatus === "fallback_used") {
+    // Saying "returned nothing" for a CDX timeout reads as a fact about the
+    // company. It is not — the snapshot list simply could not be read.
     logs.push(
-      "Wayback CDX returned nothing — using Availability API fallback snapshot.",
+      waybackLookup.primaryFailure && waybackLookup.primaryFailure !== "empty"
+        ? `Wayback CDX could not be read (${waybackLookup.primaryFailure}) — using the Availability API fallback. The snapshot list may be incomplete.`
+        : "Wayback CDX has no snapshots in this window — using Availability API fallback snapshot.",
     );
   } else if (waybackStatus === "timeout") {
     logs.push(
@@ -357,10 +372,6 @@ export async function runFullSourcing(input: {
     }> = [];
     let consecutiveTransportFailures = 0;
     let snapshotPlaybackAvailable = true;
-    // Waiting out an Archive.org cooldown is only safe when it is bounded. The
-    // whole run is killed at 300s by the platform, so cap the archive stage and
-    // let the rest of the sourcing (address, restaurants, outreach) finish.
-    const waybackDeadlineAt = Date.now() + WAYBACK_STAGE_BUDGET_MS;
 
     // Archive.org rejects request bursts. Fetch one snapshot at a time and
     // stop as soon as the three pages used by the analysis are available.
@@ -368,7 +379,7 @@ export async function runFullSourcing(input: {
       if (validSnapshots.length >= 3) break;
       if (Date.now() > waybackDeadlineAt) {
         logs.push(
-          `Stopped archived-page downloads after ${Math.round(WAYBACK_STAGE_BUDGET_MS / 1000)}s waiting on Archive.org's rate limit; the rest of the research continued.`,
+          `Stopped archived-page downloads after ${Math.round(WAYBACK_PHASE_BUDGET_MS / 1000)}s waiting on Archive.org; the rest of the research continued.`,
         );
         break;
       }
