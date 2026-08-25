@@ -9,6 +9,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs";
 import path from "path";
+import { getCachedSnapshot, putCachedSnapshot } from "./wayback-cache";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -51,14 +52,23 @@ const WAYBACK_SNAPSHOT_HEADERS: Record<string, string> = {
   Accept: "text/html,application/xhtml+xml",
 };
 
-// Archive.org is sensitive to request bursts. Keep all Wayback traffic in a
-// worker on one paced queue, including CDX lookups and snapshot playback.
-const WAYBACK_MIN_REQUEST_GAP_MS = 400;
+// Archive.org runs the CDX/Availability index and the archived-page playback
+// service under separate, very different rate limits. The index tolerates the
+// pace below; playback is far stricter and answers 429 long before the index
+// complains, so the two run on independent paced lanes.
+const WAYBACK_INDEX_MIN_GAP_MS = 400;
+const WAYBACK_PLAYBACK_MIN_GAP_MS = 4_000;
 const WAYBACK_MAX_ATTEMPTS = 3;
 const WAYBACK_RETRY_BASE_MS = 750;
 const WAYBACK_RETRYABLE_STATUSES = new Set([
   408, 425, 429, 498, 500, 502, 503, 504,
 ]);
+/** Used when Archive.org answers 429 without a Retry-After header. */
+const WAYBACK_DEFAULT_COOLDOWN_MS = 30_000;
+/** Never sit on a single cooldown longer than this, whatever Retry-After says. */
+const WAYBACK_MAX_COOLDOWN_MS = 60_000;
+
+type WaybackLane = "index" | "playback";
 
 type WaybackRequestFailure = "timeout" | "http_error" | "network_error";
 
@@ -71,23 +81,53 @@ type WaybackTextResponse =
       attempts: number;
     };
 
-let waybackRequestQueue: Promise<void> = Promise.resolve();
-let waybackNextRequestAt = 0;
+type WaybackLaneState = { queue: Promise<void>; nextRequestAt: number; gapMs: number };
+
+const waybackLanes: Record<WaybackLane, WaybackLaneState> = {
+  index: { queue: Promise.resolve(), nextRequestAt: 0, gapMs: WAYBACK_INDEX_MIN_GAP_MS },
+  playback: { queue: Promise.resolve(), nextRequestAt: 0, gapMs: WAYBACK_PLAYBACK_MIN_GAP_MS },
+};
+
+/**
+ * Set whenever playback answers 429. Shared across the whole process so one
+ * throttle pauses every archived-page download, including other companies in a
+ * bulk batch, instead of each snapshot rediscovering the block in turn.
+ */
+let waybackPlaybackCooldownUntil = 0;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function enqueueWaybackRequest<T>(request: () => Promise<T>): Promise<T> {
+/** Retry-After is either a number of seconds or an HTTP date. */
+function parseRetryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, WAYBACK_MAX_COOLDOWN_MS);
+  }
+  const parsedDate = Date.parse(trimmed);
+  if (!Number.isNaN(parsedDate)) {
+    return Math.min(Math.max(0, parsedDate - Date.now()), WAYBACK_MAX_COOLDOWN_MS);
+  }
+  return null;
+}
+
+function enqueueWaybackRequest<T>(
+  request: () => Promise<T>,
+  lane: WaybackLane,
+): Promise<T> {
   // Pace request starts without holding the queue for the entire network
   // response. Bulk sourcing can therefore make limited forward progress (at
   // most one in-flight request per company) without recreating the old burst.
-  const ready = waybackRequestQueue.then(async () => {
-    const remaining = waybackNextRequestAt - Date.now();
+  const state = waybackLanes[lane];
+  const ready = state.queue.then(async () => {
+    const remaining = state.nextRequestAt - Date.now();
     if (remaining > 0) await wait(remaining);
-    waybackNextRequestAt = Date.now() + WAYBACK_MIN_REQUEST_GAP_MS;
+    state.nextRequestAt = Date.now() + state.gapMs;
   });
-  waybackRequestQueue = ready.then(
+  state.queue = ready.then(
     () => undefined,
     () => undefined,
   );
@@ -107,9 +147,13 @@ async function fetchWaybackText(
     timeoutMs: number;
     headers?: Record<string, string>;
     maxAttempts?: number;
+    lane?: WaybackLane;
+    /** Wall-clock time after which waiting out a cooldown is abandoned. */
+    deadlineAt?: number;
   },
 ): Promise<WaybackTextResponse> {
   const maxAttempts = options.maxAttempts ?? WAYBACK_MAX_ATTEMPTS;
+  const lane = options.lane ?? "index";
   let lastFailure: WaybackTextResponse = {
     ok: false,
     failure: "network_error",
@@ -118,6 +162,20 @@ async function fetchWaybackText(
   };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (lane === "playback") {
+      // Archive.org asked for quiet. Wait it out rather than spending this
+      // attempt on a request that is certain to come back 429.
+      const cooldownRemaining = waybackPlaybackCooldownUntil - Date.now();
+      if (cooldownRemaining > 0) {
+        if (options.deadlineAt && Date.now() + cooldownRemaining > options.deadlineAt) {
+          return lastFailure.attempts > 0
+            ? lastFailure
+            : { ok: false, failure: "http_error", status: 429, attempts: attempt - 1 };
+        }
+        await wait(cooldownRemaining);
+      }
+    }
+
     const result = await enqueueWaybackRequest(async (): Promise<WaybackTextResponse> => {
       try {
         const response = await fetch(url, {
@@ -128,6 +186,15 @@ async function fetchWaybackText(
         const body = await response.text();
         if (response.ok) {
           return { ok: true, body, status: response.status, attempts: attempt };
+        }
+        if (response.status === 429 && lane === "playback") {
+          const cooldown =
+            parseRetryAfterMs(response.headers.get("retry-after")) ??
+            WAYBACK_DEFAULT_COOLDOWN_MS;
+          waybackPlaybackCooldownUntil = Math.max(
+            waybackPlaybackCooldownUntil,
+            Date.now() + cooldown,
+          );
         }
         return {
           ok: false,
@@ -143,7 +210,7 @@ async function fetchWaybackText(
           attempts: attempt,
         };
       }
-    });
+    }, lane);
 
     if (result.ok) return result;
     lastFailure = result;
@@ -153,13 +220,22 @@ async function fetchWaybackText(
       (result.status !== null && WAYBACK_RETRYABLE_STATUSES.has(result.status));
     if (!retryable || attempt === maxAttempts) break;
 
-    const backoff =
-      WAYBACK_RETRY_BASE_MS * 2 ** (attempt - 1) +
-      Math.floor(Math.random() * 250);
-    await wait(backoff);
+    // A 429 on playback already set the shared cooldown, which the next loop
+    // waits on. Anything else uses the ordinary exponential backoff.
+    if (!(result.status === 429 && lane === "playback")) {
+      const backoff =
+        WAYBACK_RETRY_BASE_MS * 2 ** (attempt - 1) +
+        Math.floor(Math.random() * 250);
+      await wait(backoff);
+    }
   }
 
   return lastFailure;
+}
+
+/** Milliseconds the shared playback cooldown still has to run, for logging. */
+export function waybackPlaybackCooldownRemainingMs(): number {
+  return Math.max(0, waybackPlaybackCooldownUntil - Date.now());
 }
 
 /** Sub-pages to crawl after the homepage for richer product coverage */
@@ -242,7 +318,8 @@ async function fetchPageText(
 async function fetchRawText(
   url: string,
   timeoutMs = 20000,
-  maxChars = 8000
+  maxChars = 8000,
+  deadlineAt?: number
 ): Promise<{
   text: string | null;
   failure: WaybackRequestFailure | null;
@@ -252,6 +329,8 @@ async function fetchRawText(
   const fetched = await fetchWaybackText(url, {
     timeoutMs,
     headers: WAYBACK_SNAPSHOT_HEADERS,
+    lane: "playback",
+    deadlineAt,
   });
   if (!fetched.ok) {
     return {
@@ -775,14 +854,38 @@ export type WaybackSnapshotResult = {
   failureType: WaybackSnapshotFailure | null;
   httpStatus: number | null;
   attempts: number;
+  /** True when the result was served from the snapshot cache. */
+  cached?: boolean;
 };
+
+/** Verdicts that are permanent properties of a snapshot, so safe to cache. */
+const CACHEABLE_FAILURES = new Set<WaybackSnapshotFailure>([
+  "too_little_content",
+  "parked_page",
+  "prior_owner",
+]);
 
 export async function fetchWaybackSnapshot(
   archiveUrl: string,
-  domainStem: string
+  domainStem: string,
+  deadlineAt?: number
 ): Promise<WaybackSnapshotResult> {
   const secureArchiveUrl = archiveUrl.replace(/^http:/i, "https:");
-  const fetched = await fetchRawText(secureArchiveUrl, 20000, 8000);
+
+  // An archived page never changes, so a stored copy is always still correct.
+  const cached = await getCachedSnapshot(secureArchiveUrl);
+  if (cached) {
+    return {
+      text: cached.text,
+      skipReason: cached.skipReason,
+      failureType: (cached.failureType as WaybackSnapshotFailure | null) ?? null,
+      httpStatus: 200,
+      attempts: 0,
+      cached: true,
+    };
+  }
+
+  const fetched = await fetchRawText(secureArchiveUrl, 20000, 8000, deadlineAt);
   if (fetched.failure) {
     const statusDetail = fetched.status ? ` HTTP ${fetched.status}` : "";
     const attemptDetail = fetched.attempts > 1
@@ -803,38 +906,43 @@ export async function fetchWaybackSnapshot(
   }
 
   const text = fetched.text;
-  if (!text || text.length < 300)
-    return {
-      text: null,
-      skipReason: "too little content",
-      failureType: "too_little_content",
-      httpStatus: fetched.status,
-      attempts: fetched.attempts,
-    };
-  if (isParkedPage(text))
-    return {
-      text: null,
-      skipReason: "looks like a parked domain page",
-      failureType: "parked_page",
-      httpStatus: fetched.status,
-      attempts: fetched.attempts,
-    };
-  // Check for domain stem — also try without spaces/hyphens (matches Python version)
-  const textLower = text.toLowerCase();
-  const stemLower = domainStem.toLowerCase();
-  const textNoSpace = textLower.replace(/[\s\-_]/g, "");
-  if (!textLower.includes(stemLower) && !textNoSpace.includes(stemLower))
-    return {
-      text: null,
-      skipReason: "company name not found (likely a prior domain owner)",
-      failureType: "prior_owner",
-      httpStatus: fetched.status,
-      attempts: fetched.attempts,
-    };
+  const verdict = ((): Pick<WaybackSnapshotResult, "text" | "skipReason" | "failureType"> => {
+    if (!text || text.length < 300) {
+      return { text: null, skipReason: "too little content", failureType: "too_little_content" };
+    }
+    if (isParkedPage(text)) {
+      return {
+        text: null,
+        skipReason: "looks like a parked domain page",
+        failureType: "parked_page",
+      };
+    }
+    // Check for domain stem — also try without spaces/hyphens (matches Python version)
+    const textLower = text.toLowerCase();
+    const stemLower = domainStem.toLowerCase();
+    const textNoSpace = textLower.replace(/[\s\-_]/g, "");
+    if (!textLower.includes(stemLower) && !textNoSpace.includes(stemLower)) {
+      return {
+        text: null,
+        skipReason: "company name not found (likely a prior domain owner)",
+        failureType: "prior_owner",
+      };
+    }
+    return { text, skipReason: null, failureType: null };
+  })();
+
+  // Only permanent verdicts reach here — transport failures returned above and
+  // are never cached, because they have to be retried later.
+  if (verdict.failureType === null || CACHEABLE_FAILURES.has(verdict.failureType)) {
+    await putCachedSnapshot(secureArchiveUrl, {
+      text: verdict.text,
+      skipReason: verdict.skipReason,
+      failureType: verdict.failureType,
+    });
+  }
+
   return {
-    text,
-    skipReason: null,
-    failureType: null,
+    ...verdict,
     httpStatus: fetched.status,
     attempts: fetched.attempts,
   };

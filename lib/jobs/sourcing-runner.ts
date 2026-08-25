@@ -23,6 +23,7 @@ import {
   generateEmailHook,
   researchCompanyAnchors,
   findGroupFileName,
+  waybackPlaybackCooldownRemainingMs,
   type WaybackStatus,
   type WaybackSnapshotFailure,
   type CompanyAnchor,
@@ -55,6 +56,8 @@ export type SourcingResult = {
   archiveYear: string | null;
   wbLabel: string;
   waybackStatus: WaybackStatus | null;
+  /** HTTP status behind a snapshot transport failure, so the UI can name it. */
+  waybackHttpStatus?: number | null;
   oldProducts: string[];
   discontinued: string | null;
   discontinuedNote: string | null;
@@ -107,6 +110,13 @@ function dedup(items: string[]): string[] {
   }
   return result;
 }
+
+/**
+ * Wall-clock ceiling for downloading archived pages. Archive.org cooldowns can
+ * run 30-60s each and the platform kills the whole run at 300s, so the archive
+ * stage gives up on its own rather than starving the rest of the research.
+ */
+const WAYBACK_STAGE_BUDGET_MS = 90_000;
 
 function snapshotFailureStatus(
   failure: WaybackSnapshotFailure | null,
@@ -312,6 +322,7 @@ export async function runFullSourcing(input: {
   );
   const { candidates } = waybackLookup;
   let waybackStatus = waybackLookup.status;
+  let waybackHttpStatus: number | null = null;
 
   if (waybackStatus === "fallback_used") {
     logs.push(
@@ -346,20 +357,39 @@ export async function runFullSourcing(input: {
     }> = [];
     let consecutiveTransportFailures = 0;
     let snapshotPlaybackAvailable = true;
+    // Waiting out an Archive.org cooldown is only safe when it is bounded. The
+    // whole run is killed at 300s by the platform, so cap the archive stage and
+    // let the rest of the sourcing (address, restaurants, outreach) finish.
+    const waybackDeadlineAt = Date.now() + WAYBACK_STAGE_BUDGET_MS;
 
     // Archive.org rejects request bursts. Fetch one snapshot at a time and
     // stop as soon as the three pages used by the analysis are available.
     for (const candidate of candidates) {
       if (validSnapshots.length >= 3) break;
-      const result = await fetchWaybackSnapshot(candidate.url, domainStem);
+      if (Date.now() > waybackDeadlineAt) {
+        logs.push(
+          `Stopped archived-page downloads after ${Math.round(WAYBACK_STAGE_BUDGET_MS / 1000)}s waiting on Archive.org's rate limit; the rest of the research continued.`,
+        );
+        break;
+      }
+      const cooldownMs = waybackPlaybackCooldownRemainingMs();
+      if (cooldownMs > 0) {
+        logs.push(
+          `Archive.org asked us to slow down — waiting ${Math.ceil(cooldownMs / 1000)}s before the next archived page.`,
+        );
+      }
+      const result = await fetchWaybackSnapshot(candidate.url, domainStem, waybackDeadlineAt);
       if (result.skipReason) {
         logs.push(`Skipping ${candidate.timestamp.slice(0, 4)} snapshot — ${result.skipReason}.`);
+      } else if (result.cached) {
+        logs.push(`Reused stored ${candidate.timestamp.slice(0, 4)} snapshot (no download needed).`);
       }
 
       const transportStatus = snapshotFailureStatus(result.failureType);
       if (transportStatus) {
         consecutiveTransportFailures++;
         waybackStatus = transportStatus;
+        waybackHttpStatus = result.httpStatus;
         // Each snapshot has already been retried three times. Allow a few bad
         // years because Wayback commonly serves an isolated 503 and then
         // recovers, but stop after a sustained block rather than hammering it.
@@ -383,6 +413,7 @@ export async function runFullSourcing(input: {
       // Intermittent playback failures were recovered; retain the successful
       // lookup status instead of presenting the run as a Wayback outage.
       waybackStatus = waybackLookup.status;
+      waybackHttpStatus = null;
       archiveUrl = validSnapshots[0].candidate.url;
       archiveTimestamp = validSnapshots[0].candidate.timestamp;
     }
@@ -407,7 +438,7 @@ export async function runFullSourcing(input: {
     ];
     let interiorChecked = 0;
     for (const keyword of snapshotPlaybackAvailable ? interiorKeywords : []) {
-      if (interiorChecked >= 3) break;
+      if (interiorChecked >= 3 || Date.now() > waybackDeadlineAt) break;
       const ics = await getInteriorCandidates(
         domainOnly,
         keyword,
@@ -416,8 +447,8 @@ export async function runFullSourcing(input: {
         1,
       );
       for (const ic of ics) {
-        if (interiorChecked >= 3) break;
-        const r = await fetchWaybackSnapshot(ic.url, domainStem);
+        if (interiorChecked >= 3 || Date.now() > waybackDeadlineAt) break;
+        const r = await fetchWaybackSnapshot(ic.url, domainStem, waybackDeadlineAt);
         if (r.skipReason || !r.text) continue;
         const icYear = ic.timestamp.slice(0, 4);
         logs.push(`Interior page snapshot (/${keyword}*, ${icYear}).`);
@@ -443,7 +474,7 @@ export async function runFullSourcing(input: {
       ];
       let newsChecked = 0;
       for (const keyword of newsKeywords) {
-        if (newsChecked >= 2) break;
+        if (newsChecked >= 2 || Date.now() > waybackDeadlineAt) break;
         const ncs = await getInteriorCandidates(
           domainOnly,
           keyword,
@@ -452,8 +483,8 @@ export async function runFullSourcing(input: {
           1,
         );
         for (const nc of ncs) {
-          if (newsChecked >= 2) break;
-          const r = await fetchWaybackSnapshot(nc.url, domainStem);
+          if (newsChecked >= 2 || Date.now() > waybackDeadlineAt) break;
+          const r = await fetchWaybackSnapshot(nc.url, domainStem, waybackDeadlineAt);
           if (r.skipReason || !r.text) continue;
           const ncYear = nc.timestamp.slice(0, 4);
           logs.push(`News page snapshot (/${keyword}*, ${ncYear}).`);
@@ -682,6 +713,7 @@ export async function runFullSourcing(input: {
     archiveYear,
     wbLabel,
     waybackStatus,
+    waybackHttpStatus,
     oldProducts,
     discontinued,
     discontinuedNote,

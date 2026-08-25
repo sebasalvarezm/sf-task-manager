@@ -53,6 +53,7 @@ type SourcingResult = {
   archiveYear: string | null;
   wbLabel: string;
   waybackStatus?: WaybackStatus | null;
+  waybackHttpStatus?: number | null;
   oldProducts: string[];
   discontinued: string | null;
   discontinuedNote: string | null;
@@ -136,6 +137,7 @@ function waybackEmptyMessage(
   status: WaybackStatus | null | undefined,
   archiveUrl: string | null,
   wbLabel: string,
+  httpStatus?: number | null,
 ): string {
   if (archiveUrl) {
     return "Snapshot was retrieved, but no distinct discontinued product could be identified from it.";
@@ -149,11 +151,21 @@ function waybackEmptyMessage(
     case "network_error":
       return "Wayback Machine is currently unreachable. Retry later.";
     case "snapshot_timeout":
-      return "Wayback found archived snapshots, but their pages timed out after automatic retries. Retry later.";
+      return "Wayback found archived snapshots, but their pages timed out. Retry later.";
     case "snapshot_http_error":
-      return "Wayback found archived snapshots, but Archive.org rejected their page downloads after automatic retries. Retry later.";
+      // Naming the code matters: 429 clears on its own, 403 does not.
+      if (httpStatus === 429) {
+        return "Archive.org rate-limited the archived page downloads (HTTP 429). The snapshots exist — run this again in a few minutes, and any page already downloaded will be reused.";
+      }
+      if (httpStatus === 403) {
+        return "Archive.org blocked the archived page downloads (HTTP 403). This usually means the server's IP address is blocked rather than a problem with this company.";
+      }
+      if (httpStatus === 404) {
+        return "Archive.org lists snapshots for this domain but could not serve their pages (HTTP 404).";
+      }
+      return `Wayback found archived snapshots, but Archive.org would not serve their pages${httpStatus ? ` (HTTP ${httpStatus})` : ""}. Retry later.`;
     case "snapshot_network_error":
-      return "Wayback found archived snapshots, but their pages could not be downloaded after automatic retries. Retry later.";
+      return "Wayback found archived snapshots, but their pages could not be downloaded. Retry later.";
     case "ok":
       return `Wayback returned snapshots for ${wbLabel}, but none passed validity checks (e.g. parked page or prior domain owner).`;
     default:
@@ -1198,9 +1210,32 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
               )}
             </div>
           ) : (
-            <p className="text-sm text-ink-muted">
-              {waybackEmptyMessage(result.waybackStatus, result.archiveUrl, result.wbLabel)}
-            </p>
+            <div>
+              <p className="text-sm text-ink-muted">
+                {waybackEmptyMessage(
+                  result.waybackStatus,
+                  result.archiveUrl,
+                  result.wbLabel,
+                  result.waybackHttpStatus,
+                )}
+              </p>
+              {result.oldProducts && result.oldProducts.length > 0 && (
+                // Archived products were harvested even though no single one
+                // stood out as discontinued. Showing them beats discarding them.
+                <div className="mt-3">
+                  <p className="text-xs font-semibold text-ink">
+                    Products found on archived pages
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {result.oldProducts.map((product, i) => (
+                      <li key={i} className="text-sm text-ink">
+                        {product}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           )}
         </Card>
 
