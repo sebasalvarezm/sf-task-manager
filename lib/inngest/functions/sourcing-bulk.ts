@@ -118,7 +118,14 @@ export const sourcingBulkJob = inngest.createFunction(
             const url = item.url;
             const outcome = await step.run(`source-${i}`, async () => {
               try {
-                const cached = await findRecentSourcingByUrl(normalizeSourcingUrl(url), 90);
+                // requireArchive: re-run companies whose archive history was
+                // lost to an Archive.org outage rather than reusing the gap.
+                const cached = await findRecentSourcingByUrl(
+                  normalizeSourcingUrl(url),
+                  90,
+                  undefined,
+                  true,
+                );
                 if (cached?.result) {
                   return {
                     cached: true,

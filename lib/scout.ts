@@ -95,6 +95,14 @@ const waybackLanes: Record<WaybackLane, WaybackLaneState> = {
  */
 let waybackPlaybackCooldownUntil = 0;
 
+/**
+ * Consecutive connection-level playback failures. One is a blip; two in a row
+ * means the host is refusing connections, which during an Archive.org outage is
+ * the dominant failure mode and needs the same patience as a 503.
+ */
+let waybackPlaybackConnectionFailures = 0;
+const WAYBACK_CONNECTION_FAILURE_COOLDOWN_MS = 20_000;
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -214,6 +222,20 @@ async function fetchWaybackText(
       }
     }, lane);
 
+    if (lane === "playback") {
+      if (result.ok) {
+        waybackPlaybackConnectionFailures = 0;
+      } else if (result.failure === "network_error" || result.failure === "timeout") {
+        waybackPlaybackConnectionFailures++;
+        if (waybackPlaybackConnectionFailures >= 2) {
+          waybackPlaybackCooldownUntil = Math.max(
+            waybackPlaybackCooldownUntil,
+            Date.now() + WAYBACK_CONNECTION_FAILURE_COOLDOWN_MS,
+          );
+        }
+      }
+    }
+
     if (result.ok) return result;
     lastFailure = result;
 
@@ -222,14 +244,11 @@ async function fetchWaybackText(
       (result.status !== null && WAYBACK_RETRYABLE_STATUSES.has(result.status));
     if (!retryable || attempt === maxAttempts) break;
 
-    // A 429/503 on playback already set the shared cooldown, which the next
-    // loop waits on. Anything else uses the ordinary exponential backoff.
-    if (
-      !(
-        (result.status === 429 || result.status === 503) &&
-        lane === "playback"
-      )
-    ) {
+    // When a shared cooldown is now in force the next loop waits on it, so an
+    // extra exponential backoff on top would only shorten the retry budget.
+    const cooldownActive =
+      lane === "playback" && waybackPlaybackCooldownUntil > Date.now();
+    if (!cooldownActive) {
       const backoff =
         WAYBACK_RETRY_BASE_MS * 2 ** (attempt - 1) +
         Math.floor(Math.random() * 250);
@@ -907,7 +926,9 @@ export async function fetchWaybackSnapshot(
     };
   }
 
-  const fetched = await fetchRawText(secureArchiveUrl, 20000, 8000, deadlineAt);
+  // Archive.org playback has been observed succeeding at ~30s when their
+  // service is loaded, so a 20s cut-off discarded pages that were on their way.
+  const fetched = await fetchRawText(secureArchiveUrl, 30000, 8000, deadlineAt);
   if (fetched.failure) {
     const statusDetail = fetched.status ? ` HTTP ${fetched.status}` : "";
     const attemptDetail = fetched.attempts > 1

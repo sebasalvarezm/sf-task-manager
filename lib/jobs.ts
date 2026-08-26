@@ -231,14 +231,49 @@ export function normalizeSourcingUrl(raw: string): string {
 }
 
 /**
+ * Wayback statuses that mean "we could not reach the archive", as opposed to
+ * "this domain genuinely has no snapshots". Only the former is worth retrying.
+ */
+const ARCHIVE_TRANSPORT_FAILURES = new Set([
+  "timeout",
+  "http_error",
+  "network_error",
+  "snapshot_timeout",
+  "snapshot_http_error",
+  "snapshot_network_error",
+]);
+
+/**
+ * True when a stored sourcing result missed its archive history because
+ * Archive.org was unreachable.
+ *
+ * Such a run must not be served from the 90-day cache: an Archive.org outage
+ * would otherwise freeze an empty Discontinued panel in place for three months,
+ * long after their service recovered. A genuinely empty archive ("empty",
+ * "ok", "fallback_used") is a real finding and stays cached.
+ */
+export function sourcingArchiveLookupFailed(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const record = result as Record<string, unknown>;
+  // A run that did retrieve a snapshot is complete regardless of earlier hiccups.
+  if (typeof record.archiveUrl === "string" && record.archiveUrl) return false;
+  const status = record.waybackStatus;
+  return typeof status === "string" && ARCHIVE_TRANSPORT_FAILURES.has(status);
+}
+
+/**
  * Look up the most recent succeeded sourcing job for a given URL within the
  * last `maxAgeDays`. Pulls a window of recent succeeded sourcing rows and
  * filters in JS so we don't need a generated SQL view over `input->>url`.
+ *
+ * Pass `requireArchive` when the caller reuses the whole research result, so a
+ * run that failed to reach Archive.org is treated as a miss and retried.
  */
 export async function findRecentSourcingByUrl(
   normalizedUrl: string,
   maxAgeDays = 90,
   sessionId: string = DEFAULT_SESSION,
+  requireArchive = false,
 ): Promise<(Job & { matchedCompanyUrl?: string }) | null> {
   if (!normalizedUrl) return null;
   const supabase = getSupabaseAdmin();
@@ -260,8 +295,10 @@ export async function findRecentSourcingByUrl(
   for (const row of (data ?? []) as Job[]) {
     if (row.kind === "sourcing") {
       const inputUrl = typeof row.input?.url === "string" ? (row.input.url as string) : "";
-      if (normalizeSourcingUrl(inputUrl) === normalizedUrl) return row;
-      continue;
+      if (normalizeSourcingUrl(inputUrl) !== normalizedUrl) continue;
+      // Keep scanning older runs — one of them may have reached Archive.org.
+      if (requireArchive && sourcingArchiveLookupFailed(row.result)) continue;
+      return row;
     }
     const items = Array.isArray(row.result?.items)
       ? (row.result.items as Array<Record<string, unknown>>)
@@ -271,6 +308,7 @@ export async function findRecentSourcingByUrl(
       const result = item.result && typeof item.result === "object"
         ? (item.result as Record<string, unknown>)
         : null;
+      if (requireArchive && sourcingArchiveLookupFailed(result)) continue;
       if (normalizeSourcingUrl(itemUrl) === normalizedUrl && result) {
         // Consumers that need the actual result (including another bulk run)
         // receive the company result, while the original batch job id remains
@@ -394,6 +432,78 @@ export async function searchSourcingRuns(
     matches,
     truncated: matches.length >= SEARCH_MAX_MATCHES,
   };
+}
+
+/**
+ * One previously generated Call Prep one-pager, keyed the way the /prep page
+ * keys its meetings (`getCacheKey`): the Salesforce account id when we have
+ * one, otherwise the email domain.
+ */
+export type PrepLibraryEntry = {
+  key: string;
+  onePager: Record<string, unknown>;
+  prepMode: "first_call" | "reconnect";
+  generatedAt: string;
+  jobId: string;
+};
+
+const PREP_LIBRARY_ROW_WINDOW = 150;
+
+/**
+ * Every Call Prep one-pager we've already generated, newest-first, deduped to
+ * one entry per company.
+ *
+ * The generated briefings were always written to `jobs.result`, but /prep only
+ * ever read them back from the browser's localStorage — so a prep generated on
+ * one device looked missing on every other one. This is the server-side read
+ * that closes that gap. Pulls a window of succeeded prep rows and buckets them
+ * in JS, same approach as `searchSourcingRuns`.
+ */
+export async function listPrepLibrary(
+  sessionId: string = DEFAULT_SESSION,
+): Promise<PrepLibraryEntry[]> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("*")
+    .eq("session_id", sessionId)
+    .eq("kind", "prep")
+    .eq("status", "succeeded")
+    .order("completed_at", { ascending: false })
+    .limit(PREP_LIBRARY_ROW_WINDOW);
+  if (error) throw new Error(`Failed to list prep library: ${error.message}`);
+
+  const byKey = new Map<string, PrepLibraryEntry>();
+
+  for (const row of (data ?? []) as Job[]) {
+    const onePager = row.result?.onePager;
+    if (!onePager || typeof onePager !== "object") continue;
+
+    // Mirror the client's getCacheKey ordering. Both keys are registered when
+    // available so a meeting matches whether or not it resolved an account.
+    const accountId =
+      typeof row.input?.accountId === "string" ? row.input.accountId : null;
+    const domain =
+      typeof row.input?.domain === "string" ? row.input.domain : null;
+    const keys = [accountId, domain].filter(
+      (k): k is string => typeof k === "string" && k.length > 0,
+    );
+    if (keys.length === 0) continue;
+
+    const entry: Omit<PrepLibraryEntry, "key"> = {
+      onePager: onePager as Record<string, unknown>,
+      prepMode: row.input?.prepMode === "reconnect" ? "reconnect" : "first_call",
+      generatedAt: row.completed_at ?? row.created_at,
+      jobId: row.id,
+    };
+
+    // Rows arrive newest-first, so the first key we see wins.
+    for (const key of keys) {
+      if (!byKey.has(key)) byKey.set(key, { key, ...entry });
+    }
+  }
+
+  return Array.from(byKey.values());
 }
 
 export function summarize(jobs: Job[]): {

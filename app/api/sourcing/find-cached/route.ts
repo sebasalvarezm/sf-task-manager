@@ -29,7 +29,10 @@ export async function POST(req: Request) {
   }
 
   try {
-    const job = await findRecentSourcingByUrl(normalized, 90);
+    // requireArchive: a run that could not reach Archive.org is not worth
+    // offering as a cached result — it would freeze an empty Discontinued
+    // panel in place for 90 days after their outage ended.
+    const job = await findRecentSourcingByUrl(normalized, 90, undefined, true);
     if (!job) {
       return NextResponse.json({ found: false });
     }
