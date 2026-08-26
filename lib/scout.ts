@@ -1147,6 +1147,49 @@ export function quickCompanyName(url: string): string {
   }
 }
 
+// Longest form first: regex alternation takes the first match, so "Corp" ahead
+// of "Corporation" would truncate the name.
+const COMPANY_LEGAL_SUFFIX =
+  "(?:Incorporated|Corporation|Holdings|Limited|Company|GmbH|Group|SARL|Corp|Inc|Ltd|LLC|PLC|Pty|SAS|SpA|SRL|AB|AG|AS|BV|NV|Oy|SA)";
+
+/**
+ * Pull the company's real registered name out of the scraped page.
+ *
+ * The domain stem is not the company name. "fast-soft.com" belongs to FasTrak
+ * SoftWorks, and searching the web for "Fast-soft" finds whichever unrelated
+ * company happens to share that string — which is how a Wisconsin manufacturer
+ * acquired an address in Saint Petersburg. A copyright or legal footer line is
+ * the most reliable place the true name appears, so read it before guessing.
+ */
+export function extractCompanyNameFromText(text: string): string | null {
+  if (!text) return null;
+  const namePattern = `([A-Z][A-Za-z0-9&.'\\-]*(?:[ ][A-Z][A-Za-z0-9&.'\\-]*){0,4}[, ]+${COMPANY_LEGAL_SUFFIX}\\.?)`;
+  // Deliberately no "i" flag: the name capture must stay case-sensitive so it
+  // cannot start mid-sentence on a lowercase word. Literal keywords therefore
+  // spell out their own casing.
+  const patterns = [
+    // "© 2025 FasTrak SoftWorks, Inc." — strongest signal.
+    new RegExp(
+      `(?:©|&copy;|\\(c\\)|[Cc]opyright|COPYRIGHT)\\s*(?:\\d{4})?\\s*(?:[-–]\\s*\\d{4})?\\s*,?\\s*${namePattern}`,
+    ),
+    // "All rights reserved" lines often carry the name just before them.
+    new RegExp(`${namePattern}[^.]{0,40}[Aa]ll [Rr]ights [Rr]eserved`),
+    // Bare legal name anywhere in the page as a last resort.
+    new RegExp(namePattern),
+  ];
+  for (const [index, pattern] of patterns.entries()) {
+    // The bare-name pattern is a last resort and would happily match a customer
+    // or partner named mid-page, so restrict it to the footer region where a
+    // site states its own legal name.
+    const haystack = index === patterns.length - 1 ? text.slice(-1500) : text;
+    const match = haystack.match(pattern);
+    const name = match?.[1]?.replace(/\s+/g, " ").trim().replace(/[,.]$/, "");
+    // Two characters of "name" before a suffix is noise, not a company.
+    if (name && name.length >= 5 && name.length <= 70) return name;
+  }
+  return null;
+}
+
 /** street number present → "exact", comma + region only → "city". */
 function addressConfidence(address: string): "exact" | "city" {
   return /\d/.test(address) ? "exact" : "city";
@@ -1247,7 +1290,17 @@ If you cannot find any location for this specific company, return exactly: null`
   // This is the fallback when the site has no address and the domain search
   // came up empty — e.g. "<name> software headquarters address".
   const name = companyName || quickCompanyName(url);
-  if (name) {
+  const nameSearchDomain = (() => {
+    try {
+      return new URL(url.startsWith("http") ? url : `https://${url}`).hostname.replace(
+        /^www\./,
+        "",
+      );
+    } catch {
+      return "";
+    }
+  })();
+  if (name && nameSearchDomain) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tools: any[] = [
@@ -1261,16 +1314,21 @@ If you cannot find any location for this specific company, return exactly: null`
         messages: [
           {
             role: "user",
-            content: `Use web search to find where the software company "${name}" is based.
+            content: `Find where a company is based. The company is identified by its WEBSITE, not by its name:
 
-Try searches like "${name} software headquarters address", "${name} head office", "${name} company location", and "${name} contact".
+Website: ${nameSearchDomain}
+Name it appears to use: "${name}"
 
-ONLY return a location that clearly belongs to this specific company.
-- Best case: full street address as a single line (e.g. '123 Main St, Denver, CO 80202').
-- A city + state/country alone is perfectly fine and expected here (e.g. 'Reno, NV' or 'Bel Air, MD' or 'Toronto, ON').
-- Return ONLY the address/location, no commentary or preamble.
+Try searches like "${name} headquarters address", "${nameSearchDomain} head office", "${name} company location", and "${name} contact".
 
-If you cannot find any location for this specific company, return exactly: null`,
+CRITICAL: unrelated companies often share a similar name in other countries. The location you return must belong to the company that operates ${nameSearchDomain}. If the pages you find describe a different company that merely has a similar name, return null instead of guessing.
+
+Return ONLY a JSON object, no commentary:
+{"location": "<full street address, or city + state/country>", "website": "<the official domain of the company that location belongs to>"}
+
+- Best case location: '123 Main St, Denver, CO 80202'. City + state/country alone is fine: 'Reno, NV' or 'Toronto, ON'.
+- "website" must be the domain you actually saw associated with that location, so it can be checked against ${nameSearchDomain}.
+- If you cannot confirm a location for the company operating ${nameSearchDomain}, return: {"location": null, "website": null}`,
           },
         ],
       });
@@ -1280,8 +1338,31 @@ If you cannot find any location for this specific company, return exactly: null`
       );
       if (textBlocks.length > 0) {
         const raw = textBlocks[textBlocks.length - 1].text.trim();
-        const validated = validateAddress(raw);
-        if (validated) {
+        const parsedAnswer = (() => {
+          try {
+            return JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? raw) as {
+              location?: string | null;
+              website?: string | null;
+            };
+          } catch {
+            // Older behaviour: a bare address line rather than JSON.
+            return { location: raw, website: null };
+          }
+        })();
+        const validated = parsedAnswer.location
+          ? validateAddress(String(parsedAnswer.location))
+          : null;
+        // The search was by name, so confirm the answer belongs to OUR domain.
+        // A same-named company elsewhere is the exact failure this guards.
+        const answerDomain = normalizeAddressDomain(parsedAnswer.website);
+        const ourDomain = normalizeAddressDomain(nameSearchDomain);
+        const domainConflict =
+          Boolean(answerDomain) &&
+          Boolean(ourDomain) &&
+          answerDomain !== ourDomain &&
+          !answerDomain.endsWith(`.${ourDomain}`) &&
+          !ourDomain.endsWith(`.${answerDomain}`);
+        if (validated && !domainConflict) {
           return {
             address: validated,
             source: "web search (company name)",
@@ -1296,6 +1377,18 @@ If you cannot find any location for this specific company, return exactly: null`
   }
 
   return { address: null, source: null, sourceUrl: null, confidence: "none" };
+}
+
+/** Bare registrable host for comparing a search answer against our website. */
+function normalizeAddressDomain(value: string | null | undefined): string {
+  if (!value) return "";
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    .split("?")[0];
 }
 
 /**

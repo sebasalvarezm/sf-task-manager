@@ -18,6 +18,7 @@ import {
   extractAddress,
   findRestaurants,
   quickCompanyName,
+  extractCompanyNameFromText,
   extractOutreachParagraph,
   personalizeOutreach,
   generateEmailHook,
@@ -541,7 +542,16 @@ export async function runFullSourcing(input: {
   // ───────── Stage 3: Address + outreach + competitors + restaurants ─────────
   logs.push("Finding company address...");
   const outreachLogs: string[] = [];
-  const sourceCompanyName = quickCompanyName(normalized);
+  // Prefer the registered name printed on the site over the domain stem. The
+  // stem is often not the company ("fast-soft.com" is FasTrak SoftWorks), and
+  // every lookup below searches by this name.
+  const extractedCompanyName = extractCompanyNameFromText(currentText);
+  const sourceCompanyName = extractedCompanyName || quickCompanyName(normalized);
+  logs.push(
+    extractedCompanyName
+      ? `Company name from the website: ${sourceCompanyName}.`
+      : `No registered name found on the website — searching as "${sourceCompanyName}" from the domain.`,
+  );
   const [websiteAddressInfo, mapsLocation, outreachParagraph] = await Promise.all([
     extractAddress(anthropic, currentText, normalized, sourceCompanyName, { allowWebSearch: false }),
     findBusinessLocation(sourceCompanyName, normalized).catch(() => null),
