@@ -257,6 +257,16 @@ export function sourcingArchiveLookupFailed(result: unknown): boolean {
   const record = result as Record<string, unknown>;
   // A run that did retrieve a snapshot is complete regardless of earlier hiccups.
   if (typeof record.archiveUrl === "string" && record.archiveUrl) return false;
+  // A run that researched the hook from public sources is also complete. Before
+  // that fallback existed, re-running was the only way to recover a hook; now
+  // re-running just re-pays for a full research pass to reach the same answer.
+  if (
+    record.hookSource === "web_research" &&
+    typeof record.emailHook === "string" &&
+    record.emailHook.trim()
+  ) {
+    return false;
+  }
   const status = record.waybackStatus;
   return typeof status === "string" && ARCHIVE_TRANSPORT_FAILURES.has(status);
 }

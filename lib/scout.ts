@@ -485,11 +485,19 @@ export function isParkedPage(text: string): boolean {
  * Wrapper around Claude messages.create() with automatic retry on transient errors.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callClaude(client: Anthropic, maxRetries = 2, opts: any): Promise<any> {
+async function callClaude(
+  client: Anthropic,
+  maxRetries = 2,
+  opts: any,
+  // Per-request overrides such as `timeout`. The SDK default is 10 minutes,
+  // which is longer than the platform allows a whole sourcing run to take, so
+  // any call inside a time-boxed stage should set its own ceiling.
+  requestOptions?: { timeout?: number }
+): Promise<any> {
   const RETRYABLE = [500, 503, 529];
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await client.messages.create(opts);
+      return await client.messages.create(opts, requestOptions);
     } catch (err) {
       if (
         err instanceof Anthropic.APIError &&
@@ -1059,22 +1067,28 @@ ${JSON.stringify(oldProducts, null, 2)}
 CURRENT SITE:
 ${JSON.stringify(currentProducts, null, 2)}
 
-Find ONE product or service from the OLD list that does NOT have a clear match on the current site. Consider all of these scenarios:
-- The exact name is no longer present
-- The product was likely renamed to something different
-- A service line was merged into another offering
+Find ONE product or service from the OLD list whose absence from the current site is CLEAR. Any of these counts as clear:
+- The exact name is gone and no current item plausibly covers it
 - An old branded name was replaced with a generic description
 - A product category or capability was dropped entirely
 
-You MUST return a result unless the two lists are virtually identical (same items, same names). Pick the most specific and interesting one — a named product or distinct service line, not a generic category like "consulting" or "support."
+Do NOT count these as discontinued:
+- A product that was simply renamed, where a current item clearly does the same job
+- A service line that was folded into a broader current offering
+- A generic category like "consulting", "support", "training", or "integrations"
+- Anything where you are guessing. A wrong discontinuation is worse than none, because it goes into a cold email as a statement of fact.
 
-Return only the product/service name from the OLD list. No explanation.`,
+If no product's absence is clear, return exactly: none
+
+Return only the product/service name from the OLD list, or "none". No explanation.`,
       },
     ],
   });
 
   const raw = resp.content[0].text.trim();
-  if (raw.toLowerCase() === "none" || raw.length > 200) return null;
+  // The model is now allowed to decline, so accept every shape of "no" it may
+  // answer with ("none", "None.", "none — nothing is clearly gone").
+  if (/^none\b/i.test(raw) || raw.length > 200) return null;
   return raw;
 }
 
@@ -1103,25 +1117,57 @@ export type AddressResolution = {
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractFirstCitationUrl(resp: any): string | null {
+  return collectCitationUrls(resp)[0] ?? null;
+}
+
+/**
+ * Collect every real http(s) URL Claude's web search actually returned, walking
+ * both `web_search_tool_result` blocks and the `citations` arrays on text
+ * blocks. Also descends into nested result blocks, which is where results land
+ * when the newer search tool filters them inside code execution.
+ *
+ * Used to verify that a URL a model *claims* as its source is one the search
+ * genuinely returned — a model-written URL on its own proves nothing.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function collectCitationUrls(resp: any): string[] {
   const isHttp = (u: unknown): u is string =>
     typeof u === "string" && /^https?:\/\//i.test(u);
+  const found: string[] = [];
+  const seen = new Set<string>();
+  const push = (u: unknown) => {
+    if (!isHttp(u) || seen.has(u)) return;
+    seen.add(u);
+    found.push(u);
+  };
 
-  const blocks = Array.isArray(resp?.content) ? resp.content : [];
-  for (const block of blocks) {
-    // web_search_tool_result → content is a list of results, each with a url
-    if (block?.type === "web_search_tool_result") {
-      const results = Array.isArray(block.content) ? block.content : [];
-      for (const r of results) {
-        if (isHttp(r?.url)) return r.url;
-      }
+  // The block shapes are loosely typed and nest differently across tool
+  // versions, so walk the whole structure defensively rather than assuming one
+  // layout. Depth-capped so a malformed response can never spin.
+  const walk = (node: unknown, depth: number) => {
+    if (depth > 6 || node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
     }
-    // text blocks can carry citations with urls
-    const citations = Array.isArray(block?.citations) ? block.citations : [];
-    for (const c of citations) {
-      if (isHttp(c?.url)) return c.url;
+    const record = node as Record<string, unknown>;
+    if ("url" in record) push(record.url);
+    for (const key of ["content", "citations", "results"]) {
+      if (key in record) walk(record[key], depth + 1);
     }
+  };
+
+  walk(resp?.content, 0);
+  return found;
+}
+
+/** Hostname of a URL, lowercased and without "www.". Null when unparseable. */
+function urlHost(value: string): string | null {
+  try {
+    return new URL(value).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /** A Google Maps search link for an address/city — the guaranteed fallback. */
@@ -2013,20 +2059,463 @@ export type CompanyAnchor = {
   type:
     | "former_name" // e.g. "the days operating as Resolution Systems"
     | "product_release" // e.g. "the release of Herbst Attendance"
+    | "formation_event" // formed by a merger/acquisition/spin-out
+    | "release_trail" // the one real launch among annual version bumps
+    | "registry_artifact" // Companies House number, App Store listing, etc.
+    | "own_timeline" // the company's own history/milestones page
     | "distinctive_moment" // rebrand, acquisition, founder anecdote
     | "obscure_trivia" // weird artifact from old snapshots
     | "early_niche"; // a specific named customer segment they pioneered
   anchor: string; // exact phrase to slot after "going back to"
   evidence: string; // 1 sentence: where this came from
+  /** Real page the claim came from. Null only on the legacy hinted path. */
+  sourceUrl?: string | null;
+  /** Human-readable provenance, e.g. "PitchBook \"formerly known as\" field". */
+  sourceLabel?: string | null;
+  /** Year of the event, when one is genuinely established. */
+  year?: number | null;
+  /** How sure we are the FACT is true. */
+  factConfidence?: "high" | "medium" | "low";
+  /** How sure we are of the YEAR — often lower than the fact itself. */
+  dateConfidence?: "high" | "medium" | "low";
 };
 
 /**
- * Research a company for distinctive, hook-worthy anchors using Claude with
- * web_search. Returns a canonical companyName and up to 5 anchors ranked
- * most-specific first.
+ * One class of source that historically yields a usable hook, with the searches
+ * that actually find it. These are modelled on hand-researched examples: a
+ * PitchBook "formerly known as" field, a dated PRWeb release, a company's own
+ * "40 Years of Innovation" timeline, a Companies House number in a site footer.
  *
- * Failure-tolerant: on any error returns a domain-stem fallback companyName
- * and an empty anchors array, letting generateEmailHook() degrade to a
+ * Encoding the queries beats telling the model to "research the company's
+ * history" — it aims the search budget where the answers actually live.
+ */
+type ProvenanceClass = {
+  type: CompanyAnchor["type"];
+  label: string;
+  /** What a hit looks like, so the model knows when it has found one. */
+  looksLike: string;
+  queries: (name: string, domain: string) => string[];
+};
+
+/** Round 1 — the three classes that hit most often. */
+const PROVENANCE_ROUND_1: ProvenanceClass[] = [
+  {
+    type: "former_name",
+    label: "former name or rebrand",
+    looksLike:
+      'a prior trading name, predecessor entity, or "formerly known as" record',
+    queries: (name) => [
+      `"${name}" "formerly known as"`,
+      `"${name}" renamed OR rebranded OR "previously known as" OR "originally called"`,
+    ],
+  },
+  {
+    type: "own_timeline",
+    label: "the company's own history page",
+    looksLike:
+      'a dated milestone on their own site — an "our story", timeline, or "N years of" page',
+    queries: (name, domain) => [
+      `site:${domain} history OR timeline OR "our story" OR milestones OR anniversary`,
+    ],
+  },
+  {
+    type: "product_release",
+    label: "dated press release",
+    looksLike:
+      "a wire-service announcement with a real date and a named product",
+    queries: (name) => [
+      `"${name}" prweb OR prnewswire OR businesswire announces OR launches OR introduces`,
+    ],
+  },
+];
+
+/** Round 2 — only runs when round 1 came up dry. */
+const PROVENANCE_ROUND_2: ProvenanceClass[] = [
+  {
+    type: "formation_event",
+    label: "formation or M&A event",
+    looksLike:
+      "the company being formed by a merger, acquisition, or spin-out, with the acquired name",
+    queries: (name) => [
+      `"${name}" acquired OR merged OR "was formed when" OR "spun out of" OR "series a"`,
+    ],
+  },
+  {
+    type: "release_trail",
+    label: "version or release-notes trail",
+    looksLike:
+      "a version history where one entry is a genuinely new product rather than an annual bump",
+    queries: (name, domain) => [
+      `site:${domain} "release notes" OR "what's new" OR "version history" OR changelog`,
+    ],
+  },
+  {
+    type: "registry_artifact",
+    label: "registry or app-store artifact",
+    looksLike:
+      "a company registration number, incorporation date, or an app store listing that dates a product",
+    queries: (name) => [
+      `"${name}" "Companies House" OR incorporated OR "app store" OR "google play"`,
+    ],
+  },
+];
+
+/**
+ * Search tool versions to try, best first.
+ *
+ * The basic tool leads deliberately. The newer version filters results inside
+ * code execution, which is meant to save context, but measured against three
+ * searches it was worse on both axes — 49s and 42.3k input tokens versus 20s
+ * and 22.7k for the basic tool. Provisioning the sandbox costs more than the
+ * filtering saves at this size, and 2.5x the latency does not fit inside a job
+ * the platform kills at 300s.
+ *
+ * The newer version stays as a fallback purely so this keeps working if a
+ * future model stops accepting the basic tool.
+ */
+const HOOK_SEARCH_TOOL_VERSIONS = [
+  "web_search_20250305",
+  "web_search_20260209",
+] as const;
+
+/**
+ * Ceiling for one research round. Three searches measured 20s, so this is
+ * generous — it exists to stop a stalled round from consuming a run's entire
+ * 300s allowance, which is exactly what the SDK's 10-minute default allows.
+ * The retry wrapper does not retry timeouts, so a stall fails the round once
+ * and the ladder logs it rather than trying again.
+ */
+const HOOK_SEARCH_TIMEOUT_MS = 90_000;
+
+/**
+ * Call Claude with the web search tool, stepping down the tool version if the
+ * API rejects the newer one for this model.
+ */
+async function callClaudeWithWebSearch(
+  client: Anthropic,
+  maxUses: number,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  opts: any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  for (let i = 0; i < HOOK_SEARCH_TOOL_VERSIONS.length; i++) {
+    const version = HOOK_SEARCH_TOOL_VERSIONS[i];
+    const isLast = i === HOOK_SEARCH_TOOL_VERSIONS.length - 1;
+    try {
+      return await callClaude(
+        client,
+        2,
+        {
+          ...opts,
+          tools: [{ type: version, name: "web_search", max_uses: maxUses }],
+        },
+        { timeout: HOOK_SEARCH_TIMEOUT_MS }
+      );
+    } catch (err) {
+      const rejectedToolVersion =
+        err instanceof Anthropic.BadRequestError &&
+        /web_search|allowed_callers|tool/i.test(err.message);
+      if (rejectedToolVersion && !isLast) continue;
+      throw err;
+    }
+  }
+}
+
+/** How many web searches a response actually spent, for cost logging. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function webSearchCount(resp: any): number {
+  const n = resp?.usage?.server_tool_use?.web_search_requests;
+  return typeof n === "number" ? n : 0;
+}
+
+/**
+ * Pull the first balanced JSON object out of a model response, tolerating code
+ * fences and any stray commentary around it. Returns null when there is no
+ * parseable object — the caller then knows the call genuinely failed instead of
+ * silently treating a parse error as "found nothing".
+ */
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  const text = raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1)) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+const ANCHOR_TYPES = new Set<CompanyAnchor["type"]>([
+  "former_name",
+  "product_release",
+  "formation_event",
+  "release_trail",
+  "registry_artifact",
+  "own_timeline",
+  "distinctive_moment",
+  "obscure_trivia",
+  "early_niche",
+]);
+
+function normalizeConfidence(value: unknown): "high" | "medium" | "low" {
+  // Default LOW, never high — a missing or garbled confidence must not become a
+  // confident claim in a cold email.
+  return value === "high" || value === "medium" ? value : "low";
+}
+
+function normalizeYear(value: unknown): number | null {
+  const n = typeof value === "string" ? parseInt(value, 10) : value;
+  if (typeof n !== "number" || !Number.isFinite(n)) return null;
+  const currentYear = new Date().getFullYear();
+  return n >= 1900 && n <= currentYear ? Math.trunc(n) : null;
+}
+
+/**
+ * Turn the model's raw anchor JSON into trustworthy anchors.
+ *
+ * The important work happens here rather than in the prompt: "do not invent" is
+ * an instruction a model can fail to follow, whereas a missing or unverifiable
+ * source URL is something we can check.
+ *
+ * - No well-formed http(s) source URL → the anchor is discarded.
+ * - `searchUrls` holds the URLs the web search genuinely returned. When we have
+ *   them, an anchor citing a host that never appeared is discarded. When the
+ *   response carried none (some tool versions filter them out), the anchor is
+ *   kept but can rise no higher than medium confidence.
+ * - A former-name or formation claim sourced only to the company's own site is
+ *   capped at medium: it may well be true, but it is self-reported.
+ */
+function validateColdAnchors(
+  rawAnchors: unknown,
+  searchUrls: string[],
+  companyHost: string | null
+): CompanyAnchor[] {
+  if (!Array.isArray(rawAnchors)) return [];
+  const searchHosts = new Set(
+    searchUrls.map(urlHost).filter((h): h is string => !!h)
+  );
+  const out: CompanyAnchor[] = [];
+
+  for (const item of rawAnchors) {
+    if (!item || typeof item !== "object") continue;
+    const a = item as Record<string, unknown>;
+
+    const anchor = typeof a.anchor === "string" ? a.anchor.trim() : "";
+    if (!anchor) continue;
+    const type = a.type as CompanyAnchor["type"];
+    if (!ANCHOR_TYPES.has(type)) continue;
+
+    const sourceUrl = typeof a.sourceUrl === "string" ? a.sourceUrl.trim() : "";
+    const host = /^https?:\/\//i.test(sourceUrl) ? urlHost(sourceUrl) : null;
+    if (!host) continue; // no checkable source, no anchor
+
+    let factConfidence = normalizeConfidence(a.factConfidence);
+
+    if (searchHosts.size > 0) {
+      // We know what the search returned, so an unlisted host is a fabrication.
+      if (!searchHosts.has(host)) continue;
+    } else if (factConfidence === "high") {
+      // Nothing to check the URL against — do not let it claim certainty.
+      factConfidence = "medium";
+    }
+
+    const selfSourced = !!companyHost && host === companyHost;
+    if (
+      selfSourced &&
+      (type === "former_name" || type === "formation_event") &&
+      factConfidence === "high"
+    ) {
+      factConfidence = "medium";
+    }
+
+    out.push({
+      type,
+      anchor,
+      evidence: typeof a.evidence === "string" ? a.evidence.trim() : "",
+      sourceUrl,
+      sourceLabel:
+        typeof a.sourceLabel === "string" && a.sourceLabel.trim()
+          ? a.sourceLabel.trim()
+          : host,
+      year: normalizeYear(a.year),
+      factConfidence,
+      dateConfidence: normalizeConfidence(a.dateConfidence),
+    });
+  }
+
+  return rankAnchors(out);
+}
+
+/**
+ * Strongest facts first, capped at 5. A checkable claim beats a more colourful
+ * shaky one, so the hook writer sees the defensible options at the top.
+ */
+function rankAnchors(anchors: CompanyAnchor[]): CompanyAnchor[] {
+  const rank = { high: 0, medium: 1, low: 2 } as const;
+  return [...anchors]
+    .sort(
+      (x, y) => rank[x.factConfidence ?? "low"] - rank[y.factConfidence ?? "low"]
+    )
+    .slice(0, 5);
+}
+
+/** Does this set of anchors contain something worth stopping the search for? */
+function hasStrongAnchor(anchors: CompanyAnchor[]): boolean {
+  return anchors.some((a) => a.factConfidence === "high" && !!a.sourceUrl);
+}
+
+/**
+ * Build the cold-research prompt for one round of provenance classes.
+ * Deliberately does NOT include the company's website copy — these are searches
+ * for historical records, and homepage marketing text only adds tokens.
+ */
+function buildColdRoundPrompt(
+  identity: string,
+  companyName: string,
+  domain: string,
+  classes: ProvenanceClass[],
+  alreadyTried: string[]
+): string {
+  const searchBlock = classes
+    .map((c, i) => {
+      const queries = c
+        .queries(companyName, domain)
+        .map((q) => `     ${q}`)
+        .join("\n");
+      return `${i + 1}. ${c.label.toUpperCase()} — looking for ${c.looksLike}\n   Run:\n${queries}\n   If found, return it as type "${c.type}".`;
+    })
+    .join("\n\n");
+
+  const triedBlock =
+    alreadyTried.length > 0
+      ? `\nAlready searched and came up empty, do not repeat: ${alreadyTried.join(", ")}.\n`
+      : "";
+
+  return `You are researching a company's history to write one line of a personal cold email. The line reads "I have studied ${companyName} going back to {ANCHOR}." ANCHOR must be a SPECIFIC, VERIFIABLE artifact of the company's past.
+
+${identity}
+${triedBlock}
+RUN THESE SEARCHES. They are chosen because they are where this kind of record actually lives:
+
+${searchBlock}
+
+WHAT A GOOD ANCHOR LOOKS LIKE (all from real research):
+- "the days operating as MyLumper" (a former name, from a "formerly known as" record)
+- "the launch of the Field Data Capture app for iPad" (a named product in a dated press release)
+- "the release of CSiPlant" (the one genuinely new product among years of version bumps)
+- "the days as the software arm of Cleveland Process Designs" (a predecessor entity)
+
+WHAT IS UNUSABLE:
+- Anything a reader could write after five seconds on the homepage.
+- A bare year with no event attached.
+- A description of what they sell today.
+- A claim you did not actually see on a page you searched.
+
+RULES:
+- Every anchor MUST carry the real URL of the page you saw it on, in "sourceUrl". No URL means do not return the anchor at all.
+- "factConfidence" is how sure you are the FACT is true. "dateConfidence" is how sure you are of the YEAR. These are often different: you may be certain a product exists but unsure when it launched. Say so. Use "low" when you are inferring rather than reading.
+- Only set "year" when a page actually states or clearly dates it. Otherwise null.
+- Returning an empty list is a correct and useful answer. Inventing a plausible anchor is the worst possible outcome, because it goes into an email as a statement of fact to the person who would know it is wrong.
+
+Return STRICT JSON only, no markdown fences, no commentary:
+{
+  "companyName": "${companyName}",
+  "anchors": [
+    {
+      "type": "former_name",
+      "anchor": "the days operating as MyLumper",
+      "sourceUrl": "https://example.com/page-you-actually-saw",
+      "sourceLabel": "PitchBook \\"formerly known as\\" field",
+      "year": 2019,
+      "factConfidence": "high",
+      "dateConfidence": "low",
+      "evidence": "one sentence: what the page said"
+    }
+  ]
+}`;
+}
+
+/**
+ * Confirm the year of an otherwise-strong anchor by reading its source page.
+ *
+ * Uses Jina Reader, which is keyless and free per fetch, so this costs one tiny
+ * model call and nothing else. Only worth doing when we trust the fact but not
+ * the date — the alternative is publishing a year we cannot defend.
+ */
+async function confirmAnchorYear(
+  client: Anthropic,
+  anchor: CompanyAnchor
+): Promise<CompanyAnchor> {
+  if (!anchor.sourceUrl) return anchor;
+  const text = await fetchPageText(anchor.sourceUrl, 12000);
+  if (!text || text.length < 300) return anchor;
+
+  try {
+    const resp = await callClaude(client, 1, {
+      model: "claude-sonnet-4-6",
+      max_tokens: 60,
+      messages: [
+        {
+          role: "user",
+          content: `This page is the source for the claim: "${anchor.anchor}".
+
+Does the page state a specific year for that event? Answer with the 4-digit year alone if the page clearly dates it. If the page does not date it, or you would be inferring, answer exactly: unknown
+
+Page text:
+${text.slice(0, 3000)}`,
+        },
+      ],
+    });
+    const raw = resp.content[0]?.text?.trim() ?? "";
+    const year = normalizeYear(raw.match(/\b(19|20)\d{2}\b/)?.[0]);
+    if (year) return { ...anchor, year, dateConfidence: "high" };
+  } catch {
+    // Non-critical: keep the anchor exactly as it was.
+  }
+  return anchor;
+}
+
+/**
+ * Research a company for distinctive, hook-worthy anchors using Claude with
+ * web_search. Returns a canonical companyName and up to 5 anchors, strongest
+ * first.
+ *
+ * Two modes:
+ *   "hinted" — the Wayback Machine gave us product history, so the search is a
+ *     supplement steered by those hints. This is the original behavior.
+ *   "cold"  — the archive gave us nothing (it is down, or the domain has no
+ *     snapshots). Runs a two-round ladder of targeted searches aimed at the
+ *     source types that historically yield a usable hook: former-name records,
+ *     the company's own history page, dated press releases, then formation
+ *     events, release-notes trails, and registry artifacts. Round 2 only runs
+ *     if round 1 found nothing solid, so the common case costs three searches.
+ *
+ * Failure-tolerant: on any error returns a domain-stem fallback companyName and
+ * an empty anchors array, letting generateEmailHook() degrade to a
  * local-data-only hook.
  */
 export async function researchCompanyAnchors(
@@ -2036,11 +2525,40 @@ export async function researchCompanyAnchors(
   products: string[],
   oldProducts: string[],
   discontinued: string | null,
-  archiveYear: string | null
-): Promise<{ companyName: string; anchors: CompanyAnchor[] }> {
+  archiveYear: string | null,
+  opts: {
+    mode?: "hinted" | "cold";
+    companyNameHint?: string | null;
+    onLog?: (message: string) => void;
+    /** Epoch ms after which optional extra rounds are skipped. */
+    deadlineAt?: number;
+  } = {}
+): Promise<{
+  companyName: string;
+  anchors: CompanyAnchor[];
+  searchCount: number;
+}> {
   const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
-  const stem = parsed.hostname.replace("www.", "").split(".")[0];
-  const fallbackName = stem.charAt(0).toUpperCase() + stem.slice(1);
+  const domain = parsed.hostname.replace(/^www\./i, "");
+  const stem = domain.split(".")[0];
+  const fallbackName =
+    opts.companyNameHint?.trim() ||
+    stem.charAt(0).toUpperCase() + stem.slice(1);
+  const mode = opts.mode ?? "hinted";
+  const log = opts.onLog ?? (() => {});
+
+  if (mode === "cold") {
+    return researchAnchorsCold({
+      client,
+      url,
+      domain,
+      companyName: fallbackName,
+      currentText,
+      products,
+      log,
+      deadlineAt: opts.deadlineAt,
+    });
+  }
 
   try {
     const productsHint =
@@ -2055,15 +2573,9 @@ export async function researchCompanyAnchors(
       ? `\nDiscontinued product (appeared on an old snapshot but absent today): ${discontinued}`
       : "";
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tools: any[] = [
-      { type: "web_search_20250305", name: "web_search", max_uses: 4 },
-    ];
-
-    const resp = await callClaude(client, 2, {
+    const resp = await callClaudeWithWebSearch(client, 4, {
       model: "claude-sonnet-4-6",
-      max_tokens: 1500,
-      tools,
+      max_tokens: 1200,
       messages: [
         {
           role: "user",
@@ -2075,13 +2587,14 @@ Examples of great anchors (these came from real research, not the homepage):
 - "the release of ArcMiner" (a specific named product launch)
 - "the days when the Okappy mascot would appear on the Team page of the website" (obscure trivia from old snapshots)
 
-TARGET COMPANY: ${url}${productsHint}${oldProductsHint}${discontinuedHint}
+TARGET COMPANY: ${url}
+Company name: ${fallbackName}${productsHint}${oldProductsHint}${discontinuedHint}
 
 Excerpt from the company's current website:
-${currentText.slice(0, 1500)}
+${currentText.slice(0, 1200)}
 
 YOUR TASK:
-1. Identify the company's canonical brand name (e.g. "MaxMine", not "maxmine.com").
+1. Confirm the company's canonical brand name (e.g. "MaxMine", not "maxmine.com").
 2. Use web_search to research the company's history. Look for:
    - A FORMER NAME (rebrand, prior LLC, predecessor entity, acquired-from name).
    - A SPECIFIC PRODUCT LAUNCH from their early years (with the actual product name).
@@ -2097,12 +2610,14 @@ ANCHOR FORMAT:
   - "the Okappy mascot's appearance on your early Team page"
 - Never use a bare year. Never use a generic descriptor of what they do now.
 - Each anchor must be falsifiable: a reader could in principle look it up.
+- "factConfidence" is how sure you are the fact is true; "dateConfidence" is how sure you are of the year. They are often different — say so honestly, and use "low" when inferring.
+- Include "sourceUrl" whenever the claim came from a page you searched.
 
 Return STRICT JSON only, no markdown fences, no commentary:
 {
   "companyName": "MaxMine",
   "anchors": [
-    {"type": "former_name", "anchor": "the days operating as Resolution Systems", "evidence": "one sentence: where you found this"}
+    {"type": "former_name", "anchor": "the days operating as Resolution Systems", "sourceUrl": "https://...", "sourceLabel": "where this came from", "year": null, "factConfidence": "high", "dateConfidence": "low", "evidence": "one sentence: where you found this"}
   ]
 }
 
@@ -2111,41 +2626,202 @@ If you genuinely cannot find anything specific via web search, still return the 
       ],
     });
 
+    const searchCount = webSearchCount(resp);
     const textBlocks = resp.content.filter(
       (b: { type: string }) => b.type === "text"
     );
-    if (textBlocks.length === 0) return { companyName: fallbackName, anchors: [] };
-    const raw = textBlocks[textBlocks.length - 1].text.trim();
-    const cleaned = raw
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/```\s*$/i, "")
-      .trim();
-
-    const parsedJson = JSON.parse(cleaned) as {
-      companyName?: string;
-      anchors?: CompanyAnchor[];
-    };
+    if (textBlocks.length === 0) {
+      return { companyName: fallbackName, anchors: [], searchCount };
+    }
+    const parsedJson = parseJsonObject(
+      textBlocks[textBlocks.length - 1].text.trim()
+    );
+    if (!parsedJson) {
+      log("Anchor research returned an unreadable answer — no anchors used.");
+      return { companyName: fallbackName, anchors: [], searchCount };
+    }
 
     const companyName =
       typeof parsedJson.companyName === "string" && parsedJson.companyName.trim()
         ? parsedJson.companyName.trim()
         : fallbackName;
-    const anchors = Array.isArray(parsedJson.anchors)
-      ? parsedJson.anchors
-          .slice(0, 5)
-          .filter(
-            (a) =>
-              a &&
-              typeof a.anchor === "string" &&
-              a.anchor.trim().length > 0 &&
-              typeof a.type === "string"
-          )
-      : [];
 
-    return { companyName, anchors };
+    // The hinted path keeps its historical tolerance: the Wayback signals are
+    // the primary evidence here, so an anchor without a URL is still usable.
+    const rawAnchors = Array.isArray(parsedJson.anchors)
+      ? parsedJson.anchors
+      : [];
+    const anchors: CompanyAnchor[] = rawAnchors
+      .slice(0, 5)
+      .filter(
+        (a: unknown) =>
+          !!a &&
+          typeof a === "object" &&
+          typeof (a as Record<string, unknown>).anchor === "string" &&
+          ((a as Record<string, unknown>).anchor as string).trim().length > 0 &&
+          ANCHOR_TYPES.has((a as Record<string, unknown>).type as CompanyAnchor["type"])
+      )
+      .map((item: unknown) => {
+        const a = item as Record<string, unknown>;
+        const sourceUrl =
+          typeof a.sourceUrl === "string" && /^https?:\/\//i.test(a.sourceUrl)
+            ? a.sourceUrl
+            : null;
+        return {
+          type: a.type as CompanyAnchor["type"],
+          anchor: (a.anchor as string).trim(),
+          evidence: typeof a.evidence === "string" ? a.evidence : "",
+          sourceUrl,
+          sourceLabel:
+            typeof a.sourceLabel === "string" && a.sourceLabel.trim()
+              ? a.sourceLabel.trim()
+              : sourceUrl
+                ? urlHost(sourceUrl)
+                : "Wayback Machine history",
+          year: normalizeYear(a.year),
+          factConfidence: normalizeConfidence(a.factConfidence),
+          dateConfidence: normalizeConfidence(a.dateConfidence),
+        };
+      });
+
+    return { companyName, anchors, searchCount };
   } catch {
-    return { companyName: fallbackName, anchors: [] };
+    return { companyName: fallbackName, anchors: [], searchCount: 0 };
   }
+}
+
+/**
+ * The "cold" ladder: two rounds of targeted provenance searches, the second
+ * only running if the first found nothing solid.
+ */
+async function researchAnchorsCold(args: {
+  client: Anthropic;
+  url: string;
+  domain: string;
+  companyName: string;
+  currentText: string;
+  products: string[];
+  log: (message: string) => void;
+  deadlineAt?: number;
+}): Promise<{
+  companyName: string;
+  anchors: CompanyAnchor[];
+  searchCount: number;
+}> {
+  const { client, url, domain, companyName, currentText, products, log } = args;
+
+  /** Is there room for a step that typically takes this long? */
+  const roomFor = (ms: number) =>
+    args.deadlineAt === undefined || Date.now() + ms <= args.deadlineAt;
+
+  // A compact identity block replaces the old 1,500-char website excerpt. These
+  // are searches for historical records; homepage copy does not help them.
+  const identity = [
+    `COMPANY: ${companyName}`,
+    `WEBSITE: ${url}`,
+    products.length > 0
+      ? `SELLS TODAY: ${products.slice(0, 6).join(", ")}`
+      : null,
+    currentText.trim()
+      ? `IN THEIR OWN WORDS: ${currentText.trim().slice(0, 300)}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const companyHost = domain.toLowerCase();
+  let searchCount = 0;
+  let anchors: CompanyAnchor[] = [];
+
+  const runRound = async (
+    classes: ProvenanceClass[],
+    alreadyTried: string[]
+  ): Promise<CompanyAnchor[]> => {
+    const resp = await callClaudeWithWebSearch(client, 3, {
+      model: "claude-sonnet-4-6",
+      max_tokens: 1200,
+      messages: [
+        {
+          role: "user",
+          content: buildColdRoundPrompt(
+            identity,
+            companyName,
+            domain,
+            classes,
+            alreadyTried
+          ),
+        },
+      ],
+    });
+    searchCount += webSearchCount(resp);
+
+    const textBlocks = resp.content.filter(
+      (b: { type: string }) => b.type === "text"
+    );
+    if (textBlocks.length === 0) return [];
+    const parsedJson = parseJsonObject(
+      textBlocks[textBlocks.length - 1].text.trim()
+    );
+    if (!parsedJson) {
+      log("A research round returned an unreadable answer — skipping it.");
+      return [];
+    }
+    return validateColdAnchors(
+      parsedJson.anchors,
+      collectCitationUrls(resp),
+      companyHost
+    );
+  };
+
+  try {
+    anchors = await runRound(PROVENANCE_ROUND_1, []);
+    log(
+      `Round 1 (former name, own history page, press releases): ${anchors.length} verified anchor(s) from ${searchCount} search(es).`
+    );
+
+    if (!hasStrongAnchor(anchors)) {
+      // A round takes roughly a minute. Skipping it beats being killed by the
+      // platform with the whole run's research lost.
+      if (!roomFor(75_000)) {
+        log(
+          "Not enough time left in this run for a second research round — using what round 1 found.",
+        );
+      } else {
+        const round2 = await runRound(
+          PROVENANCE_ROUND_2,
+          PROVENANCE_ROUND_1.map((c) => c.label)
+        );
+        log(
+          `Round 2 (formation events, release notes, registries): ${round2.length} verified anchor(s).`
+        );
+        // Both rounds are already validated, so only re-ranking is left.
+        anchors = rankAnchors([...anchors, ...round2]);
+      }
+    }
+
+    // Only chase a date when we believe the fact but not the year. Costs one
+    // free Jina fetch plus a 60-token model call.
+    const best = anchors[0];
+    if (
+      best &&
+      best.factConfidence === "high" &&
+      best.dateConfidence !== "high" &&
+      best.sourceUrl &&
+      roomFor(30_000)
+    ) {
+      const confirmed = await confirmAnchorYear(client, best);
+      if (confirmed.year && confirmed.dateConfidence === "high") {
+        log(`Confirmed ${confirmed.year} from the source page.`);
+        anchors = [confirmed, ...anchors.slice(1)];
+      }
+    }
+  } catch (err) {
+    log(
+      `Public-source research failed: ${err instanceof Error ? err.message : "unknown error"}.`
+    );
+  }
+
+  return { companyName, anchors, searchCount };
 }
 
 /**
@@ -2171,16 +2847,22 @@ export async function generateEmailHook(
   oldProducts: string[],
   discontinued: string | null,
   archiveYear: string | null,
-  anchors: CompanyAnchor[],
-  matchedGroupContent: string
-): Promise<string> {
+  anchors: CompanyAnchor[]
+): Promise<{ hook: string; anchor: CompanyAnchor | null }> {
   const anchorsBlock =
     anchors.length > 0
       ? `\nRESEARCHED ANCHORS (highest-signal — prefer these):\n${anchors
-          .map(
-            (a, i) =>
-              `${i + 1}. [${a.type}] "${a.anchor}" (${a.evidence ?? "no evidence"})`
-          )
+          .map((a, i) => {
+            const facts = [
+              `fact confidence: ${a.factConfidence ?? "low"}`,
+              `date confidence: ${a.dateConfidence ?? "low"}`,
+              a.year ? `year: ${a.year}` : null,
+              a.sourceLabel ? `source: ${a.sourceLabel}` : null,
+            ]
+              .filter(Boolean)
+              .join(", ");
+            return `${i + 1}. [${a.type}] "${a.anchor}"\n   ${facts}\n   ${a.evidence || "no further detail"}`;
+          })
           .join("\n")}\n`
       : "";
 
@@ -2230,6 +2912,11 @@ ANCHOR HIERARCHY (pick the most specific available — do NOT skip past a strong
   5. EARLY NICHE they pioneered, named specifically (e.g. "the days you were the only option for Australian iron-ore haul-truck operators")
   6. LAST RESORT: founding year + ONE specific clause about what they were doing at that moment. Never a bare year. Never a generic positioning statement.
 
+CONFIDENCE RULES (these override the hierarchy — a defensible weaker anchor beats a shaky stronger one):
+- Prefer an anchor with "fact confidence: high" over a more specific one with lower fact confidence. The recipient is the one person alive who can tell we got it wrong.
+- If the anchor you use has "date confidence" of anything other than high, write it WITHOUT the year. "the release of CSiPlant" — never "the release of CSiPlant in 2019". Omitting an uncertain date costs nothing; asserting a wrong one costs the reply.
+- Only include a year when that anchor's date confidence is high.
+
 HARD BANS:
 - Generic descriptions of current products/positioning ("their focus on real-time worksite intelligence", "Smart Maintenance Management CMMS built for industrial asset-heavy environments"). If a reader could have written it after a 5-second glance at the homepage, it is banned.
 - Bare-year openers like "I've studied your business going back to 2002." with no specific clause after.
@@ -2260,7 +2947,46 @@ Return only the hook text. No commentary.`,
     result = result.slice(1, -1).trim();
   }
   result = result.replace(/\s*—\s*/g, ", ");
-  return result;
+  return { hook: result, anchor: matchAnchorToHook(result, anchors) };
+}
+
+/**
+ * Work out which researched anchor the hook actually used, so the UI can show
+ * its source and confidence next to it.
+ *
+ * The hook prompt returns prose, not a structured choice, so match on the
+ * distinctive words of each anchor. Falls back to the top-ranked anchor, which
+ * is the one the prompt is told to prefer.
+ */
+function matchAnchorToHook(
+  hook: string,
+  anchors: CompanyAnchor[]
+): CompanyAnchor | null {
+  if (anchors.length === 0) return null;
+  const haystack = hook.toLowerCase();
+
+  // Ignore the connective words every anchor shares ("the days operating as")
+  // and match on the parts that actually identify one — names, products.
+  const STOPWORDS = new Set([
+    "the", "days", "release", "launch", "of", "as", "operating", "a", "an",
+    "and", "in", "on", "to", "for", "when", "their", "its", "was", "were",
+    "with", "from", "your", "you", "company", "product", "early", "first",
+  ]);
+
+  let best: { anchor: CompanyAnchor; score: number } | null = null;
+  for (const anchor of anchors) {
+    const terms = anchor.anchor
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2 && !STOPWORDS.has(w));
+    if (terms.length === 0) continue;
+    const hits = terms.filter((w) => haystack.includes(w)).length;
+    const score = hits / terms.length;
+    if (score >= 0.5 && (!best || score > best.score)) {
+      best = { anchor, score };
+    }
+  }
+  return best?.anchor ?? anchors[0];
 }
 
 /**

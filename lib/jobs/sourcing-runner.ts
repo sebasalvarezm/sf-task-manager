@@ -26,6 +26,7 @@ import {
   findGroupFileName,
   waybackPlaybackCooldownRemainingMs,
   type WaybackStatus,
+  type WaybackLookupResult,
   type WaybackSnapshotFailure,
   type CompanyAnchor,
   type GroupMatch,
@@ -69,6 +70,16 @@ export type SourcingResult = {
   restaurants: { name: string; description: string }[];
   outreachParagraph: string | null;
   emailHook: string | null;
+  /**
+   * Where the hook's evidence came from. "wayback" means the archive supplied
+   * the product history; "web_research" means the archive gave us nothing and
+   * the hook was built from public sources instead.
+   */
+  hookSource?: "wayback" | "web_research" | null;
+  /** The researched anchor the hook actually used, with its source URL. */
+  hookAnchor?: CompanyAnchor | null;
+  /** Web searches spent on hook research, for cost tracking. */
+  hookSearchCount?: number;
   competitors: { name: string; differentiator: string }[];
   prepackagedEmail?: PrepackagedEmail | null;
   logs: string[];
@@ -99,6 +110,120 @@ export async function runFastSourcingClassification(
   return matchGroup(anthropic, currentText, loadGroupFiles());
 }
 
+/**
+ * Re-research just the email hook for a company that has already been sourced,
+ * forcing the public-source ("cold") path.
+ *
+ * This exists so a weak hook can be improved without re-running the whole
+ * pipeline. It reuses the products, founding year, and location already stored
+ * on the previous result, so the only fresh work is one website scrape, the
+ * research ladder, and the hook itself — a few seconds and a few cents rather
+ * than a full ~15-call research pass.
+ *
+ * The prepackaged email is rebuilt too, otherwise the draft would keep quoting
+ * the old hook.
+ */
+export async function rerunHookResearch(
+  stored: SourcingResult,
+): Promise<Partial<SourcingResult> & { logs: string[] }> {
+  const anthropic = getAnthropicClient();
+  if (!anthropic) {
+    throw new Error("AI service not configured (missing ANTHROPIC_API_KEY)");
+  }
+
+  const logs: string[] = [];
+  const deadlineAt = Date.now() + RUN_BUDGET_MS;
+  const normalized = stored.url.startsWith("http")
+    ? stored.url
+    : `https://${stored.url}`;
+
+  // The stored currentText is truncated to 500 chars before it is written to
+  // the database, so re-scrape rather than research against a fragment.
+  const currentText = (await scrapeWithJina(normalized)) ?? "";
+  if (currentText) {
+    logs.push("Re-read the company website.");
+  } else {
+    logs.push("Could not re-read the website — researching from public sources only.");
+  }
+
+  const companyNameHint =
+    extractCompanyNameFromText(currentText) || quickCompanyName(normalized);
+
+  logs.push("Researching rebrand and product history from public sources...");
+  const research = await researchCompanyAnchors(
+    anthropic,
+    normalized,
+    currentText,
+    stored.products ?? [],
+    [], // force the cold ladder: ignore any archive hints
+    null,
+    null,
+    {
+      mode: "cold",
+      companyNameHint,
+      onLog: (message) => logs.push(message),
+      deadlineAt,
+    },
+  );
+  logs.push(
+    `Found ${research.anchors.length} verified anchor(s) using ${research.searchCount} web search(es).`,
+  );
+
+  // Same rule as the full run: with nothing verified to point at, the model
+  // paraphrases the homepage and the result reads researched without being so.
+  // Report the miss instead of dressing it up.
+  if (research.anchors.length === 0) {
+    logs.push(
+      "No verifiable historical detail was found in public sources, so the hook was left alone rather than replaced with a homepage paraphrase.",
+    );
+    return {
+      hookSearchCount: research.searchCount,
+      logs,
+    };
+  }
+
+  const generated = await generateEmailHook(
+    anthropic,
+    research.companyName,
+    normalized,
+    currentText,
+    stored.products ?? [],
+    stored.foundingYear ?? null,
+    [],
+    null,
+    null,
+    research.anchors,
+  );
+
+  const hookAnchor = generated.anchor;
+  if (hookAnchor) {
+    logs.push(
+      `Hook anchor: ${hookAnchor.anchor} (source: ${hookAnchor.sourceLabel ?? "unnamed source"}, confidence: ${hookAnchor.factConfidence ?? "low"}).`,
+    );
+  }
+
+  // Rebuild the draft so it quotes the new hook rather than the old one.
+  const prepackagedEmail = buildPrepackagedEmail({
+    mainGroup: stored.portfolioMatch?.mainGroup ?? null,
+    subgroup: stored.portfolioMatch?.group ?? null,
+    emailHook: generated.hook,
+    outreachParagraph: stored.outreachParagraph ?? null,
+    address: stored.address ?? null,
+    locationConfidence: stored.locationConfidence ?? "none",
+    restaurants: stored.restaurants ?? [],
+    now: new Date(),
+  });
+
+  return {
+    emailHook: generated.hook,
+    hookAnchor,
+    hookSource: "web_research",
+    hookSearchCount: research.searchCount,
+    prepackagedEmail,
+    logs,
+  };
+}
+
 function dedup(items: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -121,10 +246,47 @@ function dedup(items: string[]): string[] {
 const WAYBACK_PHASE_BUDGET_MS = 120_000;
 
 /**
+ * Wall-clock budget for one company's whole run, held 30s under the platform's
+ * 300s kill so the run can finish tidily and return its result instead of being
+ * cut off mid-research.
+ */
+const RUN_BUDGET_MS = 270_000;
+
+/**
  * CDX answers in 5-27s when Archive.org is busy, so this sits above the slowest
  * healthy response measured rather than cutting one off as "no snapshots".
  */
 const WAYBACK_CDX_TIMEOUT_MS = 45_000;
+
+/**
+ * Archive.org outages last hours or days, not seconds. Once the index has
+ * refused this process three times in a row, every later company in the same
+ * run is going to fail too — so stop paying the 120s phase budget per company
+ * and go straight to public-source research instead.
+ *
+ * Module-level on purpose: a bulk run of 50 companies shares one process, so
+ * the first three failures spare the other 47 companies the wait. Any success
+ * resets it, so a brief hiccup does not disable the archive for the whole run.
+ */
+const WAYBACK_OUTAGE_STRIKES = 3;
+let waybackIndexFailureStreak = 0;
+
+function noteWaybackIndexOutcome(status: WaybackStatus | null): void {
+  const transportFailure =
+    status === "timeout" || status === "http_error" || status === "network_error";
+  waybackIndexFailureStreak = transportFailure
+    ? waybackIndexFailureStreak + 1
+    : 0;
+}
+
+function waybackLooksDown(): boolean {
+  return waybackIndexFailureStreak >= WAYBACK_OUTAGE_STRIKES;
+}
+
+/** Exported for tests and for the "run fresh" path to clear a stale verdict. */
+export function resetWaybackOutageState(): void {
+  waybackIndexFailureStreak = 0;
+}
 
 function snapshotFailureStatus(
   failure: WaybackSnapshotFailure | null,
@@ -222,6 +384,11 @@ export async function runFullSourcing(input: {
 
   const normalized = url.startsWith("http") ? url : `https://${url}`;
   const logs: string[] = [];
+
+  // The platform kills the whole run at 300s. Every optional late-stage step
+  // checks against this so the run finishes and returns what it has, rather
+  // than being killed and losing everything it already researched.
+  const runDeadlineAt = Date.now() + RUN_BUDGET_MS;
 
   // ───────── Stage 1: Scrape current site ─────────
   onProgress?.("scrape", 5);
@@ -322,21 +489,39 @@ export async function runFullSourcing(input: {
     wbLabel = "2006–2020";
   }
 
-  logs.push(`Fetching Wayback Machine snapshots from ${wbLabel}...`);
   // One budget covers the snapshot list AND the page downloads, so a slow CDX
   // response cannot push the whole run toward the platform's 300s kill.
   const waybackDeadlineAt = Date.now() + WAYBACK_PHASE_BUDGET_MS;
-  const waybackLookup = await getWaybackCandidates(
-    normalized,
-    wbFrom,
-    wbTo,
-    Math.min(WAYBACK_CDX_TIMEOUT_MS, Math.max(5_000, waybackDeadlineAt - Date.now())),
-  );
+
+  // Skip the archive entirely once it has proven to be down in this process.
+  // Waiting out the phase budget again would only delay the research that is
+  // going to produce the hook anyway.
+  const skipWaybackForOutage = waybackLooksDown();
+  if (skipWaybackForOutage) {
+    logs.push(
+      "Skipping the Wayback Machine — it has failed repeatedly in this run, so it is an Archive.org outage rather than a fact about this company. Going straight to public-source research.",
+    );
+  } else {
+    logs.push(`Fetching Wayback Machine snapshots from ${wbLabel}...`);
+  }
+
+  const waybackLookup: WaybackLookupResult = skipWaybackForOutage
+    ? { candidates: [], status: "network_error", primaryFailure: null }
+    : await getWaybackCandidates(
+        normalized,
+        wbFrom,
+        wbTo,
+        Math.min(WAYBACK_CDX_TIMEOUT_MS, Math.max(5_000, waybackDeadlineAt - Date.now())),
+      );
   const { candidates } = waybackLookup;
   let waybackStatus = waybackLookup.status;
   let waybackHttpStatus: number | null = null;
 
-  if (waybackStatus === "fallback_used") {
+  if (!skipWaybackForOutage) noteWaybackIndexOutcome(waybackStatus);
+
+  if (skipWaybackForOutage) {
+    // Message already logged above; skip the per-status explanations.
+  } else if (waybackStatus === "fallback_used") {
     // Saying "returned nothing" for a CDX timeout reads as a fact about the
     // company. It is not — the snapshot list simply could not be read.
     logs.push(
@@ -651,9 +836,22 @@ export async function runFullSourcing(input: {
   const competitors: { name: string; differentiator: string }[] = [];
 
   // ───────── Stage 4: Email opening hook ─────────
-  logs.push("Researching company anchors for hook...");
-  let companyName = "";
+  // Gate on whether we actually got HISTORY, not on the Wayback status code. A
+  // domain with a genuinely empty archive is in the same position as one hit by
+  // an outage: there is no archived product history to build a hook from, and
+  // public-source research is the better option in both cases.
+  const waybackGaveHistory = oldProducts.length > 0 || !!discontinued;
+  const anchorMode = waybackGaveHistory ? "hinted" : "cold";
+
+  logs.push(
+    waybackGaveHistory
+      ? "Researching company anchors for hook..."
+      : "No archived product history to work from — researching the company's rebrand and product history from public sources instead.",
+  );
+
+  let companyName = sourceCompanyName;
   let anchors: CompanyAnchor[] = [];
+  let hookSearchCount = 0;
   try {
     const r = await researchCompanyAnchors(
       anthropic,
@@ -663,45 +861,81 @@ export async function runFullSourcing(input: {
       oldProducts,
       discontinued,
       archiveYear,
+      {
+        mode: anchorMode,
+        // The registered name from the website beats anything a search would
+        // derive, and it is already computed above — so the search budget goes
+        // entirely on history rather than on re-deriving the name.
+        companyNameHint: sourceCompanyName,
+        onLog: (message) => logs.push(message),
+        deadlineAt: runDeadlineAt,
+      },
     );
     companyName = r.companyName;
     anchors = r.anchors;
-    logs.push(`Found ${anchors.length} candidate anchor(s).`);
+    hookSearchCount = r.searchCount;
+    logs.push(
+      `Found ${anchors.length} candidate anchor(s) using ${hookSearchCount} web search(es).`,
+    );
   } catch (err) {
     logs.push(
       `Anchor research failed: ${err instanceof Error ? err.message : "unknown error"}.`,
     );
   }
 
-  logs.push("Generating email opening hook...");
+  // With no verified anchor and no archive history there is nothing specific
+  // left to build a hook from, and the model will paraphrase the homepage —
+  // producing exactly the unfalsifiable opener its own prompt bans. A missing
+  // hook leaves the template placeholder and a warning, which is honest; a
+  // homepage paraphrase looks finished and is not. Skipping also saves a call.
+  const hasHookEvidence =
+    anchors.length > 0 || oldProducts.length > 0 || !!discontinued;
+
   let emailHook: string | null = null;
-  try {
-    let matchedGroupContent = "";
-    if (portfolioMatch.matched && portfolioMatch.group) {
-      const fileName = findGroupFileName(portfolioMatch.group, groups);
-      if (fileName && fileName in groups) {
-        matchedGroupContent = groups[fileName];
-      }
-    }
-    emailHook = await generateEmailHook(
-      anthropic,
-      companyName,
-      normalized,
-      currentText,
-      products,
-      foundingYear,
-      oldProducts,
-      discontinued,
-      archiveYear,
-      anchors,
-      matchedGroupContent,
-    );
-    logs.push("Email hook complete.");
-  } catch (err) {
+  let hookAnchor: CompanyAnchor | null = null;
+
+  if (!hasHookEvidence) {
     logs.push(
-      `Hook generation failed: ${err instanceof Error ? err.message : "unknown error"}`,
+      "No verifiable historical detail was found for this company, so no hook was written. The draft keeps its placeholder sentence — this one needs a human to find the angle.",
     );
+  } else {
+    logs.push("Generating email opening hook...");
+    try {
+      const generated = await generateEmailHook(
+        anthropic,
+        companyName,
+        normalized,
+        currentText,
+        products,
+        foundingYear,
+        oldProducts,
+        discontinued,
+        archiveYear,
+        anchors,
+      );
+      emailHook = generated.hook;
+      hookAnchor = generated.anchor;
+      if (hookAnchor) {
+        const source = hookAnchor.sourceLabel ?? "unnamed source";
+        logs.push(
+          `Hook anchor: ${hookAnchor.anchor} (source: ${source}, confidence: ${hookAnchor.factConfidence ?? "low"}).`,
+        );
+      }
+      logs.push("Email hook complete.");
+    } catch (err) {
+      logs.push(
+        `Hook generation failed: ${err instanceof Error ? err.message : "unknown error"}`,
+      );
+    }
   }
+
+  // "wayback" only when the archive genuinely supplied the evidence. Anything
+  // else that produced a hook did so from public sources.
+  const hookSource: SourcingResult["hookSource"] = emailHook
+    ? waybackGaveHistory
+      ? "wayback"
+      : "web_research"
+    : null;
 
   // ───────── Stage 5: Prepackage Email 1 ─────────
   // Plain string swaps into the matched subgroup's template — no AI call.
@@ -745,6 +979,9 @@ export async function runFullSourcing(input: {
     restaurants,
     outreachParagraph,
     emailHook,
+    hookSource,
+    hookAnchor,
+    hookSearchCount,
     competitors,
     prepackagedEmail,
     logs,

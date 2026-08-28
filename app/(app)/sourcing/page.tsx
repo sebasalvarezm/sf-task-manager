@@ -64,9 +64,25 @@ type SourcingResult = {
   restaurants: { name: string; description: string }[];
   outreachParagraph: string | null;
   emailHook?: string | null;
+  hookSource?: "wayback" | "web_research" | null;
+  hookAnchor?: HookAnchor | null;
+  hookSearchCount?: number;
   competitors: { name: string; differentiator: string }[];
   prepackagedEmail?: PrepackagedEmail | null;
   logs?: string[];
+};
+
+// Mirrors CompanyAnchor in lib/scout.ts — the researched fact behind the hook,
+// with the page it came from and how much of it we can actually stand behind.
+type HookAnchor = {
+  type: string;
+  anchor: string;
+  evidence?: string;
+  sourceUrl?: string | null;
+  sourceLabel?: string | null;
+  year?: number | null;
+  factConfidence?: "high" | "medium" | "low";
+  dateConfidence?: "high" | "medium" | "low";
 };
 
 // Mirrors PrepackagedEmail in lib/email-prepackage.ts.
@@ -821,7 +837,13 @@ function JobResultPanel({
         <Alert variant="warn">No result data on this job — try running again.</Alert>
       );
     }
-    return <BulkResultList items={bulk.items} expandCompany={expandCompany} />;
+    return (
+      <BulkResultList
+        items={bulk.items}
+        expandCompany={expandCompany}
+        jobId={job.id}
+      />
+    );
   }
 
   const result = job.result as unknown as SourcingResult | null;
@@ -831,7 +853,7 @@ function JobResultPanel({
     );
   }
 
-  return <SourcingResultDisplay result={result} />;
+  return <SourcingResultDisplay result={result} jobId={job.id} />;
 }
 
 // ───────── Bulk result list (collapsed → expand-in-place) ─────────
@@ -839,9 +861,11 @@ function JobResultPanel({
 function BulkResultList({
   items,
   expandCompany,
+  jobId,
 }: {
   items: BulkItem[];
   expandCompany?: string | null;
+  jobId?: string;
 }) {
   // When arriving from a search match (?company=<domain>), pre-open the row for
   // that company so the user lands right on its card. Matched by normalized
@@ -958,7 +982,11 @@ function BulkResultList({
             </button>
             {isOpen && hasResult && item.result && (
               <div className="px-4 pb-5 pt-2 border-t border-line">
-                <SourcingResultDisplay result={item.result} />
+                <SourcingResultDisplay
+                  result={item.result}
+                  jobId={jobId}
+                  companyUrl={item.url ?? undefined}
+                />
               </div>
             )}
           </div>
@@ -970,12 +998,66 @@ function BulkResultList({
 
 // ───────── Rich result display ─────────
 
-function SourcingResultDisplay({ result }: { result: SourcingResult }) {
+function SourcingResultDisplay({
+  result,
+  jobId,
+  companyUrl,
+}: {
+  result: SourcingResult;
+  /** Job this result belongs to — enables re-researching the hook in place. */
+  jobId?: string;
+  /** Needed only for a bulk job, to say which company inside it to update. */
+  companyUrl?: string;
+}) {
   const [copied, setCopied] = useState(false);
   const [copiedHook, setCopiedHook] = useState(false);
   const [copiedEmail, setCopiedEmail] = useState(false);
   const [copiedSubject, setCopiedSubject] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
+
+  // The hook can be re-researched without re-running the whole pipeline, so
+  // hold the improved version locally rather than forcing a page reload.
+  const [rehooking, setRehooking] = useState(false);
+  const [rehookError, setRehookError] = useState<string | null>(null);
+  const [rehooked, setRehooked] = useState<{
+    emailHook: string | null;
+    hookAnchor: HookAnchor | null;
+    hookSource: "wayback" | "web_research" | null;
+    prepackagedEmail?: PrepackagedEmail | null;
+  } | null>(null);
+
+  const emailHook = rehooked ? rehooked.emailHook : result.emailHook;
+  const hookAnchor = rehooked ? rehooked.hookAnchor : result.hookAnchor;
+  const hookSource = rehooked ? rehooked.hookSource : result.hookSource;
+
+  const runRehook = useCallback(async () => {
+    if (!jobId) return;
+    setRehooking(true);
+    setRehookError(null);
+    try {
+      const res = await fetch("/api/sourcing/rehook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, url: companyUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Research failed");
+      }
+      setRehooked({
+        emailHook: data.emailHook ?? null,
+        hookAnchor: data.hookAnchor ?? null,
+        hookSource: data.hookSource ?? null,
+        prepackagedEmail: data.prepackagedEmail ?? null,
+      });
+    } catch (err) {
+      setRehookError(
+        err instanceof Error ? err.message : "Could not re-research the hook.",
+      );
+    } finally {
+      setRehooking(false);
+    }
+  }, [jobId, companyUrl]);
 
   const copy = useCallback(async () => {
     if (!result.outreachParagraph) return;
@@ -989,17 +1071,19 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
   }, [result.outreachParagraph]);
 
   const copyHook = useCallback(async () => {
-    if (!result.emailHook) return;
+    if (!emailHook) return;
     try {
-      await navigator.clipboard.writeText(result.emailHook);
+      await navigator.clipboard.writeText(emailHook);
       setCopiedHook(true);
       setTimeout(() => setCopiedHook(false), 2000);
     } catch {
       /* clipboard blocked */
     }
-  }, [result.emailHook]);
+  }, [emailHook]);
 
-  const prepackaged = result.prepackagedEmail ?? null;
+  // A re-researched hook brings a rebuilt draft with it, so show that instead.
+  const prepackaged =
+    rehooked?.prepackagedEmail ?? result.prepackagedEmail ?? null;
   const copyEmail = useCallback(async () => {
     if (!prepackaged?.body) return;
     try {
@@ -1057,30 +1141,148 @@ function SourcingResultDisplay({ result }: { result: SourcingResult }) {
       )}
 
       {/* Email Opening Hook — full width, above the 3-col grid */}
-      {result.emailHook && (
+      {emailHook && (
         <Card padded={false} className="p-5">
           <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-brand" />
             Email Opening Hook
           </h3>
           <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">
-            {result.emailHook}
+            {emailHook}
           </p>
-          <Button
-            size="sm"
-            variant={copiedHook ? "secondary" : "primary"}
-            onClick={copyHook}
-            leftIcon={
-              copiedHook ? (
-                <Check className="h-3.5 w-3.5" strokeWidth={2} />
-              ) : (
-                <Copy className="h-3.5 w-3.5" strokeWidth={2} />
-              )
-            }
-            className="mt-3"
-          >
-            {copiedHook ? "Copied" : "Copy Hook"}
-          </Button>
+
+          {/* Source and confidence, in the same shape a hand-written research
+              note takes — so the claim can be checked in one click. */}
+          {hookAnchor ? (
+            <div className="mt-3 pt-3 border-t border-line space-y-1 text-xs">
+              <p className="text-ink-muted">
+                <span className="font-semibold text-ink">Source: </span>
+                {hookAnchor.sourceUrl ? (
+                  <a
+                    href={hookAnchor.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-brand underline hover:no-underline"
+                  >
+                    {hookAnchor.sourceLabel || hookAnchor.sourceUrl}
+                  </a>
+                ) : (
+                  (hookAnchor.sourceLabel ?? "not recorded")
+                )}
+                {hookSource === "web_research"
+                  ? " · found by public-source research (no archive available)"
+                  : hookSource === "wayback"
+                    ? " · from the Wayback Machine archive"
+                    : ""}
+              </p>
+              <p className="text-ink-muted">
+                <span className="font-semibold text-ink">Confidence: </span>
+                {hookAnchor.factConfidence ?? "low"} on the fact
+                {hookAnchor.dateConfidence
+                  ? `, ${hookAnchor.dateConfidence} on the date`
+                  : ""}
+                {hookAnchor.factConfidence !== "high" &&
+                  " — worth a quick check before you send"}
+              </p>
+              {hookAnchor.evidence && (
+                <p className="text-ink-muted italic">{hookAnchor.evidence}</p>
+              )}
+            </div>
+          ) : (
+            <p className="mt-3 pt-3 border-t border-line text-xs text-ink-muted">
+              No verified source behind this hook — it was written from the
+              company&apos;s own website. Read it before you send.
+            </p>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant={copiedHook ? "secondary" : "primary"}
+              onClick={copyHook}
+              leftIcon={
+                copiedHook ? (
+                  <Check className="h-3.5 w-3.5" strokeWidth={2} />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" strokeWidth={2} />
+                )
+              }
+            >
+              {copiedHook ? "Copied" : "Copy Hook"}
+            </Button>
+            {jobId && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={runRehook}
+                disabled={rehooking}
+                leftIcon={
+                  rehooking ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                  ) : undefined
+                }
+              >
+                {rehooking ? "Researching..." : "Deep research this hook"}
+              </Button>
+            )}
+          </div>
+
+          {rehooked && (
+            <p className="mt-2 text-xs text-ink-muted">
+              Hook re-researched from public sources and saved to this run. The
+              prepackaged email below has been rebuilt with the new hook.
+            </p>
+          )}
+          {rehookError && (
+            <p className="mt-2 text-xs text-danger">{rehookError}</p>
+          )}
+        </Card>
+      )}
+
+      {/* No hook — say so plainly and offer another attempt. A generic
+          homepage paraphrase would look finished and mislead. */}
+      {!emailHook && (
+        <Card padded={false} className="p-5">
+          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" />
+            Email Opening Hook
+          </h3>
+          <p className="text-sm text-ink leading-relaxed">
+            No hook was written for this company. Nothing specific and
+            verifiable turned up — no former name, no dated product launch, no
+            usable company history.
+          </p>
+          <p className="mt-2 text-xs text-ink-muted">
+            This is deliberate. A vague opener drawn from their homepage would
+            read as researched without being researched, and the recipient is
+            the one person who would notice. The draft below keeps its
+            placeholder sentence for you to fill in.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {jobId && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={runRehook}
+                disabled={rehooking}
+                leftIcon={
+                  rehooking ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                  ) : undefined
+                }
+              >
+                {rehooking ? "Researching..." : "Try deep research again"}
+              </Button>
+            )}
+          </div>
+          {rehooked && !rehooked.emailHook && (
+            <p className="mt-2 text-xs text-ink-muted">
+              Public-source research came up empty again. This one needs a human.
+            </p>
+          )}
+          {rehookError && (
+            <p className="mt-2 text-xs text-danger">{rehookError}</p>
+          )}
         </Card>
       )}
 
