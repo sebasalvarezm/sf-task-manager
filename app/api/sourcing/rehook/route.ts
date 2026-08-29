@@ -99,6 +99,10 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({
+      // Whether this pass actually replaced the hook. The research declines to
+      // write one when nothing verifiable turned up, and the caller must be
+      // able to say so rather than reporting a save that did not happen.
+      changed: patch.emailHook !== undefined,
       emailHook: updated.emailHook,
       hookAnchor: updated.hookAnchor ?? null,
       hookSource: updated.hookSource ?? null,

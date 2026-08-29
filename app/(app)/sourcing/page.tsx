@@ -1020,6 +1020,9 @@ function SourcingResultDisplay({
   const [rehooking, setRehooking] = useState(false);
   const [rehookError, setRehookError] = useState<string | null>(null);
   const [rehooked, setRehooked] = useState<{
+    /** False when research found nothing and deliberately kept the old hook. */
+    changed: boolean;
+    searchCount: number;
     emailHook: string | null;
     hookAnchor: HookAnchor | null;
     hookSource: "wayback" | "web_research" | null;
@@ -1045,6 +1048,8 @@ function SourcingResultDisplay({
         throw new Error(data?.error ?? "Research failed");
       }
       setRehooked({
+        changed: data.changed === true,
+        searchCount: data.hookSearchCount ?? 0,
         emailHook: data.emailHook ?? null,
         hookAnchor: data.hookAnchor ?? null,
         hookSource: data.hookSource ?? null,
@@ -1227,10 +1232,19 @@ function SourcingResultDisplay({
             )}
           </div>
 
-          {rehooked && (
+          {rehooked?.changed && (
             <p className="mt-2 text-xs text-ink-muted">
               Hook re-researched from public sources and saved to this run. The
               prepackaged email below has been rebuilt with the new hook.
+            </p>
+          )}
+          {rehooked && !rehooked.changed && (
+            <p className="mt-2 text-xs text-ink-muted">
+              Searched {rehooked.searchCount} public source
+              {rehooked.searchCount === 1 ? "" : "s"} and found nothing
+              verifiable, so this hook was left as it was. Replacing it would
+              only have swapped one unsourced sentence for another. This company
+              needs a human to find the angle.
             </p>
           )}
           {rehookError && (
@@ -1275,9 +1289,11 @@ function SourcingResultDisplay({
               </Button>
             )}
           </div>
-          {rehooked && !rehooked.emailHook && (
+          {rehooked && !rehooked.changed && (
             <p className="mt-2 text-xs text-ink-muted">
-              Public-source research came up empty again. This one needs a human.
+              Searched {rehooked.searchCount} public source
+              {rehooked.searchCount === 1 ? "" : "s"} and still found nothing
+              verifiable. This one needs a human.
             </p>
           )}
           {rehookError && (
