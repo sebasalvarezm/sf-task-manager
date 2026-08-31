@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
-import { useJobs, type Job } from "@/app/hooks/useJobs";
+import { useJobs, type Job, useJobResult } from "@/app/hooks/useJobs";
 
 const INDUSTRY_OPTIONS = [
   "",
@@ -131,6 +131,9 @@ function AccountsPageContent() {
     [jobs],
   );
   const activeJob = jobId ? accountsJobs.find((j) => j.id === jobId) : null;
+  // The enrichment payload is fetched on demand rather than riding along on
+  // every poll of the job list. Re-fetches once when the job's status changes.
+  const { job: activeJobDetail } = useJobResult(activeJob?.id, activeJob?.status);
 
   // ── Connection + picklist state ───────────────────────────────────────────
   const [sfConnected, setSfConnected] = useState<boolean | null>(null);
@@ -159,9 +162,9 @@ function AccountsPageContent() {
       setActiveIndex(0);
       return;
     }
-    if (activeJob.status === "succeeded" && activeJob.result) {
+    if (activeJob.status === "succeeded" && activeJobDetail?.result) {
       const resultItems =
-        (activeJob.result as { items?: JobResultItem[] }).items ?? [];
+        (activeJobDetail.result as { items?: JobResultItem[] }).items ?? [];
       setItems(
         resultItems.map((it) => ({
           ...it,
@@ -175,9 +178,10 @@ function AccountsPageContent() {
       setItems([]);
     }
     // We intentionally key on id+status so user edits/creates aren't clobbered
-    // by the polling refresh once the job has succeeded.
+    // by the polling refresh once the job has succeeded. The payload arrives
+    // separately via useJobResult, so it is part of the key too.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeJob?.id, activeJob?.status]);
+  }, [activeJob?.id, activeJob?.status, activeJobDetail?.id]);
 
   async function checkConnection() {
     try {

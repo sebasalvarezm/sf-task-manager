@@ -6,6 +6,7 @@ import {
   updateProgress,
   findRecentSourcingByUrl,
   normalizeSourcingUrl,
+  recordResolvedUrls,
 } from "@/lib/jobs";
 import {
   runFullSourcing,
@@ -41,6 +42,16 @@ export const sourcingBulkJob = inngest.createFunction(
       // Resolve URLs / account names up front (cheap Salesforce lookups).
       const items = await step.run("resolve", () =>
         resolveEntries(input.entries ?? []),
+      );
+
+      // Store the resolved URLs on the job so a later cache lookup can match a
+      // company in this batch by reading `input` alone, instead of pulling
+      // every batch's full payload to compare one URL.
+      await step.run("record-resolved-urls", () =>
+        recordResolvedUrls(
+          jobId,
+          items.map((i) => i.url).filter((u): u is string => !!u),
+        ),
       );
 
       const total = items.length;

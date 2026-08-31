@@ -32,7 +32,16 @@ export async function POST(req: Request) {
     // requireArchive: a run that could not reach Archive.org is not worth
     // offering as a cached result — it would freeze an empty Discontinued
     // panel in place for 90 days after their outage ended.
-    const job = await findRecentSourcingByUrl(normalized, 90, undefined, true);
+    // deepScan: this is one interactive lookup with the user waiting, so paying
+    // for the heavy read is better than wrongly reporting no cached run. Bulk
+    // runs deliberately skip it — there it would fire once per company.
+    const job = await findRecentSourcingByUrl(
+      normalized,
+      90,
+      undefined,
+      true,
+      true,
+    );
     if (!job) {
       return NextResponse.json({ found: false });
     }

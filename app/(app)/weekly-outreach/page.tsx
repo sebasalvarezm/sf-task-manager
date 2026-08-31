@@ -213,9 +213,23 @@ export default function WeeklyOutreachPage() {
     setSelectedRowId(null);
     void load(false);
 
-    const interval = window.setInterval(() => void load(true), LIVE_REFRESH_MS);
+    // Only poll while the tab is actually being looked at. This used to run
+    // unconditionally every 5s — 720 requests an hour against an endpoint that
+    // returns full generated email bodies, whether or not anyone was watching.
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void load(true);
+    }, LIVE_REFRESH_MS);
+
+    // One refresh on re-entry. `focus` and `visibilitychange` both fire when
+    // returning to the tab, so guard against the duplicate.
+    let lastManualRefresh = 0;
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void load(true);
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastManualRefresh < 1000) return;
+      lastManualRefresh = now;
+      void load(true);
     };
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);

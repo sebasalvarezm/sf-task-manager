@@ -41,6 +41,14 @@ export type Job = {
   seen_at: string | null;
 };
 
+/**
+ * A job without its payload — what the polled list returns.
+ *
+ * Separate from `Job` so the compiler catches any attempt to read `result` off
+ * a list row. That data is no longer fetched there; use `getJob(id)`.
+ */
+export type JobListItem = Omit<Job, "input" | "result" | "inngest_run_id" | "started_at">;
+
 export type CreateJobInput = {
   kind: JobKind;
   input: Record<string, unknown>;
@@ -80,19 +88,32 @@ export async function markRunning(jobId: string): Promise<void> {
   if (error) throw new Error(`Failed to mark job running: ${error.message}`);
 }
 
+/**
+ * Write a result and mark the job finished.
+ *
+ * `touchCompletion: false` updates the payload only, leaving `completed_at`,
+ * `progress`, and the read/unread state alone — for callers that patch an
+ * already-finished run (re-researching a hook) and should not shove it back to
+ * the top of the notification list as if it had just completed.
+ */
 export async function markSucceeded(
   jobId: string,
   result: Record<string, unknown>,
+  touchCompletion = true,
 ): Promise<void> {
   const supabase = getSupabaseAdmin();
   const { error } = await supabase
     .from("jobs")
-    .update({
-      status: "succeeded",
-      completed_at: new Date().toISOString(),
-      result,
-      progress: { pct: 100 },
-    })
+    .update(
+      touchCompletion
+        ? {
+            status: "succeeded",
+            completed_at: new Date().toISOString(),
+            result,
+            progress: { pct: 100 },
+          }
+        : { result },
+    )
     .eq("id", jobId);
   if (error) throw new Error(`Failed to mark job succeeded: ${error.message}`);
 }
@@ -113,6 +134,36 @@ export async function markFailed(
   if (error) throw new Error(`Failed to mark job failed: ${error.message}`);
 }
 
+/**
+ * Record the URLs a bulk run resolved to, on the job's own `input`.
+ *
+ * Lets `findRecentSourcingByUrl` match a company inside a past batch without
+ * loading that batch's payload — the difference between an 18 KB scan and a
+ * 1.26 MB one. Best-effort: a failure here only costs a future cache miss.
+ */
+export async function recordResolvedUrls(
+  jobId: string,
+  urls: string[],
+): Promise<void> {
+  const clean = urls.filter((u) => typeof u === "string" && u.trim());
+  if (clean.length === 0) return;
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data } = await supabase
+      .from("jobs")
+      .select("input")
+      .eq("id", jobId)
+      .maybeSingle();
+    const input = (data?.input ?? {}) as Record<string, unknown>;
+    await supabase
+      .from("jobs")
+      .update({ input: { ...input, resolvedUrls: clean } })
+      .eq("id", jobId);
+  } catch {
+    // Non-critical.
+  }
+}
+
 export async function updateProgress(
   jobId: string,
   progress: JobProgress,
@@ -125,19 +176,35 @@ export async function updateProgress(
   if (error) throw new Error(`Failed to update progress: ${error.message}`);
 }
 
+/**
+ * Columns the notification dots and every job-list consumer actually read.
+ *
+ * Deliberately excludes `result` and `input`. This list is polled every few
+ * seconds, and `select("*")` dragged each job's full research payload along:
+ * measured on live data, 20 rows came to 431,591 bytes against 6,938 bytes for
+ * these columns — a 62x multiplier on the app's single hottest query, billed
+ * twice (Supabase egress on the way in, Vercel transfer on the way out).
+ *
+ * `updated_at` is here only to build the ETag in `GET /api/jobs`.
+ * To read one job's payload, use `getJob(id)`.
+ */
+const JOB_LIST_COLUMNS =
+  "id,session_id,kind,status,label,progress,result_route,error," +
+  "created_at,updated_at,completed_at,seen_at";
+
 export async function listJobs(
   sessionId: string = DEFAULT_SESSION,
   limit = 20,
-): Promise<Job[]> {
+): Promise<JobListItem[]> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("jobs")
-    .select("*")
+    .select(JOB_LIST_COLUMNS)
     .eq("session_id", sessionId)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Failed to list jobs: ${error.message}`);
-  return (data ?? []) as Job[];
+  return (data ?? []) as unknown as JobListItem[];
 }
 
 export async function getJob(
@@ -271,10 +338,38 @@ export function sourcingArchiveLookupFailed(result: unknown): boolean {
   return typeof status === "string" && ARCHIVE_TRANSPORT_FAILURES.has(status);
 }
 
+/** Normalized URLs a bulk run covered, readable without its payload. */
+function bulkUrlsFromInput(input: Record<string, unknown> | null): string[] {
+  if (!input) return [];
+  const out: string[] = [];
+  for (const key of ["resolvedUrls", "entries"]) {
+    const list = input[key];
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      if (typeof entry !== "string") continue;
+      const normalized = normalizeSourcingUrl(entry);
+      if (normalized) out.push(normalized);
+    }
+  }
+  return out;
+}
+
 /**
  * Look up the most recent succeeded sourcing job for a given URL within the
- * last `maxAgeDays`. Pulls a window of recent succeeded sourcing rows and
- * filters in JS so we don't need a generated SQL view over `input->>url`.
+ * last `maxAgeDays`.
+ *
+ * Two steps, because step one used to be `select("*")` over 50 rows: measured
+ * on live data that transferred **1.26 MB per call**, and a bulk run calls this
+ * twice per company — about 123 MB of database egress to answer "have we
+ * sourced this company before?". The scan now reads only `input`, which is
+ * 18 KB for the same 50 rows, and the full row is fetched only once a candidate
+ * matches.
+ *
+ * Bulk runs are matched from `input` too: `resolvedUrls` (written at resolve
+ * time) or the raw pasted `entries`. Rows predating `resolvedUrls` whose
+ * entries were Salesforce account names rather than URLs cannot be matched this
+ * way — pass `deepScan` for the interactive lookup, where paying for the heavy
+ * read once is better than telling the user their cached run is missing.
  *
  * Pass `requireArchive` when the caller reuses the whole research result, so a
  * run that failed to reach Archive.org is treated as a miss and retried.
@@ -284,12 +379,58 @@ export async function findRecentSourcingByUrl(
   maxAgeDays = 90,
   sessionId: string = DEFAULT_SESSION,
   requireArchive = false,
+  deepScan = false,
 ): Promise<(Job & { matchedCompanyUrl?: string }) | null> {
   if (!normalizedUrl) return null;
   const supabase = getSupabaseAdmin();
   const sinceIso = new Date(
     Date.now() - maxAgeDays * 24 * 60 * 60 * 1000,
   ).toISOString();
+
+  // Step 1 — cheap scan. No `result`, so ~18 KB instead of ~1.26 MB.
+  const { data: scanned, error: scanError } = await supabase
+    .from("jobs")
+    .select("id,kind,input,created_at")
+    .eq("session_id", sessionId)
+    .in("kind", ["sourcing", "sourcing_bulk"])
+    .eq("status", "succeeded")
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (scanError) {
+    throw new Error(`Failed to look up cached sourcing run: ${scanError.message}`);
+  }
+
+  type ScanRow = {
+    id: string;
+    kind: JobKind;
+    input: Record<string, unknown> | null;
+  };
+
+  const candidates = ((scanned ?? []) as unknown as ScanRow[]).filter((row) => {
+    if (row.kind === "sourcing") {
+      const inputUrl =
+        typeof row.input?.url === "string" ? (row.input.url as string) : "";
+      return normalizeSourcingUrl(inputUrl) === normalizedUrl;
+    }
+    return bulkUrlsFromInput(row.input).includes(normalizedUrl);
+  });
+
+  // Step 2 — pull the payload only for rows that actually matched, newest
+  // first, so a run that failed to reach Archive.org can be skipped in favour
+  // of an older one that did.
+  for (const candidate of candidates) {
+    const full = await getJob(candidate.id, sessionId);
+    if (!full) continue;
+    const matched = matchSourcingRow(full, normalizedUrl, requireArchive);
+    if (matched) return matched;
+  }
+
+  if (!deepScan) return null;
+
+  // Interactive fallback: old bulk rows whose pasted entries were account
+  // names carry no URL outside their payload, so answer those the slow way
+  // rather than reporting no cached run.
   const { data, error } = await supabase
     .from("jobs")
     .select("*")
@@ -303,33 +444,47 @@ export async function findRecentSourcingByUrl(
     throw new Error(`Failed to look up cached sourcing run: ${error.message}`);
   }
   for (const row of (data ?? []) as Job[]) {
-    if (row.kind === "sourcing") {
-      const inputUrl = typeof row.input?.url === "string" ? (row.input.url as string) : "";
-      if (normalizeSourcingUrl(inputUrl) !== normalizedUrl) continue;
-      // Keep scanning older runs — one of them may have reached Archive.org.
-      if (requireArchive && sourcingArchiveLookupFailed(row.result)) continue;
-      return row;
-    }
-    const items = Array.isArray(row.result?.items)
-      ? (row.result.items as Array<Record<string, unknown>>)
-      : [];
-    for (const item of items) {
-      const itemUrl = typeof item.url === "string" ? item.url : "";
-      const result = item.result && typeof item.result === "object"
+    const matched = matchSourcingRow(row, normalizedUrl, requireArchive);
+    if (matched) return matched;
+  }
+  return null;
+}
+
+/**
+ * Does this fully-loaded job row cover `normalizedUrl`, and is it good enough
+ * to reuse? Shared by both lookup paths above.
+ */
+function matchSourcingRow(
+  row: Job,
+  normalizedUrl: string,
+  requireArchive: boolean,
+): (Job & { matchedCompanyUrl?: string }) | null {
+  if (row.kind === "sourcing") {
+    const inputUrl =
+      typeof row.input?.url === "string" ? (row.input.url as string) : "";
+    if (normalizeSourcingUrl(inputUrl) !== normalizedUrl) return null;
+    // A run that could not reach Archive.org is not worth reusing; the caller
+    // keeps looking at older runs, one of which may have reached it.
+    if (requireArchive && sourcingArchiveLookupFailed(row.result)) return null;
+    return row;
+  }
+
+  const items = Array.isArray(row.result?.items)
+    ? (row.result.items as Array<Record<string, unknown>>)
+    : [];
+  for (const item of items) {
+    const itemUrl = typeof item.url === "string" ? item.url : "";
+    if (normalizeSourcingUrl(itemUrl) !== normalizedUrl) continue;
+    const result =
+      item.result && typeof item.result === "object"
         ? (item.result as Record<string, unknown>)
         : null;
-      if (requireArchive && sourcingArchiveLookupFailed(result)) continue;
-      if (normalizeSourcingUrl(itemUrl) === normalizedUrl && result) {
-        // Consumers that need the actual result (including another bulk run)
-        // receive the company result, while the original batch job id remains
-        // available for UI navigation.
-        return {
-          ...row,
-          result,
-          matchedCompanyUrl: normalizedUrl,
-        };
-      }
-    }
+    if (!result) continue;
+    if (requireArchive && sourcingArchiveLookupFailed(result)) continue;
+    // Consumers that need the actual result (including another bulk run)
+    // receive the company result, while the original batch job id remains
+    // available for UI navigation.
+    return { ...row, result, matchedCompanyUrl: normalizedUrl };
   }
   return null;
 }
@@ -516,7 +671,7 @@ export async function listPrepLibrary(
   return Array.from(byKey.values());
 }
 
-export function summarize(jobs: Job[]): {
+export function summarize(jobs: Pick<Job, "status" | "seen_at">[]): {
   inProgressCount: number;
   unreadCount: number;
 } {

@@ -2,13 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { markAllSeen, markSeenByKinds, type JobKind } from "@/lib/jobs";
 
+// Must list every kind the sidebar can send, or that kind's unread dot can
+// never be cleared. "sourcing_bulk" and "accounts_enrich" were missing, so a
+// finished bulk run kept its red dot permanently.
 const VALID_KINDS: readonly JobKind[] = [
   "sourcing",
+  "sourcing_bulk",
   "prep",
   "task_bulk",
   "trip_geocode",
   "trip_search",
   "calls_log",
+  "accounts_enrich",
 ];
 
 export async function POST(req: NextRequest) {

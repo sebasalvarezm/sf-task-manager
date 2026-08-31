@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { MobileShell } from "@/app/components/shell/MobileShell";
 import { RoleProvider } from "@/app/components/RoleContext";
+import { JobsProvider } from "@/app/hooks/useJobs";
 import { getRole } from "@/lib/auth";
 
 export default async function AppShell({ children }: { children: ReactNode }) {
@@ -10,7 +11,12 @@ export default async function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <RoleProvider role={role}>
-      <MobileShell>{children}</MobileShell>
+      {/* One poll of /api/jobs for the whole app. Every useJobs() caller reads
+          this shared copy — previously each ran its own timer, so six pages
+          polled the same endpoint twice at once. */}
+      <JobsProvider>
+        <MobileShell>{children}</MobileShell>
+      </JobsProvider>
     </RoleProvider>
   );
 }

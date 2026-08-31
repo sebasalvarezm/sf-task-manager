@@ -17,7 +17,7 @@ import CallLoggerTable, {
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
-import { useJobs } from "@/app/hooks/useJobs";
+import { useJobs, fetchJobResult } from "@/app/hooks/useJobs";
 import { useRef } from "react";
 
 type SubmitResult = {
@@ -224,28 +224,32 @@ function CallsPageContent() {
     syncedCallsLogId.current = latest.id;
 
     if (latest.status === "succeeded") {
-      const r = (latest.result ?? {}) as SubmitResult;
-      setSubmitResult(r);
-      setSubmitting(false);
-      setActiveCallsJobId(null);
-      // Dismiss meetings whose eventId succeeded
-      const successfulEventIds = new Set(
-        (r.results ?? [])
-          .filter((x) => x.success && x.eventId)
-          .map((x) => x.eventId as string),
-      );
-      if (successfulEventIds.size > 0) {
-        setDismissedIds((prev) => {
-          const next = new Set(prev);
-          successfulEventIds.forEach((id) => next.add(id));
-          return next;
-        });
-        setEntries((prev) => {
-          const next = new Map(prev);
-          successfulEventIds.forEach((id) => next.delete(id));
-          return next;
-        });
-      }
+      // The payload is no longer carried on the polled list — fetch it once.
+      // The syncedCallsLogId guard above means this runs a single time.
+      void fetchJobResult(latest.id).then((raw) => {
+        const r = raw as SubmitResult;
+        setSubmitResult(r);
+        setSubmitting(false);
+        setActiveCallsJobId(null);
+        // Dismiss meetings whose eventId succeeded
+        const successfulEventIds = new Set(
+          (r.results ?? [])
+            .filter((x) => x.success && x.eventId)
+            .map((x) => x.eventId as string),
+        );
+        if (successfulEventIds.size > 0) {
+          setDismissedIds((prev) => {
+            const next = new Set(prev);
+            successfulEventIds.forEach((id) => next.add(id));
+            return next;
+          });
+          setEntries((prev) => {
+            const next = new Map(prev);
+            successfulEventIds.forEach((id) => next.delete(id));
+            return next;
+          });
+        }
+      });
     } else if (latest.status === "failed" || latest.status === "cancelled") {
       setSubmitResult({
         successCount: 0,

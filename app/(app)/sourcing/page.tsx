@@ -20,7 +20,7 @@ import { Card } from "@/app/components/ui/Card";
 import { Alert } from "@/app/components/ui/Alert";
 import { Spinner } from "@/app/components/ui/Spinner";
 import { Badge } from "@/app/components/ui/Badge";
-import { useJobs, type Job } from "@/app/hooks/useJobs";
+import { useJobs, type Job, useJobResult } from "@/app/hooks/useJobs";
 
 // ───────── Types matching SourcingResult from lib/jobs/sourcing-runner.ts ─────────
 
@@ -223,6 +223,17 @@ export default function SourcingPage() {
   );
 }
 
+/**
+ * A job row for the result panel. `result` and `input` are optional because
+ * they no longer ride along on the polled list — they arrive from
+ * /api/jobs/[id], so `undefined` means "not loaded yet" (distinct from `null`,
+ * which means the run genuinely has no payload).
+ */
+type PanelJob = Job & {
+  result?: Record<string, unknown> | null;
+  input?: Record<string, unknown> | null;
+};
+
 function SourcingPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -285,33 +296,17 @@ function SourcingPageContent() {
     router.push(`/sourcing?${params.toString()}`);
   }
 
-  // The cached job we navigated to may be older than the 20-job useJobs
-  // window. Fetch it directly when not in the list.
-  const [extraJob, setExtraJob] = useState<Job | null>(null);
-  useEffect(() => {
-    if (!selectedJobId) {
-      setExtraJob(null);
-      return;
-    }
-    if (sourcingJobs.some((j) => j.id === selectedJobId)) {
-      setExtraJob(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/jobs/${selectedJobId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled && data.job) setExtraJob(data.job as Job);
-      } catch {
-        /* ignore */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedJobId, sourcingJobs]);
+  // The selected run's payload is fetched on demand rather than carried on
+  // every poll of the job list. This also replaces an older effect that
+  // depended on the memoised jobs array — whose identity changed on every
+  // poll, so it silently re-downloaded a full run every few seconds.
+  const selectedListJob = selectedJobId
+    ? sourcingJobs.find((j) => j.id === selectedJobId) ?? null
+    : null;
+  const { job: selectedJobDetail, loading: selectedJobLoading } = useJobResult(
+    selectedJobId,
+    selectedListJob?.status,
+  );
 
   async function startSourcingJob(rawUrl: string) {
     const cleaned = rawUrl.trim();
@@ -415,9 +410,11 @@ function SourcingPageContent() {
     }
   }
 
-  const selectedJob =
-    (selectedJobId && sourcingJobs.find((j) => j.id === selectedJobId)) ||
-    (selectedJobId && extraJob?.id === selectedJobId ? extraJob : null) ||
+  // Prefer the detail (it carries `result` and `input`); fall back to the list
+  // row so the queued/running states still render while the detail loads.
+  const selectedJob: PanelJob | null =
+    (selectedJobDetail?.id === selectedJobId ? selectedJobDetail : null) ??
+    selectedListJob ??
     null;
 
   const cachedAgeDays =
@@ -589,7 +586,11 @@ function SourcingPageContent() {
         {/* Selected job result — rendered ABOVE the runs list so clicking a row
             doesn't push the result below the fold. */}
         {selectedJob && (
-          <JobResultPanel job={selectedJob} expandCompany={expandCompany} />
+          <JobResultPanel
+            job={selectedJob}
+            expandCompany={expandCompany}
+            detailLoading={selectedJobLoading}
+          />
         )}
 
         {/* Search past runs */}
@@ -771,9 +772,11 @@ function SearchMatchRow({
 function JobResultPanel({
   job,
   expandCompany,
+  detailLoading,
 }: {
-  job: Job;
+  job: PanelJob;
   expandCompany?: string | null;
+  detailLoading?: boolean;
 }) {
   const status = job.status;
 
@@ -829,7 +832,19 @@ function JobResultPanel({
     );
   }
 
-  // succeeded — bulk runs render a collapsed list of companies
+  // succeeded — the payload arrives from /api/jobs/[id], so it can still be
+  // in flight for a moment after the list says the job finished.
+  if (job.result === undefined || detailLoading) {
+    return (
+      <Card>
+        <div className="flex items-center gap-3">
+          <Loader2 className="h-4 w-4 animate-spin text-ink-muted" strokeWidth={2} />
+          <span className="text-sm text-ink-muted">Loading results…</span>
+        </div>
+      </Card>
+    );
+  }
+
   if (job.kind === "sourcing_bulk") {
     const bulk = job.result as unknown as BulkResult | null;
     if (!bulk || !Array.isArray(bulk.items) || bulk.items.length === 0) {

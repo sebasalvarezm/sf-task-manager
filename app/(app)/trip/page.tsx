@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
-import { useJobs } from "@/app/hooks/useJobs";
+import { useJobs, fetchJobResult } from "@/app/hooks/useJobs";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -126,23 +126,27 @@ export default function TripPage() {
     syncedTripSearchId.current = latest.id;
 
     if (latest.status === "succeeded") {
-      const r = (latest.result ?? {}) as {
-        results?: SearchResult[];
-        userLocation?: UserLocation | null;
-        geocodeStats?: { uncached?: number };
-        discovered?: DiscoveredCompany[] | null;
-        discoveryStats?: typeof discoveryStats;
-        discoveryError?: string | null;
-      };
-      setResults(r.results ?? []);
-      setUserLoc(r.userLocation ?? null);
-      setUncachedCount(r.geocodeStats?.uncached ?? 0);
-      setDiscovered(r.discovered ?? null);
-      setDiscoveryStats(r.discoveryStats ?? null);
-      setDiscoveryError(r.discoveryError ?? null);
-      setSearching(false);
-      setDiscovering(false);
-      setSearchError(null);
+      // The payload is no longer on the polled list — fetch it once. The
+      // syncedTripSearchId guard above means this runs a single time per job.
+      void fetchJobResult(latest.id).then((raw) => {
+        const r = raw as {
+          results?: SearchResult[];
+          userLocation?: UserLocation | null;
+          geocodeStats?: { uncached?: number };
+          discovered?: DiscoveredCompany[] | null;
+          discoveryStats?: typeof discoveryStats;
+          discoveryError?: string | null;
+        };
+        setResults(r.results ?? []);
+        setUserLoc(r.userLocation ?? null);
+        setUncachedCount(r.geocodeStats?.uncached ?? 0);
+        setDiscovered(r.discovered ?? null);
+        setDiscoveryStats(r.discoveryStats ?? null);
+        setDiscoveryError(r.discoveryError ?? null);
+        setSearching(false);
+        setDiscovering(false);
+        setSearchError(null);
+      });
     } else if (latest.status === "failed" || latest.status === "cancelled") {
       setSearchError(latest.error || "Search failed");
       setSearching(false);
@@ -176,15 +180,17 @@ export default function TripPage() {
     syncedTripGeocodeId.current = latest.id;
 
     if (latest.status === "succeeded") {
-      const r = (latest.result ?? {}) as { total?: number };
-      setScanProgress({
-        total: r.total ?? 0,
-        cached: r.total ?? 0,
-        remaining: 0,
+      void fetchJobResult(latest.id).then((raw) => {
+        const r = raw as { total?: number };
+        setScanProgress({
+          total: r.total ?? 0,
+          cached: r.total ?? 0,
+          remaining: 0,
+        });
+        setScanDone(true);
+        setScanning(false);
+        setUncachedCount(0);
       });
-      setScanDone(true);
-      setScanning(false);
-      setUncachedCount(0);
     } else if (latest.status === "failed" || latest.status === "cancelled") {
       setScanning(false);
       setScanDone(false);

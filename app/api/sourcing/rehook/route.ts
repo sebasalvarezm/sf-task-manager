@@ -93,9 +93,13 @@ export async function POST(req: Request) {
 
     if (items && itemIndex >= 0) {
       items[itemIndex] = { ...items[itemIndex], result: updated };
-      await markSucceeded(job.id, { ...stored, items });
+      await markSucceeded(job.id, { ...stored, items }, false);
     } else {
-      await markSucceeded(job.id, updated as unknown as Record<string, unknown>);
+      await markSucceeded(
+        job.id,
+        updated as unknown as Record<string, unknown>,
+        false,
+      );
     }
 
     return NextResponse.json({

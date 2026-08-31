@@ -10,7 +10,7 @@ import WeekSelector, {
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
-import { useJobs } from "@/app/hooks/useJobs";
+import { useJobs, fetchJobResult } from "@/app/hooks/useJobs";
 
 // ── One-pager localStorage cache ─────────────────────────────────────────────
 const PREP_CACHE_KEY = "call_prep_cache";
@@ -85,6 +85,78 @@ function getCacheKey(meeting: MeetingMatch): string | null {
   if (meeting.match) return meeting.match.accountId;
   if (meeting.externalDomains.length > 0) return meeting.externalDomains[0];
   return null;
+}
+
+// ── Server-side one-pager library ────────────────────────────────────────────
+// Every generated one-pager is already stored in Supabase (jobs.result), but
+// this page used to read them back only from localStorage — so a prep generated
+// on a phone looked missing on a laptop and the Download button never appeared.
+// /api/prep/library is that server read, keyed the same way as getCacheKey.
+type PrepLibraryEntry = {
+  key: string;
+  onePager: OnePagerContent;
+  prepMode: "first_call" | "reconnect";
+  generatedAt: string;
+};
+
+// The server can only ever be equal or ahead of the local cache — every local
+// entry was written from a job that also wrote to Supabase. We still compare
+// timestamps so a prep generated in this session isn't overwritten by the
+// library snapshot that was fetched back at mount.
+function serverEntryWins(
+  entry: PrepLibraryEntry,
+  local: OnePagerContent | null,
+): boolean {
+  if (!local) return true;
+  const localAt = local.generatedOn ? Date.parse(local.generatedOn) : NaN;
+  const serverAt = Date.parse(entry.generatedAt);
+  if (Number.isNaN(localAt)) return true;
+  if (Number.isNaN(serverAt)) return false;
+  return serverAt >= localAt;
+}
+
+// applyPrepMode() in the runner strips quickBrief / businessModel /
+// relationshipCatchUp for First Calls, so their presence is a reliable signal
+// that a locally cached one-pager was generated as a Reconnect. Used when we're
+// falling back to localStorage and have no server record of the mode.
+function inferPrepMode(
+  onePager: OnePagerContent | null,
+): "first_call" | "reconnect" {
+  if (!onePager) return "first_call";
+  const reconnectOnly = [
+    onePager.quickBrief,
+    onePager.businessModel,
+    onePager.relationshipCatchUp,
+  ];
+  return reconnectOnly.some((v) => typeof v === "string" && v.trim().length > 0)
+    ? "reconnect"
+    : "first_call";
+}
+
+// Wrap a raw calendar meeting with this page's per-row state, restoring any
+// one-pager we've already generated for it. Server library wins over the local
+// cache; the local cache remains as the instant-paint / offline layer.
+function hydrateMeeting(
+  m: MeetingMatch,
+  localCache: Record<string, OnePagerContent>,
+  library: Record<string, PrepLibraryEntry> | null,
+): PrepMeeting {
+  const key = getCacheKey(m);
+  const local = key ? (localCache[key] ?? null) : null;
+  const entry = key && library ? (library[key] ?? null) : null;
+  const useServer = entry !== null && serverEntryWins(entry, local);
+  return {
+    ...m,
+    onePager: useServer ? entry.onePager : local,
+    // This used to be hard-reset to "first_call", which silently downgraded a
+    // Reconnect briefing — and its Word export — after any page refresh.
+    prepMode: useServer ? entry.prepMode : inferPrepMode(local),
+    generating: false,
+    generateError: null,
+    downloading: false,
+    jobId: null,
+    generationCacheKey: null,
+  };
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -191,6 +263,18 @@ function PrepPageContent() {
   // eventId in this set forces the search UI to show even though a match exists.
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
 
+  // One-pagers already generated on any device, from Supabase. Fetched once on
+  // mount; merged into rows by the effect below.
+  const [serverLibrary, setServerLibrary] = useState<Record<
+    string,
+    PrepLibraryEntry
+  > | null>(null);
+
+  // Weeks the page has auto-loaded this session. A ref (not state) so an Outlook
+  // error can never put us in a reload loop.
+  const autoLoadedWeeks = useRef<Set<string>>(new Set());
+  const [needsAutoLoad, setNeedsAutoLoad] = useState<string | null>(null);
+
   // ── On mount: check connections ────────────────────────────────────────────
   useEffect(() => {
     const msOk = searchParams.get("ms_connected");
@@ -199,8 +283,29 @@ function PrepPageContent() {
       router.replace("/prep");
     }
     checkConnections();
+    loadServerLibrary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadServerLibrary() {
+    try {
+      const res = await fetch("/api/prep/library");
+      if (!res.ok) {
+        setServerLibrary({});
+        return;
+      }
+      const data = (await res.json()) as { entries?: PrepLibraryEntry[] };
+      const map: Record<string, PrepLibraryEntry> = {};
+      for (const entry of data.entries ?? []) {
+        if (entry?.key && entry.onePager) map[entry.key] = entry;
+      }
+      setServerLibrary(map);
+    } catch {
+      // Non-critical: the page still works off the local cache, which is
+      // exactly the old behaviour.
+      setServerLibrary({});
+    }
+  }
 
   async function checkConnections() {
     try {
@@ -233,30 +338,58 @@ function PrepPageContent() {
     if (cached) {
       const oneCache = getOnePagerCache();
       setMeetings(
-        cached.meetings.map((m) => {
-          const key = getCacheKey(m);
-          const onePager = key ? (oneCache[key] ?? null) : null;
-          return {
-            ...m,
-            onePager,
-            generating: false,
-            generateError: null,
-            downloading: false,
-            jobId: null,
-            generationCacheKey: null,
-            prepMode: "first_call",
-          };
-        }),
+        cached.meetings.map((m) => hydrateMeeting(m, oneCache, serverLibrary)),
       );
       setHasLoaded(true);
       setLastLoadedAt(cached.loadedAt);
+      setNeedsAutoLoad(null);
     } else {
       setMeetings([]);
       setHasLoaded(false);
       setLastLoadedAt(null);
+      // Nothing cached for this week on this device. Rather than showing an
+      // empty page, queue an auto-load — the effect below fires it as soon as
+      // we know Outlook is connected. This is what makes a laptop opened before
+      // a call show the week (and its already-generated preps) with no clicks.
+      setNeedsAutoLoad(selectedWeek.start);
     }
     setExpandedId(null);
+    // serverLibrary is intentionally omitted: it arrives async and is merged in
+    // non-destructively by the effect below, so re-running this on its arrival
+    // would needlessly reset in-flight row state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWeek]);
+
+  // ── Auto-load a week with nothing cached locally ───────────────────────────
+  useEffect(() => {
+    if (!needsAutoLoad || msConnected !== true || loading) return;
+    if (!selectedWeek || selectedWeek.start !== needsAutoLoad) return;
+    if (autoLoadedWeeks.current.has(needsAutoLoad)) return;
+    autoLoadedWeeks.current.add(needsAutoLoad);
+    setNeedsAutoLoad(null);
+    handleLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsAutoLoad, msConnected, selectedWeek, loading]);
+
+  // ── Merge the server library into rows once it arrives ─────────────────────
+  // Non-destructive: only fills in a one-pager (and its prep mode) where the
+  // server has something newer than what the row is already showing.
+  useEffect(() => {
+    if (!serverLibrary) return;
+    setMeetings((prev) => {
+      let changed = false;
+      const next = prev.map((m) => {
+        if (m.generating) return m;
+        const key = getCacheKey(m);
+        const entry = key ? (serverLibrary[key] ?? null) : null;
+        if (!entry || !serverEntryWins(entry, m.onePager)) return m;
+        if (m.onePager === entry.onePager && m.prepMode === entry.prepMode) return m;
+        changed = true;
+        return { ...m, onePager: entry.onePager, prepMode: entry.prepMode };
+      });
+      return changed ? next : prev;
+    });
+  }, [serverLibrary]);
 
   async function handleLoad() {
     if (!selectedWeek) return;
@@ -290,23 +423,9 @@ function PrepPageContent() {
       saveMeetingsToCache(selectedWeek.start, raw, loadedAt);
       setLastLoadedAt(loadedAt);
 
-      // Wrap each meeting with prep-specific state, restoring cached one-pagers
-      setMeetings(
-        raw.map((m) => {
-          const key = getCacheKey(m);
-          const cached = key ? cache[key] ?? null : null;
-          return {
-            ...m,
-            onePager: cached,
-            generating: false,
-            generateError: null,
-            downloading: false,
-            jobId: null,
-            generationCacheKey: null,
-            prepMode: "first_call",
-          };
-        })
-      );
+      // Wrap each meeting with prep-specific state, restoring one-pagers that
+      // were already generated — from the server first, local cache second.
+      setMeetings(raw.map((m) => hydrateMeeting(m, cache, serverLibrary)));
       setHasLoaded(true);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Unexpected error");
@@ -322,8 +441,17 @@ function PrepPageContent() {
   const { jobs, refetch: refetchJobs } = useJobs();
   const syncedPrepJobIds = useRef<Set<string>>(new Set());
 
+  // Mirror of `meetings` so the effect below can see the current rows without
+  // listing `meetings` as a dependency (it calls setMeetings, which would loop).
+  const meetingsRef = useRef(meetings);
+  useEffect(() => {
+    meetingsRef.current = meetings;
+  }, [meetings]);
+
   useEffect(() => {
     if (jobs.length === 0) return;
+
+    // Sync pass: in-flight and failed rows need no payload.
     setMeetings((prev) => {
       let changed = false;
       const next = prev.map((m) => {
@@ -335,26 +463,10 @@ function PrepPageContent() {
           // Still in flight — keep generating: true
           return m.generating ? m : { ...m, generating: true };
         }
-
         if (syncedPrepJobIds.current.has(job.id)) return m;
-        syncedPrepJobIds.current.add(job.id);
 
-        if (job.status === "succeeded") {
-          const r = (job.result ?? {}) as { onePager?: OnePagerContent };
-          const onePager = r.onePager ?? null;
-          const cacheKey = m.generationCacheKey ?? getCacheKey(m);
-          if (cacheKey && onePager) saveOnePagerToCache(cacheKey, onePager);
-          changed = true;
-          return {
-            ...m,
-            onePager,
-            generating: false,
-            generateError: null,
-            jobId: null,
-            generationCacheKey: null,
-          };
-        }
         if (job.status === "failed" || job.status === "cancelled") {
+          syncedPrepJobIds.current.add(job.id);
           changed = true;
           return {
             ...m,
@@ -367,6 +479,37 @@ function PrepPageContent() {
       });
       return changed ? next : prev;
     });
+
+    // Async pass: a finished one-pager now lives on /api/jobs/[id] rather than
+    // on every poll of the list. Fetch each exactly once, then apply it.
+    for (const m of meetingsRef.current) {
+      if (!m.jobId) continue;
+      const job = jobs.find((j) => j.id === m.jobId);
+      if (!job || job.status !== "succeeded") continue;
+      if (syncedPrepJobIds.current.has(job.id)) continue;
+      syncedPrepJobIds.current.add(job.id);
+
+      const jobId = job.id;
+      void fetchJobResult(jobId).then((raw) => {
+        const onePager =
+          (raw as { onePager?: OnePagerContent }).onePager ?? null;
+        setMeetings((prev) =>
+          prev.map((row) => {
+            if (row.jobId !== jobId) return row;
+            const cacheKey = row.generationCacheKey ?? getCacheKey(row);
+            if (cacheKey && onePager) saveOnePagerToCache(cacheKey, onePager);
+            return {
+              ...row,
+              onePager,
+              generating: false,
+              generateError: null,
+              jobId: null,
+              generationCacheKey: null,
+            };
+          }),
+        );
+      });
+    }
   }, [jobs]);
 
   // ── Cancel an in-flight prep job for one meeting row ─────────────────────
