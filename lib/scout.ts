@@ -2078,6 +2078,12 @@ export type CompanyAnchor = {
   factConfidence?: "high" | "medium" | "low";
   /** How sure we are of the YEAR — often lower than the fact itself. */
   dateConfidence?: "high" | "medium" | "low";
+  /**
+   * How hard this was to find, which is the whole point of a hook. A true fact
+   * that sits in the first line of an About page proves no homework was done,
+   * so being verifiable is necessary but nowhere near sufficient.
+   */
+  obviousness?: "front_page" | "few_clicks" | "buried";
 };
 
 /**
@@ -2094,7 +2100,13 @@ type ProvenanceClass = {
   label: string;
   /** What a hit looks like, so the model knows when it has found one. */
   looksLike: string;
-  queries: (name: string, domain: string) => string[];
+  /**
+   * `products` holds the names the company sells today. A product name is the
+   * strongest search term available for finding old releases — "COMPRESS build
+   * history" reaches an actual version trail that a domain-only query never
+   * will — so any class that hunts for launches should use them.
+   */
+  queries: (name: string, domain: string, products: string[]) => string[];
 };
 
 /** Round 1 — the three classes that hit most often. */
@@ -2113,7 +2125,7 @@ const PROVENANCE_ROUND_1: ProvenanceClass[] = [
     type: "own_timeline",
     label: "the company's own history page",
     looksLike:
-      'a dated milestone on their own site — an "our story", timeline, or "N years of" page',
+      'a SPECIFIC dated milestone buried in an "our story", timeline, or "N years of" page — a named product, a move, an award, an odd anecdote. Never the founding sentence at the top of the page',
     queries: (name, domain) => [
       `site:${domain} history OR timeline OR "our story" OR milestones OR anniversary`,
     ],
@@ -2123,8 +2135,11 @@ const PROVENANCE_ROUND_1: ProvenanceClass[] = [
     label: "dated press release",
     looksLike:
       "a wire-service announcement with a real date and a named product",
-    queries: (name) => [
+    queries: (name, _domain, products) => [
       `"${name}" prweb OR prnewswire OR businesswire announces OR launches OR introduces`,
+      ...products
+        .slice(0, 2)
+        .map((p) => `"${p}" "${name}" announced OR launched OR "first released"`),
     ],
   },
 ];
@@ -2144,9 +2159,15 @@ const PROVENANCE_ROUND_2: ProvenanceClass[] = [
     type: "release_trail",
     label: "version or release-notes trail",
     looksLike:
-      "a version history where one entry is a genuinely new product rather than an annual bump",
-    queries: (name, domain) => [
+      "a version history where one entry is a genuinely new product rather than an annual bump, or an early build of a product they still sell",
+    queries: (name, domain, products) => [
       `site:${domain} "release notes" OR "what's new" OR "version history" OR changelog`,
+      ...products
+        .slice(0, 2)
+        .flatMap((p) => [
+          `"${p}" "release notes" OR "build" OR "version history"`,
+          `"${p}" ${name} 2010..2018`,
+        ]),
     ],
   },
   {
@@ -2329,6 +2350,21 @@ function validateColdAnchors(
     const type = a.type as CompanyAnchor["type"];
     if (!ANCHOR_TYPES.has(type)) continue;
 
+    // A founding fact is the most findable thing about any company, so as a
+    // hook it proves the opposite of homework. Dropped outright, however
+    // confidently it is sourced.
+    if (isFoundingAnchor(anchor)) continue;
+
+    // Obvious anchors are kept but ranked last, not discarded. Discarding them
+    // also threw away app-store listings and registry filings that happen to be
+    // public -- the Google Play page dating a product launch is "obvious" and
+    // still a better opener than nothing. The founding-fact ban above is the
+    // precise instrument for the thing that actually reads as lazy.
+    const obviousness =
+      a.obviousness === "front_page" || a.obviousness === "buried"
+        ? a.obviousness
+        : "few_clicks";
+
     const sourceUrl = typeof a.sourceUrl === "string" ? a.sourceUrl.trim() : "";
     const host = /^https?:\/\//i.test(sourceUrl) ? urlHost(sourceUrl) : null;
     if (!host) continue; // no checkable source, no anchor
@@ -2364,6 +2400,7 @@ function validateColdAnchors(
       year: normalizeYear(a.year),
       factConfidence,
       dateConfidence: normalizeConfidence(a.dateConfidence),
+      obviousness,
     });
   }
 
@@ -2374,18 +2411,88 @@ function validateColdAnchors(
  * Strongest facts first, capped at 5. A checkable claim beats a more colourful
  * shaky one, so the hook writer sees the defensible options at the top.
  */
+/**
+ * Tiebreak order only. Ranked below how buried and how certain an anchor is,
+ * because a buried timeline oddity (a scale model in a national museum) makes a
+ * far better opener than a predictable former name -- but among equals, a named
+ * launch beats "we turned 40".
+ */
+const TYPE_PRIORITY: Record<CompanyAnchor["type"], number> = {
+  former_name: 0,
+  product_release: 0,
+  release_trail: 0,
+  obscure_trivia: 1,
+  formation_event: 1,
+  distinctive_moment: 2,
+  registry_artifact: 2,
+  early_niche: 3,
+  own_timeline: 4,
+};
+
 function rankAnchors(anchors: CompanyAnchor[]): CompanyAnchor[] {
   const rank = { high: 0, medium: 1, low: 2 } as const;
+  // How hard it was to find is weighted alongside how sure we are, because a
+  // buried detail that is merely probable makes a better opener than a
+  // certainty anyone could have read off the front page.
+  const dig = { buried: 0, few_clicks: 1, front_page: 2 } as const;
+  // A shaky claim never outranks a solid one, however well buried. Being hard
+  // to find only counts among things we actually believe -- the recipient is
+  // the one person who can spot an invented former name.
+  const shaky = (a: CompanyAnchor) => (a.factConfidence === "low" ? 1 : 0);
   return [...anchors]
-    .sort(
-      (x, y) => rank[x.factConfidence ?? "low"] - rank[y.factConfidence ?? "low"]
-    )
+    .sort((x, y) => {
+      const byTrust = shaky(x) - shaky(y);
+      if (byTrust !== 0) return byTrust;
+      const byDig =
+        dig[x.obviousness ?? "few_clicks"] - dig[y.obviousness ?? "few_clicks"];
+      if (byDig !== 0) return byDig;
+      const byConf =
+        rank[x.factConfidence ?? "low"] - rank[y.factConfidence ?? "low"];
+      if (byConf !== 0) return byConf;
+      // Last tiebreak: the hierarchy the hook prompt documents. A named product
+      // release beats an anniversary when everything else is equal, which is
+      // otherwise decided by whichever the model happened to list first.
+      return TYPE_PRIORITY[x.type] - TYPE_PRIORITY[y.type];
+    })
     .slice(0, 5);
 }
 
-/** Does this set of anchors contain something worth stopping the search for? */
+/**
+ * Does this set of anchors contain something worth stopping the search for?
+ *
+ * Requires an anchor that is both true AND genuinely buried. Anything easier
+ * to find is worth spending the second round to try to beat: stopping on an
+ * About-page fact is how the search settles for "the move to a new office"
+ * when the release-notes trail held a real product launch. The second round
+ * costs three more searches; a weak opener costs the reply.
+ */
 function hasStrongAnchor(anchors: CompanyAnchor[]): boolean {
-  return anchors.some((a) => a.factConfidence === "high" && !!a.sourceUrl);
+  return anchors.some(
+    (a) =>
+      a.factConfidence === "high" && !!a.sourceUrl && a.obviousness === "buried"
+  );
+}
+
+/**
+ * Anchors that describe a company's founding rather than something it did.
+ *
+ * The founding year, place, and founder are the most findable facts about any
+ * company — first line of the About page, first line of every directory entry.
+ * As a hook they actively backfire: they prove the sender looked for five
+ * seconds. Detected on the text because a model that has been told not to
+ * return one will still occasionally dress it up as a milestone.
+ */
+const FOUNDING_ANCHOR_PATTERNS = [
+  /the founding/i,
+  /was founded/i,
+  /founding (?:of|in|year|date)/i,
+  /(?:its|their|the) (?:incorporation|establishment)/i,
+  /when .{0,20}(?:was )?(?:founded|established|incorporated|started out)/i,
+  /early days as a (?:startup|new company)/i,
+];
+
+function isFoundingAnchor(anchor: string): boolean {
+  return FOUNDING_ANCHOR_PATTERNS.some((re) => re.test(anchor));
 }
 
 /**
@@ -2398,12 +2505,13 @@ function buildColdRoundPrompt(
   companyName: string,
   domain: string,
   classes: ProvenanceClass[],
-  alreadyTried: string[]
+  alreadyTried: string[],
+  products: string[]
 ): string {
   const searchBlock = classes
     .map((c, i) => {
       const queries = c
-        .queries(companyName, domain)
+        .queries(companyName, domain, products)
         .map((q) => `     ${q}`)
         .join("\n");
       return `${i + 1}. ${c.label.toUpperCase()} — looking for ${c.looksLike}\n   Run:\n${queries}\n   If found, return it as type "${c.type}".`;
@@ -2423,17 +2531,36 @@ RUN THESE SEARCHES. They are chosen because they are where this kind of record a
 
 ${searchBlock}
 
+THE TEST THAT MATTERS: could a lazy person have found this in five seconds?
+If yes, it is worthless no matter how true it is. The hook's entire job is to
+prove someone dug. A fact that is easy to find proves the opposite.
+
 WHAT A GOOD ANCHOR LOOKS LIKE (all from real research):
 - "the days operating as MyLumper" (a former name, from a "formerly known as" record)
 - "the launch of the Field Data Capture app for iPad" (a named product in a dated press release)
 - "the release of CSiPlant" (the one genuinely new product among years of version bumps)
 - "the days as the software arm of Cleveland Process Designs" (a predecessor entity)
+- "the days when the Okappy mascot would appear on the Team page" (odd trivia nobody else would notice)
+- "back when you ran free coffee Mondays for the yard crews" (a human detail from an old post)
 
-WHAT IS UNUSABLE:
+BANNED — these read as research and are not:
+- THE FOUNDING. The year, the city, the founder's name, "was founded in 1983 in
+  Ontario under Les Bildy". This is the first line of their About page and every
+  directory entry about them. It is the single worst thing you can return. If
+  the only thing you can find is when and where they were founded, return an
+  EMPTY list instead. An empty list is a useful answer; a founding date is not.
+- An anniversary or "N years in business" with no specific event attached.
 - Anything a reader could write after five seconds on the homepage.
 - A bare year with no event attached.
 - A description of what they sell today.
 - A claim you did not actually see on a page you searched.
+
+HOW IT MUST READ: the anchor slots straight after "going back to", so it has to
+sound like natural speech. Good anchors almost always begin "the days...",
+"the release of...", "the launch of...", or "back when...". Read it aloud as a
+full sentence before returning it. "going back to the founding in Ontario,
+Canada in 1983 under Les M. Bildy" is exactly the clumsy, obvious result to
+avoid.
 
 RULES:
 - Every anchor MUST carry the real URL of the page you saw it on, in "sourceUrl". No URL means do not return the anchor at all.
@@ -2453,10 +2580,23 @@ Return STRICT JSON only, no markdown fences, no commentary:
       "year": 2019,
       "factConfidence": "high",
       "dateConfidence": "low",
-      "evidence": "one sentence: what the page said"
+      "obviousness": "buried",
+      "evidence": "one short sentence, 25 words maximum: what the page said"
     }
   ]
-}`;
+}
+
+Return at most 3 anchors. Keep every "evidence" under 25 words -- a long answer
+gets cut off mid-object and the whole round is thrown away.
+
+"obviousness" is how hard this was to find, and it is judged strictly:
+  "front_page" - on the homepage, the About page, or a company directory entry.
+                 Ranked last and only ever used when nothing better exists, so
+                 label honestly rather than inflating it.
+  "few_clicks" - a real page on their site or a news item, but not the first
+                 thing anyone would land on.
+  "buried"     - an old press release, an archived post, a registry filing, an
+                 app listing, a detail inside a long page. This is the target.`;
 }
 
 /**
@@ -2739,7 +2879,10 @@ async function researchAnchorsCold(args: {
   ): Promise<CompanyAnchor[]> => {
     const resp = await callClaudeWithWebSearch(client, 3, {
       model: "claude-sonnet-4-6",
-      max_tokens: 1200,
+      // Five anchors with URLs and evidence overflow 1200 tokens, and a cut-off
+      // object is unparseable -- the round's whole result was being discarded
+      // as "unreadable" when the research had actually succeeded.
+      max_tokens: 2400,
       messages: [
         {
           role: "user",
@@ -2748,7 +2891,8 @@ async function researchAnchorsCold(args: {
             companyName,
             domain,
             classes,
-            alreadyTried
+            alreadyTried,
+            products
           ),
         },
       ],
@@ -2912,12 +3056,15 @@ ANCHOR HIERARCHY (pick the most specific available — do NOT skip past a strong
   5. EARLY NICHE they pioneered, named specifically (e.g. "the days you were the only option for Australian iron-ore haul-truck operators")
   6. LAST RESORT: founding year + ONE specific clause about what they were doing at that moment. Never a bare year. Never a generic positioning statement.
 
+THE FOUNDING IS NOT A HOOK. "the founding in Ontario, Canada in 1983 under Les M. Bildy" is a real example of a bad opener: true, verifiable, and completely worthless, because it is the first line of their About page and of every directory entry about them. It tells the reader we looked for five seconds. Tier 6 means a specific thing they were DOING in their early years, not the founding event itself, and it is reachable only when tiers 1-5 are genuinely empty. Do not name the founder. Do not name the founding city. Do not say "the founding".
+
 CONFIDENCE RULES (these override the hierarchy — a defensible weaker anchor beats a shaky stronger one):
 - Prefer an anchor with "fact confidence: high" over a more specific one with lower fact confidence. The recipient is the one person alive who can tell we got it wrong.
 - If the anchor you use has "date confidence" of anything other than high, write it WITHOUT the year. "the release of CSiPlant" — never "the release of CSiPlant in 2019". Omitting an uncertain date costs nothing; asserting a wrong one costs the reply.
 - Only include a year when that anchor's date confidence is high.
 
 HARD BANS:
+- The founding year, founding city, or founder's name as the anchor. See above.
 - Generic descriptions of current products/positioning ("their focus on real-time worksite intelligence", "Smart Maintenance Management CMMS built for industrial asset-heavy environments"). If a reader could have written it after a 5-second glance at the homepage, it is banned.
 - Bare-year openers like "I've studied your business going back to 2002." with no specific clause after.
 - Hype words: "leading", "innovative", "cutting-edge", "world-class", flattery of any kind.
@@ -2926,7 +3073,9 @@ HARD BANS:
 - Wrapping quotes around the hook.
 
 LENGTH & SHAPE:
-- Write EXACTLY ONE sentence. Total length under 40 words.
+- Write EXACTLY ONE sentence, under 25 words. Every golden example above is 12-16 words. Shorter lands harder.
+- The anchor STANDS ALONE. Do not append a clause explaining what it was, what it covered, or why it mattered. "going back to the \"What's New in COMPRESS 2016\" webinar" is finished; adding ", where they walked through the build numbering system and fielded questions on licensing" makes it worse. Name the thing and stop.
+- READ IT ALOUD. The anchor slots straight after "going back to", so it must sound like a person talking. Natural anchors nearly always start "the days...", "the release of...", "the launch of...", or "back when...". If it reads like a database record ("the founding in Ontario, Canada in 1983 under Les M. Bildy"), rewrite it.
 - Do NOT add a second sentence about our thesis, portfolio, adjacencies, or what we are building. The opener stands alone.
 - Tone: respectful, founder-to-founder, no sales jargon.
 
