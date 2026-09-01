@@ -108,7 +108,7 @@ function wait(ms: number): Promise<void> {
 }
 
 /** Retry-After is either a number of seconds or an HTTP date. */
-function parseRetryAfterMs(header: string | null): number | null {
+export function parseRetryAfterMs(header: string | null): number | null {
   if (!header) return null;
   const trimmed = header.trim();
   const seconds = Number(trimmed);
@@ -2330,7 +2330,7 @@ function normalizeYear(value: unknown): number | null {
  * - A former-name or formation claim sourced only to the company's own site is
  *   capped at medium: it may well be true, but it is self-reported.
  */
-function validateColdAnchors(
+export function validateColdAnchors(
   rawAnchors: unknown,
   searchUrls: string[],
   companyHost: string | null
@@ -2483,15 +2483,15 @@ function hasStrongAnchor(anchors: CompanyAnchor[]): boolean {
  * return one will still occasionally dress it up as a milestone.
  */
 const FOUNDING_ANCHOR_PATTERNS = [
-  /the founding/i,
-  /was founded/i,
-  /founding (?:of|in|year|date)/i,
-  /(?:its|their|the) (?:incorporation|establishment)/i,
-  /when .{0,20}(?:was )?(?:founded|established|incorporated|started out)/i,
-  /early days as a (?:startup|new company)/i,
+  /\bthe founding\b/i,
+  /\bwas founded\b/i,
+  /\bfounding (?:of|in|year|date)\b/i,
+  /\b(?:its|their|the) (?:incorporation|establishment)\b/i,
+  /\bwhen .{0,20}\b(?:was )?(?:founded|established|incorporated|started out)\b/i,
+  /\bearly days as a (?:startup|new company)\b/i,
 ];
 
-function isFoundingAnchor(anchor: string): boolean {
+export function isFoundingAnchor(anchor: string): boolean {
   return FOUNDING_ANCHOR_PATTERNS.some((re) => re.test(anchor));
 }
 

@@ -87,12 +87,12 @@ function leadershipRank(title: string | null): number {
 const TEAM_FIRST_NAMES = ["Nate", "Tyson", "Sebastian"];
 const ACTIVE_USER_NAME = "Sebastian"; // TODO: derive from logged-in user
 
-function cleanE1Subject(raw: string): string {
+export function cleanE1Subject(raw: string): string {
   // Remove "[E1] - " or "[E1] – " prefix
   return raw.replace(/^\[E\d\]\s*[-–—]\s*/i, "").trim();
 }
 
-function cleanE1Body(raw: string | null): string | null {
+export function cleanE1Body(raw: string | null): string | null {
   if (!raw) return null;
 
   let body = raw;
@@ -138,7 +138,7 @@ function cleanE1Body(raw: string | null): string | null {
 // Groups an account's E1-E5 tasks by contact (WhoId). Each contact group
 // becomes a SequenceHistory entry.
 
-function groupSequences(tasks: SfETask[]): SequenceHistory[] {
+export function groupSequences(tasks: SfETask[]): SequenceHistory[] {
   const byWho = new Map<string, SfETask[]>();
 
   for (const t of tasks) {
@@ -234,7 +234,7 @@ function groupSequences(tasks: SfETask[]): SequenceHistory[] {
 // stalled-but-not-abandoned sequences too.
 const ACTIVE_SEQUENCE_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 
-function classify(
+export function classify(
   account: SfAccountWithETasks,
   histories: SequenceHistory[]
 ): Bucket {
