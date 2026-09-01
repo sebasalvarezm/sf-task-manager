@@ -2877,7 +2877,7 @@ async function researchAnchorsCold(args: {
     classes: ProvenanceClass[],
     alreadyTried: string[]
   ): Promise<CompanyAnchor[]> => {
-    const resp = await callClaudeWithWebSearch(client, 3, {
+    const resp = await callClaudeWithWebSearch(client, 5, {
       model: "claude-sonnet-4-6",
       // Five anchors with URLs and evidence overflow 1200 tokens, and a cut-off
       // object is unparseable -- the round's whole result was being discarded

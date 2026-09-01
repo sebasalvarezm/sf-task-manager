@@ -224,6 +224,25 @@ export async function rerunHookResearch(
   };
 }
 
+/** The archive window to search, derived from the founding year. */
+function waybackWindow(foundingYear: number | null): {
+  wbFrom: string;
+  wbTo: string;
+  wbLabel: string;
+} {
+  if (foundingYear && foundingYear >= 2010) {
+    return {
+      wbFrom: `${foundingYear}0101`,
+      wbTo: `${foundingYear + 5}1231`,
+      wbLabel: `${foundingYear}–${foundingYear + 5}`,
+    };
+  }
+  if (foundingYear) {
+    return { wbFrom: "20050101", wbTo: "20151231", wbLabel: "2005–2015" };
+  }
+  return { wbFrom: "20060101", wbTo: "20201231", wbLabel: "2006–2020" };
+}
+
 function dedup(items: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -244,6 +263,15 @@ function dedup(items: string[]): string[] {
  * than starving the rest of the research.
  */
 const WAYBACK_PHASE_BUDGET_MS = 120_000;
+
+/**
+ * Time reserved for the email-hook stage: two cold research rounds (~75s each)
+ * plus the hook call. The archive phase is capped so this reservation always
+ * survives — on Archive.org outage days the retries and cooldowns were eating
+ * the budget and cold research was losing its second round exactly when it was
+ * the only evidence source left.
+ */
+const HOOK_RESEARCH_RESERVE_MS = 170_000;
 
 /**
  * Wall-clock budget for one company's whole run, held 30s under the platform's
@@ -472,26 +500,15 @@ export async function runFullSourcing(input: {
   onProgress?.("history", 30);
 
   // ───────── Stage 2: Wayback history ─────────
-  let wbFrom: string;
-  let wbTo: string;
-  let wbLabel: string;
-  if (foundingYear && foundingYear >= 2010) {
-    wbFrom = `${foundingYear}0101`;
-    wbTo = `${foundingYear + 5}1231`;
-    wbLabel = `${foundingYear}–${foundingYear + 5}`;
-  } else if (foundingYear) {
-    wbFrom = "20050101";
-    wbTo = "20151231";
-    wbLabel = "2005–2015";
-  } else {
-    wbFrom = "20060101";
-    wbTo = "20201231";
-    wbLabel = "2006–2020";
-  }
+  const { wbFrom, wbTo, wbLabel } = waybackWindow(foundingYear);
 
   // One budget covers the snapshot list AND the page downloads, so a slow CDX
-  // response cannot push the whole run toward the platform's 300s kill.
-  const waybackDeadlineAt = Date.now() + WAYBACK_PHASE_BUDGET_MS;
+  // response cannot push the whole run toward the platform's 300s kill. It is
+  // additionally capped so the hook stage always keeps its reserved time.
+  const waybackDeadlineAt = Math.min(
+    Date.now() + WAYBACK_PHASE_BUDGET_MS,
+    runDeadlineAt - HOOK_RESEARCH_RESERVE_MS,
+  );
 
   // Skip the archive entirely once it has proven to be down in this process.
   // Waiting out the phase budget again would only delay the research that is
@@ -517,7 +534,29 @@ export async function runFullSourcing(input: {
   let waybackStatus = waybackLookup.status;
   let waybackHttpStatus: number | null = null;
 
-  if (!skipWaybackForOutage) noteWaybackIndexOutcome(waybackStatus);
+  // Count the strike from the PRIMARY CDX outcome. During an outage CDX fails
+  // at the transport level on every company while the lighter Availability
+  // fallback often still answers — the combined status then reads
+  // "fallback_used", which was resetting the streak, so the outage was never
+  // detected and every company paid the full snapshot-retry price.
+  if (!skipWaybackForOutage) {
+    noteWaybackIndexOutcome(
+      waybackStatus === "fallback_used"
+        ? (waybackLookup.primaryFailure ?? waybackStatus)
+        : waybackStatus,
+    );
+  }
+
+  // When CDX itself failed at the transport level, Archive.org is already
+  // struggling; don't let the page downloads spend the full phase budget
+  // rediscovering that. 45s still allows one paced attempt per candidate.
+  const primaryTransportFailure =
+    waybackLookup.primaryFailure === "timeout" ||
+    waybackLookup.primaryFailure === "http_error" ||
+    waybackLookup.primaryFailure === "network_error";
+  const snapshotDeadlineAt = primaryTransportFailure
+    ? Math.min(waybackDeadlineAt, Date.now() + 45_000)
+    : waybackDeadlineAt;
 
   if (skipWaybackForOutage) {
     // Message already logged above; skip the per-status explanations.
@@ -563,9 +602,9 @@ export async function runFullSourcing(input: {
     // stop as soon as the three pages used by the analysis are available.
     for (const candidate of candidates) {
       if (validSnapshots.length >= 3) break;
-      if (Date.now() > waybackDeadlineAt) {
+      if (Date.now() > snapshotDeadlineAt) {
         logs.push(
-          `Stopped archived-page downloads after ${Math.round(WAYBACK_PHASE_BUDGET_MS / 1000)}s waiting on Archive.org; the rest of the research continued.`,
+          "Stopped archived-page downloads to protect the rest of the run's budget; the research continued without the archive.",
         );
         break;
       }
@@ -575,7 +614,7 @@ export async function runFullSourcing(input: {
           `Archive.org asked us to slow down — waiting ${Math.ceil(cooldownMs / 1000)}s before the next archived page.`,
         );
       }
-      const result = await fetchWaybackSnapshot(candidate.url, domainStem, waybackDeadlineAt);
+      const result = await fetchWaybackSnapshot(candidate.url, domainStem, snapshotDeadlineAt);
       if (result.skipReason) {
         logs.push(`Skipping ${candidate.timestamp.slice(0, 4)} snapshot — ${result.skipReason}.`);
       } else if (result.cached) {
@@ -613,6 +652,18 @@ export async function runFullSourcing(input: {
       waybackHttpStatus = null;
       archiveUrl = validSnapshots[0].candidate.url;
       archiveTimestamp = validSnapshots[0].candidate.timestamp;
+      noteWaybackIndexOutcome("ok");
+    } else {
+      // Snapshot records existed but not one page could be downloaded for
+      // transport reasons — the outage signature seen when CDX (or its
+      // fallback) still answers. Count it, so bulk runs stop paying the
+      // retry price company after company.
+      const playbackTransportFailure =
+        waybackStatus === "snapshot_timeout" ||
+        waybackStatus === "snapshot_network_error" ||
+        (waybackStatus === "snapshot_http_error" &&
+          (waybackHttpStatus === 429 || waybackHttpStatus === 503));
+      if (playbackTransportFailure) noteWaybackIndexOutcome("network_error");
     }
     const snapshotProducts = await Promise.all(
       validSnapshots.map(({ candidate, result }) => {
@@ -635,7 +686,7 @@ export async function runFullSourcing(input: {
     ];
     let interiorChecked = 0;
     for (const keyword of snapshotPlaybackAvailable ? interiorKeywords : []) {
-      if (interiorChecked >= 3 || Date.now() > waybackDeadlineAt) break;
+      if (interiorChecked >= 3 || Date.now() > snapshotDeadlineAt) break;
       const ics = await getInteriorCandidates(
         domainOnly,
         keyword,
@@ -644,8 +695,8 @@ export async function runFullSourcing(input: {
         1,
       );
       for (const ic of ics) {
-        if (interiorChecked >= 3 || Date.now() > waybackDeadlineAt) break;
-        const r = await fetchWaybackSnapshot(ic.url, domainStem, waybackDeadlineAt);
+        if (interiorChecked >= 3 || Date.now() > snapshotDeadlineAt) break;
+        const r = await fetchWaybackSnapshot(ic.url, domainStem, snapshotDeadlineAt);
         if (r.skipReason || !r.text) continue;
         const icYear = ic.timestamp.slice(0, 4);
         logs.push(`Interior page snapshot (/${keyword}*, ${icYear}).`);
@@ -671,7 +722,7 @@ export async function runFullSourcing(input: {
       ];
       let newsChecked = 0;
       for (const keyword of newsKeywords) {
-        if (newsChecked >= 2 || Date.now() > waybackDeadlineAt) break;
+        if (newsChecked >= 2 || Date.now() > snapshotDeadlineAt) break;
         const ncs = await getInteriorCandidates(
           domainOnly,
           keyword,
@@ -680,8 +731,8 @@ export async function runFullSourcing(input: {
           1,
         );
         for (const nc of ncs) {
-          if (newsChecked >= 2 || Date.now() > waybackDeadlineAt) break;
-          const r = await fetchWaybackSnapshot(nc.url, domainStem, waybackDeadlineAt);
+          if (newsChecked >= 2 || Date.now() > snapshotDeadlineAt) break;
+          const r = await fetchWaybackSnapshot(nc.url, domainStem, snapshotDeadlineAt);
           if (r.skipReason || !r.text) continue;
           const ncYear = nc.timestamp.slice(0, 4);
           logs.push(`News page snapshot (/${keyword}*, ${ncYear}).`);
@@ -796,40 +847,8 @@ export async function runFullSourcing(input: {
   }
   logs.push(...outreachLogs);
 
-  // Always attempt a restaurant search — pass the company name so it can find
-  // a city even when no address was resolved.
-  logs.push("Searching for business dinner restaurants...");
-  const mapsRestaurants = address
-    ? await findBusinessDinnerRestaurants(address).catch(() => [])
-    : [];
-  const restaurantResult = mapsRestaurants.length > 0
-    ? { restaurants: mapsRestaurants, city: address }
-    : await findRestaurants(anthropic, address, sourceCompanyName);
-  const restaurants = restaurantResult.restaurants;
-  if (restaurants.length > 0) {
-    logs.push(`Found ${restaurants.length} restaurant recommendation(s).`);
-  } else {
-    logs.push("Could not retrieve restaurant recommendations.");
-  }
-
-  // Address rescue: if address extraction failed but the restaurant search
-  // located the company's city, keep that city as the location so the result
-  // always shows at least "City, ST".
-  if (
-    !address &&
-    restaurantResult.city &&
-    locationMatchesWebsiteCountry(restaurantResult.city, normalized)
-  ) {
-    address = restaurantResult.city;
-    addressSource = "web search (restaurant lookup)";
-    addressSourceUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-      restaurantResult.city,
-    )}`;
-    locationConfidence = "city";
-    logs.push(`City located via restaurant search: ${address}`);
-  } else if (!address) {
-    logs.push("Company location not found — even after all web searches.");
-  }
+  // (Restaurant search moved after the hook stage — the hook is the most
+  // valuable output of the run and now gets budget priority.)
 
   // Competitor identification skipped (UI section removed). Keeping the
   // field on the result shape so older jobs in Supabase still render.
@@ -936,6 +955,43 @@ export async function runFullSourcing(input: {
       ? "wayback"
       : "web_research"
     : null;
+
+  // ───────── Stage 4b: Restaurants (after the hook, so a slow maps/search
+  // pass can no longer starve the research that writes the opener) ─────────
+  // Always attempt a restaurant search — pass the company name so it can find
+  // a city even when no address was resolved.
+  logs.push("Searching for business dinner restaurants...");
+  const mapsRestaurants = address
+    ? await findBusinessDinnerRestaurants(address).catch(() => [])
+    : [];
+  const restaurantResult = mapsRestaurants.length > 0
+    ? { restaurants: mapsRestaurants, city: address }
+    : await findRestaurants(anthropic, address, sourceCompanyName);
+  const restaurants = restaurantResult.restaurants;
+  if (restaurants.length > 0) {
+    logs.push(`Found ${restaurants.length} restaurant recommendation(s).`);
+  } else {
+    logs.push("Could not retrieve restaurant recommendations.");
+  }
+
+  // Address rescue: if address extraction failed but the restaurant search
+  // located the company's city, keep that city as the location so the result
+  // always shows at least "City, ST".
+  if (
+    !address &&
+    restaurantResult.city &&
+    locationMatchesWebsiteCountry(restaurantResult.city, normalized)
+  ) {
+    address = restaurantResult.city;
+    addressSource = "web search (restaurant lookup)";
+    addressSourceUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+      restaurantResult.city,
+    )}`;
+    locationConfidence = "city";
+    logs.push(`City located via restaurant search: ${address}`);
+  } else if (!address) {
+    logs.push("Company location not found — even after all web searches.");
+  }
 
   // ───────── Stage 5: Prepackage Email 1 ─────────
   // Plain string swaps into the matched subgroup's template — no AI call.
