@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import {
   fetchAccountsWithEHistory,
   fetchContactsForAccounts,
@@ -322,71 +321,6 @@ export function classify(
 
 // ── Contact recommendation ──────────────────────────────────────────────────
 
-async function researchContactsViaAI(
-  accountName: string,
-  website: string | null
-): Promise<RecommendedContact[]> {
-  if (!process.env.ANTHROPIC_API_KEY) return [];
-  if (!website) return [];
-
-  const domain = website
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .split("/")[0];
-
-  try {
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: `Based on public information you know, propose up to 3 likely leadership contacts at the company "${accountName}" (website: ${website}).
-
-Focus on founder, co-founder, CEO, President, or other C-suite roles.
-
-For each contact, guess the most likely work email using common patterns like:
-- first.last@${domain}
-- first@${domain}
-- flast@${domain}
-
-Return a JSON array only (no markdown, no explanation), with this shape:
-[{"firstName":"...","lastName":"...","title":"...","email":"..."}]
-
-If you can't identify anyone with high confidence, return [].`,
-        },
-      ],
-    });
-
-    const text =
-      response.content[0].type === "text" ? response.content[0].text : "";
-    // Strip fences if present
-    const cleaned = text
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/```\s*$/i, "")
-      .trim();
-
-    const parsed = JSON.parse(cleaned) as Array<{
-      firstName: string;
-      lastName: string;
-      title: string;
-      email: string;
-    }>;
-
-    return (parsed ?? []).slice(0, 3).map((p) => ({
-      firstName: p.firstName,
-      lastName: p.lastName,
-      email: p.email,
-      title: p.title,
-      source: "web_research" as const,
-      unverified: true,
-    }));
-  } catch {
-    return [];
-  }
-}
-
 function recommendContactsSync(
   sfContacts: SfContact[],
   histories: SequenceHistory[],
@@ -558,15 +492,4 @@ export async function buildQueue(): Promise<{
     .sort(sortOldestFirst);
 
   return { due_2nd_hit, due_restart, sfInstanceUrl };
-}
-
-// ── On-demand AI research for a specific account ────────────────────────────
-// Called from a separate endpoint when the user clicks "Research via AI" on a
-// row that has no Salesforce leadership contacts. Not part of the initial load.
-
-export async function researchAccount(
-  accountName: string,
-  website: string | null
-): Promise<RecommendedContact[]> {
-  return researchContactsViaAI(accountName, website);
 }

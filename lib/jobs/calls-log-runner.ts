@@ -74,18 +74,3 @@ export async function runOneCallLog(entry: CallLogEntry): Promise<CallLogResult>
   }
 }
 
-export async function runCallsLog(input: {
-  entries: CallLogEntry[];
-}): Promise<CallsLogRunResult> {
-  const results: CallLogResult[] = [];
-  let successCount = 0;
-  let failCount = 0;
-
-  for (const entry of input.entries) {
-    const result = await runOneCallLog(entry);
-    results.push(result);
-    if (result.success) successCount++; else failCount++;
-  }
-
-  return { results, successCount, failCount };
-}
