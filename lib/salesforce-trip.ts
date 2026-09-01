@@ -1,4 +1,5 @@
 import { getValidCredentials } from "./token-manager";
+import { sfQuery } from "./sf-query";
 
 // Same team filter used in the Outreach Queue (salesforce-contacts.ts)
 const QUEUE_ACCOUNT_OWNERS = [
@@ -29,29 +30,13 @@ export async function fetchCDMAccounts(): Promise<CDMAccount[]> {
     (n) => `'${n.replace(/'/g, "\\'")}'`
   ).join(",");
 
-  const query = encodeURIComponent(
+  const query =
     `SELECT Id, Name, Website, BillingCity, BillingState, BillingCountry, ` +
-      `LastActivityDate, Owner.Name ` +
-      `FROM Account ` +
-      `WHERE Group__c = 'CDM' ` +
-      `AND Owner.Name IN (${ownersClause}) ` +
-      `ORDER BY Name ASC`
-  );
-
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${query}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`SF fetchCDMAccounts failed: ${err}`);
-  }
+    `LastActivityDate, Owner.Name ` +
+    `FROM Account ` +
+    `WHERE Group__c = 'CDM' ` +
+    `AND Owner.Name IN (${ownersClause}) ` +
+    `ORDER BY Name ASC`;
 
   type AccountRecord = {
     Id: string;
@@ -64,29 +49,7 @@ export async function fetchCDMAccounts(): Promise<CDMAccount[]> {
     Owner?: { Name?: string } | null;
   };
 
-  let body = (await response.json()) as {
-    records?: AccountRecord[];
-    nextRecordsUrl?: string;
-    done?: boolean;
-  };
-
-  const all: AccountRecord[] = [...(body.records ?? [])];
-
-  // Paginate
-  while (body.nextRecordsUrl && !body.done) {
-    const nextRes = await fetch(
-      `${credentials.instance_url}${body.nextRecordsUrl}`,
-      {
-        headers: {
-          Authorization: `Bearer ${credentials.access_token}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-    if (!nextRes.ok) break;
-    body = await nextRes.json();
-    all.push(...(body.records ?? []));
-  }
+  const all = await sfQuery<AccountRecord>(query, credentials);
 
   return all.map((r) => ({
     Id: r.Id,

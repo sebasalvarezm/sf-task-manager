@@ -1,4 +1,5 @@
 import { getValidCredentials } from "./token-manager";
+import { sfQuery } from "./sf-query";
 import { format, addDays } from "date-fns";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -20,27 +21,12 @@ export async function findAccountByDomain(
 
   // Salesforce stores websites like "https://www.certaintysoftware.com/"
   // We search with LIKE to match regardless of trailing slashes or protocol
-  const query = encodeURIComponent(
-    `SELECT Id, Name, Website FROM Account WHERE Website LIKE '%${domain}%' LIMIT 1`
+  const query = `SELECT Id, Name, Website FROM Account WHERE Website LIKE '%${domain}%' LIMIT 1`;
+
+  const records = await sfQuery<{ Id: string; Name: string; Website?: string }>(
+    query,
+    credentials
   );
-
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${query}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Salesforce query failed: ${err}`);
-  }
-
-  const data = await response.json();
-  const records = data.records ?? [];
 
   if (records.length === 0) return null;
 
@@ -64,14 +50,9 @@ export async function findAccountsByDomains(
   const escapeSoql = (value: string) => value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
   const where = clean.map((d) => `Website LIKE '%${escapeSoql(d)}%'`).join(" OR ");
   const soql = `SELECT Id, Name, Website FROM Account WHERE ${where} ORDER BY Name ASC LIMIT 2000`;
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`,
-    { headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" } },
-  );
-  if (!response.ok) throw new Error(`Salesforce query failed: ${await response.text()}`);
-  const data = (await response.json()) as { records?: Array<{ Id: string; Name: string; Website?: string }> };
+  const records = await sfQuery<{ Id: string; Name: string; Website?: string }>(soql, credentials);
   for (const domain of clean) {
-    const row = (data.records ?? []).find((r) => (r.Website ?? "").toLowerCase().includes(domain));
+    const row = records.find((r) => (r.Website ?? "").toLowerCase().includes(domain));
     if (row) matches.set(domain, {
       accountId: row.Id,
       accountName: row.Name,
@@ -91,31 +72,19 @@ export async function findExistingCallTasks(
 ): Promise<Set<string>> {
   if (accountIds.length === 0) return new Set();
 
-  const credentials = await getValidCredentials();
-  if (!credentials) throw new Error("NOT_CONNECTED");
-
   const idList = accountIds.map((id) => `'${id}'`).join(",");
-  const query = encodeURIComponent(
-    `SELECT Id, WhatId FROM Task WHERE WhatId IN (${idList}) AND ActivityDate >= ${startDate} AND ActivityDate <= ${endDate} AND Status = 'Completed' AND (Subject_Type__c = 'C1' OR Subject_Type__c = 'RCC')`
-  );
+  const query = `SELECT Id, WhatId FROM Task WHERE WhatId IN (${idList}) AND ActivityDate >= ${startDate} AND ActivityDate <= ${endDate} AND Status = 'Completed' AND (Subject_Type__c = 'C1' OR Subject_Type__c = 'RCC')`;
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${query}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) return new Set(); // fail silently — feature is non-critical
-
-  const data = await response.json();
-  const records = data.records ?? [];
+  let records: Array<{ WhatId: string }>;
+  try {
+    records = await sfQuery<{ WhatId: string }>(query);
+  } catch (err) {
+    if (err instanceof Error && err.message === "NOT_CONNECTED") throw err;
+    return new Set(); // fail silently — feature is non-critical
+  }
 
   // Return set of accountIds that have existing call tasks
-  return new Set(records.map((r: { WhatId: string }) => r.WhatId));
+  return new Set(records.map((r) => r.WhatId));
 }
 
 // ── Search Salesforce Accounts by name ───────────────────────────────────────
@@ -126,27 +95,14 @@ export async function searchAccountsByName(
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
-  const query = encodeURIComponent(
-    `SELECT Id, Name, Website FROM Account WHERE Name LIKE '%${searchQuery}%' ORDER BY Name ASC LIMIT 10`
+  const query = `SELECT Id, Name, Website FROM Account WHERE Name LIKE '%${searchQuery}%' ORDER BY Name ASC LIMIT 10`;
+
+  const records = await sfQuery<{ Id: string; Name: string; Website?: string }>(
+    query,
+    credentials
   );
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${query}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Salesforce search failed: ${err}`);
-  }
-
-  const data = await response.json();
-  return (data.records ?? []).map((r: { Id: string; Name: string; Website?: string }) => ({
+  return records.map((r) => ({
     accountId: r.Id,
     accountName: r.Name,
     accountUrl: `${credentials.instance_url}/${r.Id}`,

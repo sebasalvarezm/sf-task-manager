@@ -1,5 +1,6 @@
 import { SfCredentials } from "./supabase";
 import { Bucket } from "./date-ranges";
+import { sfQuery } from "./sf-query";
 
 // ── Team rosters (per product direction) ─────────────────────────────────────
 export const CDM_OWNER_NAMES = [
@@ -131,23 +132,7 @@ async function runQuery<T>(
   credentials: SfCredentials,
   soql: string
 ): Promise<T[]> {
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Salesforce stats query failed: ${err}`);
-  }
-
-  const data = (await response.json()) as { records?: T[] };
-  return data.records ?? [];
+  return sfQuery<T>(soql, credentials);
 }
 
 // Drill queries below select the custom field Account.Year_Established__c.

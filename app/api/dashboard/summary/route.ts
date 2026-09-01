@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { getValidCredentials } from "@/lib/token-manager";
+import { sfQuery } from "@/lib/sf-query";
 
 // GET /api/dashboard/summary
 // Returns quick counts for the morning dashboard strip.
@@ -49,31 +50,16 @@ export async function GET() {
   // 2. Count accounts due for outreach (reuse the queue logic but just count)
   // To avoid the heavy buildQueue call, do a lightweight SOQL count
   try {
-    const creds = await getValidCredentials();
-    if (creds) {
-      const query = encodeURIComponent(
-        `SELECT COUNT(AccountId) cnt FROM Task ` +
-          `WHERE Subject_Type__c = 'E5' ` +
-          `AND Status = 'Completed' ` +
-          `AND CompletedDateTime >= 2026-01-01T00:00:00Z ` +
-          `AND AccountId != null ` +
-          `GROUP BY AccountId`
-      );
-      const res = await fetch(
-        `${creds.instance_url}/services/data/v62.0/query/?q=${query}`,
-        {
-          headers: {
-            Authorization: `Bearer ${creds.access_token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        // totalSize = number of distinct accounts with a 2026 E5
-        summary.dueOutreach = data.totalSize ?? 0;
-      }
-    }
+    const query =
+      `SELECT COUNT(AccountId) cnt FROM Task ` +
+      `WHERE Subject_Type__c = 'E5' ` +
+      `AND Status = 'Completed' ` +
+      `AND CompletedDateTime >= 2026-01-01T00:00:00Z ` +
+      `AND AccountId != null ` +
+      `GROUP BY AccountId`;
+    const rows = await sfQuery<{ cnt: number }>(query);
+    // One aggregate row per distinct account with a 2026 E5
+    summary.dueOutreach = rows.length;
   } catch {
     // Non-fatal
   }

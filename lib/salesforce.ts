@@ -1,5 +1,6 @@
 import { getValidCredentials } from "./token-manager";
 import { getSupabaseAdmin } from "./supabase";
+import { sfQuery } from "./sf-query";
 import { addDays, format } from "date-fns";
 
 export type SalesforceTask = {
@@ -22,40 +23,24 @@ export async function fetchOpenTasks(): Promise<SalesforceTask[]> {
   const userId = credentials.salesforce_user_id;
   if (!userId) throw new Error("NOT_CONNECTED");
 
-  const query = encodeURIComponent(
+  const query =
     `SELECT Id, Subject, ActivityDate, AccountId, Account.Name, Account.Website, Priority ` +
-      `FROM Task ` +
-      `WHERE Status = 'Open' ` +
-      `AND OwnerId = '${userId}' ` +
-      `ORDER BY ActivityDate ASC NULLS FIRST`
-  );
+    `FROM Task ` +
+    `WHERE Status = 'Open' ` +
+    `AND OwnerId = '${userId}' ` +
+    `ORDER BY ActivityDate ASC NULLS FIRST`;
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${query}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
+  const records = await sfQuery<{
+    Id: string;
+    Subject: string;
+    ActivityDate: string;
+    AccountId: string | null;
+    Account?: { Name: string; Website?: string | null } | null;
+    Priority: string;
+  }>(query, credentials);
 
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Salesforce query failed: ${err}`);
-  }
-
-  const data = await response.json();
-
-  return (data.records ?? []).map(
-    (r: {
-      Id: string;
-      Subject: string;
-      ActivityDate: string;
-      AccountId: string | null;
-      Account?: { Name: string; Website?: string | null } | null;
-      Priority: string;
-    }): SalesforceTask => ({
+  return records.map(
+    (r): SalesforceTask => ({
       Id: r.Id,
       Subject: r.Subject,
       ActivityDate: r.ActivityDate,

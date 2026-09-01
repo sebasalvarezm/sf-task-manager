@@ -1,4 +1,5 @@
 import { getValidCredentials } from "./token-manager";
+import { sfQuery } from "./sf-query";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,43 +53,23 @@ const QUEUE_ACCOUNT_OWNERS = [
 export async function fetchAccountsWithEHistory(): Promise<
   SfAccountWithETasks[]
 > {
-  const credentials = await getValidCredentials();
-  if (!credentials) throw new Error("NOT_CONNECTED");
-
   // Build the Owner.Name IN (...) clause safely
   const ownersClause = QUEUE_ACCOUNT_OWNERS
     .map((n) => `'${n.replace(/'/g, "\\'")}'`)
     .join(",");
 
   // Fetch all E1-E5 tasks with account + owner info in one query
-  const query = encodeURIComponent(
+  const query =
     `SELECT Id, Subject, Description, Subject_Type__c, ActivityDate, CompletedDateTime, ` +
-      `AccountId, Account.Name, Account.Website, Account.Responded__c, ` +
-      `Account.LastActivityDate, Account.NumberOfEmployees, Account.Owner.Name, ` +
-      `WhoId, Who.Name, Who.Email, Status, Type ` +
-      `FROM Task ` +
-      `WHERE Subject_Type__c IN ('E1','E2','E3','E4','E5') ` +
-      `AND AccountId != null ` +
-      `AND Account.Owner.Name IN (${ownersClause}) ` +
-      `ORDER BY AccountId, ActivityDate ASC`
-  );
+    `AccountId, Account.Name, Account.Website, Account.Responded__c, ` +
+    `Account.LastActivityDate, Account.NumberOfEmployees, Account.Owner.Name, ` +
+    `WhoId, Who.Name, Who.Email, Status, Type ` +
+    `FROM Task ` +
+    `WHERE Subject_Type__c IN ('E1','E2','E3','E4','E5') ` +
+    `AND AccountId != null ` +
+    `AND Account.Owner.Name IN (${ownersClause}) ` +
+    `ORDER BY AccountId, ActivityDate ASC`;
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${query}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`SF fetchAccountsWithEHistory failed: ${err}`);
-  }
-
-  // Paginate through all records
   type TaskRecord = {
     Id: string;
     Subject: string;
@@ -110,27 +91,7 @@ export async function fetchAccountsWithEHistory(): Promise<
     Type: string | null;
   };
 
-  let body = (await response.json()) as {
-    records?: TaskRecord[];
-    nextRecordsUrl?: string;
-    done?: boolean;
-  };
-  const allTasks: TaskRecord[] = [...(body.records ?? [])];
-
-  while (body.nextRecordsUrl && !body.done) {
-    const nextRes = await fetch(
-      `${credentials.instance_url}${body.nextRecordsUrl}`,
-      {
-        headers: {
-          Authorization: `Bearer ${credentials.access_token}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-    if (!nextRes.ok) break;
-    body = await nextRes.json();
-    allTasks.push(...(body.records ?? []));
-  }
+  const allTasks = await sfQuery<TaskRecord>(query);
 
   // Group tasks by AccountId
   const byAccount = new Map<string, { account: TaskRecord["Account"] & { Id: string }; tasks: TaskRecord[] }>();
@@ -226,39 +187,21 @@ export async function fetchContactsForAccounts(
     const chunk = accountIds.slice(i, i + CHUNK_SIZE);
     const idsList = chunk.map((id) => `'${id}'`).join(",");
 
-    const query = encodeURIComponent(
+    const query =
       `SELECT Id, FirstName, LastName, Name, Title, Email, AccountId ` +
-        `FROM Contact WHERE AccountId IN (${idsList})`
-    );
+      `FROM Contact WHERE AccountId IN (${idsList})`;
 
-    const response = await fetch(
-      `${credentials.instance_url}/services/data/v62.0/query/?q=${query}`,
-      {
-        headers: {
-          Authorization: `Bearer ${credentials.access_token}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const records = await sfQuery<{
+      Id: string;
+      FirstName: string | null;
+      LastName: string | null;
+      Name: string;
+      Title: string | null;
+      Email: string | null;
+      AccountId: string | null;
+    }>(query, credentials);
 
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`SF fetchContactsForAccounts failed: ${err}`);
-    }
-
-    const data = (await response.json()) as {
-      records?: Array<{
-        Id: string;
-        FirstName: string | null;
-        LastName: string | null;
-        Name: string;
-        Title: string | null;
-        Email: string | null;
-        AccountId: string | null;
-      }>;
-    };
-
-    for (const r of data.records ?? []) {
+    for (const r of records) {
       if (!r.AccountId) continue;
       const list = byAccount.get(r.AccountId) ?? [];
       list.push({

@@ -1,4 +1,5 @@
 import { getValidCredentials } from "./token-manager";
+import { sfQuery } from "./sf-query";
 
 // ── Re-Contact Checker ────────────────────────────────────────────────────────
 //
@@ -37,29 +38,6 @@ type SfAccount = {
 // a name like "O'Brien" would break the query (and is an injection vector).
 function escapeSoql(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-}
-
-async function sfQuery<T>(
-  credentials: NonNullable<Awaited<ReturnType<typeof getValidCredentials>>>,
-  soql: string,
-): Promise<T[]> {
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Salesforce query failed: ${err}`);
-  }
-
-  const data = (await response.json()) as { records?: T[] };
-  return data.records ?? [];
 }
 
 type NameMatch = {
@@ -105,8 +83,8 @@ async function matchAccountsByNames(
       .map((name) => `Name LIKE '%${escapeSoql(name)}%'`)
       .join(" OR ");
     const rows = await sfQuery<SfAccount>(
-      credentials,
       `SELECT Id, Name, Owner.Name FROM Account WHERE ${where} ORDER BY Name ASC LIMIT 2000`,
+      credentials,
     );
     allAccounts.push(...rows);
   }
@@ -142,40 +120,14 @@ async function lastTaskDatesForAccounts(
     `ORDER BY CreatedDate DESC`;
 
   type Row = { WhatId: string; ActivityDate: string | null; CreatedDate: string };
-  type QueryResponse = {
-    records?: Row[];
-    done?: boolean;
-    nextRecordsUrl?: string;
-  };
 
-  let url: string | null =
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`;
-
-  while (url) {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-      },
-    });
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Salesforce query failed: ${err}`);
+  const rows = await sfQuery<Row>(soql, credentials);
+  for (const r of rows) {
+    const effectiveDate = r.ActivityDate ?? r.CreatedDate?.slice(0, 10);
+    const existing = map.get(r.WhatId);
+    if (r.WhatId && effectiveDate && (!existing || effectiveDate > existing)) {
+      map.set(r.WhatId, effectiveDate);
     }
-
-    const data = (await response.json()) as QueryResponse;
-    for (const r of data.records ?? []) {
-      const effectiveDate = r.ActivityDate ?? r.CreatedDate?.slice(0, 10);
-      const existing = map.get(r.WhatId);
-      if (r.WhatId && effectiveDate && (!existing || effectiveDate > existing)) {
-        map.set(r.WhatId, effectiveDate);
-      }
-    }
-
-    if (data.done || !data.nextRecordsUrl) {
-      break;
-    }
-    url = `${credentials.instance_url}${data.nextRecordsUrl}`;
   }
 
   return map;
