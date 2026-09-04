@@ -531,3 +531,108 @@ export async function fetchF2FThisYear(
   const rows = await runQuery<Row>(credentials, soql);
   return rows.length > 0 ? Number(rows[0].cnt) || 0 : 0;
 }
+
+// ── Outreach quality ("BS" scoring) source rows ─────────────────────────────
+
+// The three outreach subject types, i.e. "an email was sent". Excludes the
+// call/meeting types in TRACKED_SUBJECT_TYPES.
+export const OUTREACH_SUBJECT_TYPES = ["E1", "RCE1", "D-E1"] as const;
+
+export type OutreachQualityTaskRow = {
+  taskId: string;
+  activityDate: string; // yyyy-MM-dd
+  subjectType: string;
+  owner: string;
+  accountId: string;
+  accountName: string;
+  website: string | null;
+  country: string | null;
+  yearEstablished: string | null;
+  numberOfEmployees: number | null;
+};
+
+type RawOutreachQualityRow = RawTaskAccountRow & {
+  Owner?: { Name?: string | null } | null;
+};
+
+/**
+ * Every outreach email sent in the range, with the target account's geography,
+ * founding year and headcount attached, for quality ("BS") scoring.
+ *
+ * Two deliberate differences from `fetchDrillAccountsForTasks`:
+ *
+ *  • No dedupe by AccountId. That helper answers "which accounts did we touch";
+ *    this one answers "how many emails did we send", so two emails to the same
+ *    weak company are two BS emails.
+ *
+ *  • Its own try/strip rather than `runDrillQuery`, so it can REPORT that
+ *    Year_Established__c was unavailable instead of silently returning blanks.
+ *    Callers must pass `foundedFieldAvailable` into the scorer: treating a
+ *    stripped field as "blank" would flag the entire team at ~100%.
+ *
+ * No LIMIT — `sfQuery` follows nextRecordsUrl, so large ranges are safe.
+ *
+ * Tasks with no linked AccountId are counted in `unscoreable` rather than
+ * dropped: there is no account to read geography/founded/headcount from, so
+ * they cannot be scored, but they ARE outreach. Reporting them keeps
+ * `rows.length + unscoreable` equal to the page's Total Outreach KPI instead of
+ * quietly disagreeing with it.
+ */
+export async function fetchOutreachQualityTasks(
+  credentials: SfCredentials,
+  rangeStart: string,
+  rangeEnd: string,
+  team: StatsTeam
+): Promise<{
+  rows: OutreachQualityTaskRow[];
+  unscoreable: number;
+  foundedFieldAvailable: boolean;
+}> {
+  const typesClause = OUTREACH_SUBJECT_TYPES.map((t) => `'${t}'`).join(",");
+  const buildSoql = (includeFounded: boolean) =>
+    `SELECT Id, ActivityDate, Subject_Type__c, Owner.Name, AccountId, ` +
+    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry` +
+    (includeFounded ? `, Account.Year_Established__c ` : ` `) +
+    `FROM Task ` +
+    `WHERE Subject_Type__c IN (${typesClause}) ` +
+    `AND Status = 'Completed' ` +
+    `AND ActivityDate >= ${rangeStart} AND ActivityDate <= ${rangeEnd} ` +
+    `AND Owner.Name IN (${ownerNamesClauseFor(team)}) ` +
+    `ORDER BY ActivityDate DESC`;
+
+  let foundedFieldAvailable = true;
+  let raw: RawOutreachQualityRow[];
+  try {
+    raw = await runQuery<RawOutreachQualityRow>(credentials, buildSoql(true));
+  } catch (err) {
+    // Retry without the custom field, mirroring runDrillQuery — but remember
+    // that we did, so the scorer can drop the criterion instead of flagging it.
+    if (err instanceof Error && err.message === "NOT_CONNECTED") throw err;
+    raw = await runQuery<RawOutreachQualityRow>(credentials, buildSoql(false));
+    foundedFieldAvailable = false;
+  }
+
+  const rows: OutreachQualityTaskRow[] = [];
+  let unscoreable = 0;
+  for (const r of raw) {
+    // No account to score against, or no date to bucket it into.
+    if (!r.AccountId || !r.ActivityDate) {
+      unscoreable += 1;
+      continue;
+    }
+    rows.push({
+      taskId: r.Id,
+      activityDate: r.ActivityDate,
+      subjectType: r.Subject_Type__c ?? "",
+      owner: r.Owner?.Name ?? "(unassigned)",
+      accountId: r.AccountId,
+      accountName: r.Account?.Name ?? "(no account)",
+      website: r.Account?.Website ?? null,
+      country: r.Account?.BillingCountry ?? null,
+      yearEstablished: r.Account?.Year_Established__c ?? null,
+      numberOfEmployees: r.Account?.NumberOfEmployees ?? null,
+    });
+  }
+
+  return { rows, unscoreable, foundedFieldAvailable };
+}

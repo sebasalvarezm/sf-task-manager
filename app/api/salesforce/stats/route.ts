@@ -8,12 +8,15 @@ import {
   fetchOpenBROByOriginator,
   fetchF2FThisYear,
   fetchStuckOpportunities,
+  fetchOutreachQualityTasks,
   TEAM_CONFIG,
   TaskCountRow,
   type StatsTeam,
 } from "@/lib/salesforce-stats";
 import { Bucket } from "@/lib/date-ranges";
 import { computeConversion } from "@/lib/analytics-derivations";
+import { aggregateOutreachQuality } from "@/lib/outreach-quality";
+import { getQualityThresholds } from "@/lib/outreach-quality-settings";
 
 // Returns all stats for the selected range:
 // { kpis, byPerson, byBucket, byStage, byOriginator }
@@ -54,15 +57,40 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "NOT_CONNECTED" }, { status: 403 });
     }
 
-    const [taskRows, bucketRows, stageRows, originatorRows, f2fYtd, stuckOpps] =
-      await Promise.all([
-        fetchTaskCountsForRange(credentials, start, end, team),
-        fetchTaskCountsByBucket(credentials, buckets, team),
-        fetchOpportunitiesByStage(credentials, team),
-        fetchOpenBROByOriginator(credentials, team),
-        fetchF2FThisYear(credentials, team),
-        fetchStuckOpportunities(credentials, team),
-      ]);
+    const [
+      taskRows,
+      bucketRows,
+      stageRows,
+      originatorRows,
+      f2fYtd,
+      stuckOpps,
+      qualityTasks,
+      qualityThresholds,
+    ] = await Promise.all([
+      fetchTaskCountsForRange(credentials, start, end, team),
+      fetchTaskCountsByBucket(credentials, buckets, team),
+      fetchOpportunitiesByStage(credentials, team),
+      fetchOpenBROByOriginator(credentials, team),
+      fetchF2FThisYear(credentials, team),
+      fetchStuckOpportunities(credentials, team),
+      fetchOutreachQualityTasks(credentials, start, end, team),
+      getQualityThresholds(),
+    ]);
+
+    // Outreach quality ("BS") — aggregates only. Row-level detail is fetched on
+    // click from /api/salesforce/outreach-quality, mirroring the stats/drill split.
+    const outreachQuality = {
+      ...aggregateOutreachQuality(
+        qualityTasks.rows,
+        buckets,
+        qualityThresholds,
+        qualityTasks.foundedFieldAvailable
+      ),
+      thresholds: qualityThresholds,
+      // Outreach with no linked account: real emails that cannot be scored.
+      // Surfaced so the denominator visibly reconciles with kpis.totalOutreach.
+      unscoreable: qualityTasks.unscoreable,
+    };
 
     const kpis = computeKpis(taskRows);
     const byPerson = computeByPerson(taskRows, originatorRows, team);
@@ -99,6 +127,7 @@ export async function GET(req: NextRequest) {
       byStage: stageRows,
       byOriginator: originatorRows,
       stuckOpps,
+      outreachQuality,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

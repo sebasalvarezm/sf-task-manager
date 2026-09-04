@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import {
   BarChart,
   Bar,
+  PieChart,
+  Pie,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -36,6 +39,16 @@ import {
 } from "lucide-react";
 import { HeatmapData, EnrichedMultiOpen } from "@/lib/analytics-derivations";
 import type { DealDoc } from "@/lib/deal-docs";
+import {
+  OutreachQualityModal,
+  type OutreachQualityTarget,
+} from "@/app/components/OutreachQualityModal";
+import { OutreachQualityRules } from "@/app/components/OutreachQualityRules";
+import {
+  QUALITY_FLAG_LABELS,
+  type QualityFlagKey,
+  type QualityThresholds,
+} from "@/lib/outreach-quality";
 
 // ── Types mirroring API responses ────────────────────────────────────────────
 
@@ -133,6 +146,31 @@ type StatsResponse = {
   byStage: StageRow[];
   byOriginator: OriginatorRow[];
   stuckOpps: StuckOpp[];
+  outreachQuality: OutreachQuality;
+};
+
+// Outreach quality ("BS"): what share of outreach went to companies failing two
+// of the three checks — geography, founded year, headcount. Rates are fractions
+// 0–1, matching the `conversion` convention above.
+type QualityRate = { sent: number; bs: number; rate: number };
+
+type OutreachQuality = {
+  totals: QualityRate;
+  /**
+   * How often each signal fired, across flagged emails only. A flagged email
+   * cites two or more, so these sum to MORE than `totals.bs` — never render
+   * them as a breakdown of the total.
+   */
+  reasonCounts: Record<QualityFlagKey, number>;
+  byBucket: Array<QualityRate & { label: string; start: string }>;
+  byPerson: Array<QualityRate & { owner: string }>;
+  thresholds: QualityThresholds;
+  foundedFieldAvailable: boolean;
+  /**
+   * Outreach with no linked Salesforce account — real emails that cannot be
+   * scored. `totals.sent + unscoreable` equals kpis.totalOutreach.
+   */
+  unscoreable: number;
 };
 
 type EngagementResponse = {
@@ -168,6 +206,13 @@ const ORANGE = "#F2B84B";
 const TEAL = "#5EC4C4";
 const NAVY = "#1B2A4A";
 
+// Outreach quality: clean reuses BLUE, which already means "outreach" on this
+// page, so the tie is semantic. FLAGGED is a muted burnt red — deliberately not
+// the hotter --danger #DC2626, which shouts next to these pastels. Validated as
+// a pair: CVD ΔE 27.7 (deutan), normal-vision ΔE 32.1, both well clear.
+const FLAGGED = "#B5441F";
+const CLEAN = BLUE;
+
 // ── Formatters ───────────────────────────────────────────────────────────────
 
 function fullNameFromFirst(
@@ -193,6 +238,19 @@ function fmtNumber(n: number): string {
 
 function fmtPct(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`;
+}
+
+/**
+ * Percentage label above a bar. Blank at exactly zero (nothing to point at),
+ * one decimal below 10% and whole numbers above.
+ *
+ * The decimal matters: a healthy team sits near 1%, where whole-number rounding
+ * would print "0%" over a week that really did send a flagged email.
+ */
+function fmtBarPct(rate: number): string {
+  if (!rate) return "";
+  const pct = rate * 100;
+  return pct < 10 ? `${pct.toFixed(1)}%` : `${Math.round(pct)}%`;
 }
 
 function daysAgo(iso: string): string {
@@ -225,6 +283,11 @@ export default function StatsPage() {
   const [engagement, setEngagement] = useState<EngagementResponse | null>(null);
 
   const [drill, setDrill] = useState<DrillTarget | null>(null);
+
+  // Outreach quality ("BS") drill-down + the admin rules editor.
+  const [qualityTarget, setQualityTarget] =
+    useState<OutreachQualityTarget | null>(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
 
   // ── Star leads (BRO highlights) ────────────────────────────────────────────
   // Stars are per Salesforce OpportunityId, synced via Supabase so they follow
@@ -414,6 +477,93 @@ export default function StatsPage() {
       F2F: p.f2f,
     }));
   }, [data]);
+
+  // ── Outreach quality ("BS") derived data ───────────────────────────────────
+
+  const quality = data?.outreachQuality ?? null;
+
+  /** Two-slice donut: flagged first so it starts at 12 o'clock. */
+  const qualityDonutData = useMemo(() => {
+    if (!quality) return [];
+    return [
+      { name: "Flagged", value: quality.totals.bs, fill: FLAGGED },
+      {
+        name: "Clean",
+        value: Math.max(0, quality.totals.sent - quality.totals.bs),
+        fill: CLEAN,
+      },
+    ];
+  }, [quality]);
+
+  /** Stacked bars per bucket. `Rate` rides along for the label and tooltip. */
+  const qualityBucketData = useMemo(() => {
+    if (!quality) return [];
+    return quality.byBucket.map((b) => ({
+      name: b.label,
+      start: b.start,
+      Clean: Math.max(0, b.sent - b.bs),
+      Flagged: b.bs,
+      Rate: b.rate,
+      Sent: b.sent,
+    }));
+  }, [quality]);
+
+  /** Senders who actually sent something, worst rate first. */
+  const qualityByPerson = useMemo(() => {
+    if (!quality) return [];
+    return quality.byPerson.filter((p) => p.sent > 0);
+  }, [quality]);
+
+  const bucketNoun = range.bucket === "month" ? "month" : "week";
+
+  /**
+   * The last bucket of this_quarter / ytd is cut off at today, so its volume
+   * reads low. Worth saying out loud rather than letting it look like a dip.
+   */
+  const partialLastBucket =
+    (preset === "this_quarter" || preset === "ytd") &&
+    qualityBucketData.length > 1;
+
+  function openQualityRange() {
+    if (!quality || quality.totals.bs === 0) return;
+    setQualityTarget({
+      title: `Flagged outreach · ${range.label}`,
+      start: range.start,
+      end: range.end,
+    });
+  }
+
+  type BucketClick = {
+    start?: string;
+    name?: string;
+    payload?: { start?: string; name?: string };
+  };
+
+  function openQualityBucket(clicked: BucketClick | null) {
+    // Recharts exposes the datum both spread onto the argument and nested under
+    // `payload`, depending on the mark — read whichever is present.
+    const start = clicked?.start ?? clicked?.payload?.start;
+    if (!start) return;
+    const bucket = quality?.byBucket.find((b) => b.start === start);
+    if (!bucket || bucket.bs === 0) return;
+    const match = range.buckets.find((b) => b.start === start);
+    setQualityTarget({
+      title: `Flagged outreach · ${clicked?.name ?? clicked?.payload?.name ?? bucket.label}`,
+      start: bucket.start,
+      end: match?.end ?? range.end,
+    });
+  }
+
+  function openQualityPerson(owner: string) {
+    const person = quality?.byPerson.find((p) => p.owner === owner);
+    if (!person || person.bs === 0) return;
+    setQualityTarget({
+      title: `Flagged outreach · ${owner}`,
+      start: range.start,
+      end: range.end,
+      owner,
+    });
+  }
 
   const trendData = useMemo(() => {
     if (!data) return [];
@@ -757,7 +907,7 @@ export default function StatsPage() {
               </ChartCard>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <ChartCard title="Calls + F2F by Person">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={callsF2FByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
@@ -841,6 +991,253 @@ export default function StatsPage() {
                 </ResponsiveContainer>
               </ChartCard>
             </div>
+
+            {/* ── OUTREACH QUALITY ("BS") ────────────────────────────────── */}
+            {/* What share of outreach went to companies failing two of the
+                three checks. Still inside Team Breakdown. */}
+            {quality && (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                  <ChartCard
+                    title="Outreach quality"
+                    actions={
+                      <button
+                        type="button"
+                        onClick={() => setRulesOpen(true)}
+                        className="text-xs text-ink-muted hover:text-ink transition-colors"
+                      >
+                        Rules
+                      </button>
+                    }
+                  >
+                    {quality.totals.sent === 0 ? (
+                      <p className="py-16 text-center text-sm text-ink-muted">
+                        No outreach in this period.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="relative">
+                          <ResponsiveContainer width="100%" height={200}>
+                            <PieChart>
+                              <Pie
+                                data={qualityDonutData}
+                                dataKey="value"
+                                nameKey="name"
+                                innerRadius="66%"
+                                outerRadius="92%"
+                                startAngle={90}
+                                endAngle={-270}
+                                paddingAngle={2}
+                                strokeWidth={2}
+                                stroke="#FFFFFF"
+                                cursor={quality.totals.bs > 0 ? "pointer" : "default"}
+                                onClick={openQualityRange}
+                              >
+                                {qualityDonutData.map((slice) => (
+                                  <Cell key={slice.name} fill={slice.fill} />
+                                ))}
+                              </Pie>
+                              <Tooltip
+                                formatter={(v: number, n) => [
+                                  `${fmtNumber(v)} ${v === 1 ? "email" : "emails"}`,
+                                  n,
+                                ]}
+                              />
+                            </PieChart>
+                          </ResponsiveContainer>
+
+                          {/* Hero number, centred in the donut hole. */}
+                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                            <span className="text-3xl font-semibold tabular-nums text-navy">
+                              {fmtPct(quality.totals.rate)}
+                            </span>
+                            <span className="mt-0.5 text-xs text-ink-muted">
+                              flagged
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="mt-1 text-center text-xs text-ink-secondary tabular-nums">
+                          {fmtNumber(quality.totals.bs)} of{" "}
+                          {fmtNumber(quality.totals.sent)} emails
+                        </p>
+
+                        {/* Legend — identity is never colour-alone. */}
+                        <div className="mt-3 flex items-center justify-center gap-4 text-xs text-ink-secondary">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span
+                              className="h-2 w-2 rounded-sm"
+                              style={{ background: FLAGGED }}
+                            />
+                            Flagged
+                          </span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span
+                              className="h-2 w-2 rounded-sm"
+                              style={{ background: CLEAN }}
+                            />
+                            Clean
+                          </span>
+                        </div>
+
+                        {quality.totals.bs > 0 && (
+                          <p className="mt-3 border-t border-line pt-3 text-center text-xs text-ink-muted">
+                            <span className="uppercase tracking-wide">
+                              Reasons cited
+                            </span>
+                            <span className="mt-1 block tabular-nums text-ink-secondary">
+                              {(
+                                ["geography", "founded", "employees"] as QualityFlagKey[]
+                              )
+                                .filter((k) => quality.reasonCounts[k] > 0)
+                                .map(
+                                  (k) =>
+                                    `${QUALITY_FLAG_LABELS[k]} ${quality.reasonCounts[k]}`,
+                                )
+                                .join(" · ")}
+                            </span>
+                          </p>
+                        )}
+
+                        {!quality.foundedFieldAvailable && (
+                          <p className="mt-3 text-center text-xs text-warn">
+                            Year founded is unavailable in Salesforce — scored on
+                            geography and headcount only.
+                          </p>
+                        )}
+
+                        {quality.unscoreable > 0 && (
+                          <p className="mt-2 text-center text-xs text-ink-muted">
+                            {fmtNumber(quality.unscoreable)} more{" "}
+                            {quality.unscoreable === 1 ? "email has" : "emails have"}{" "}
+                            no linked account and could not be scored.
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </ChartCard>
+
+                  <ChartCard title={`Flagged outreach by ${bucketNoun}`}>
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart
+                        data={qualityBucketData}
+                        margin={{ top: 24, right: 16, left: 0, bottom: 5 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
+                        <Tooltip
+                          formatter={(v: number, n) => [fmtNumber(v), n]}
+                          labelFormatter={(label, payload) => {
+                            const row = payload?.[0]?.payload as
+                              | { Sent?: number; Rate?: number }
+                              | undefined;
+                            if (!row) return String(label);
+                            return `${label} — ${fmtPct(row.Rate ?? 0)} of ${fmtNumber(
+                              row.Sent ?? 0,
+                            )}`;
+                          }}
+                        />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        {/*
+                          No white stroke between these two stacked segments.
+                          A healthy team's flagged share is ~1% of a 200-email
+                          week — a 2-3px sliver — and a 2px surface gap paints
+                          straight over it. The two fills are far enough apart
+                          in colour (CVD ΔE 27.7) to read without a gap.
+
+                          minPointSize keeps a non-zero flagged count visible
+                          at ~3px instead of vanishing. It marks "not zero",
+                          and the exact figure is on the label above the bar.
+                        */}
+                        <Bar
+                          dataKey="Clean"
+                          stackId="q"
+                          fill={CLEAN}
+                          cursor="pointer"
+                          onClick={(d) => openQualityBucket(d as BucketClick)}
+                        />
+                        <Bar
+                          dataKey="Flagged"
+                          stackId="q"
+                          fill={FLAGGED}
+                          minPointSize={3}
+                          radius={[4, 4, 0, 0]}
+                          cursor="pointer"
+                          onClick={(d) => openQualityBucket(d as BucketClick)}
+                        >
+                          <LabelList
+                            dataKey="Rate"
+                            position="top"
+                            formatter={fmtBarPct}
+                            style={{ fontSize: 12, fill: NAVY }}
+                          />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                    {partialLastBucket && (
+                      <p className="mt-2 text-xs text-ink-muted">
+                        The final {bucketNoun} stops at today, so its volume reads
+                        low. The percentage is still comparable.
+                      </p>
+                    )}
+                  </ChartCard>
+                </div>
+
+                <div className="mb-10">
+                  <ChartCard title="Flagged rate by sender">
+                    {qualityByPerson.length === 0 ? (
+                      <p className="py-8 text-center text-sm text-ink-muted">
+                        No outreach in this period.
+                      </p>
+                    ) : (
+                      <Table>
+                        <Table.Head>
+                          <Table.HeadRow>
+                            <Table.HeadCell>Sender</Table.HeadCell>
+                            <Table.HeadCell className="text-right">
+                              Emails sent
+                            </Table.HeadCell>
+                            <Table.HeadCell className="text-right">
+                              Flagged
+                            </Table.HeadCell>
+                            <Table.HeadCell className="text-right">
+                              Rate
+                            </Table.HeadCell>
+                          </Table.HeadRow>
+                        </Table.Head>
+                        <Table.Body>
+                          {qualityByPerson.map((p) => (
+                            <Table.Row
+                              key={p.owner}
+                              className={p.bs > 0 ? "cursor-pointer" : ""}
+                              onClick={() => openQualityPerson(p.owner)}
+                            >
+                              <Table.Cell className="font-medium text-ink">
+                                {p.owner}
+                              </Table.Cell>
+                              <Table.Cell className="text-right tabular-nums text-ink-secondary">
+                                {fmtNumber(p.sent)}
+                              </Table.Cell>
+                              <Table.Cell className="text-right tabular-nums text-ink-secondary">
+                                {fmtNumber(p.bs)}
+                              </Table.Cell>
+                              <Table.Cell
+                                className={`text-right tabular-nums ${
+                                  p.bs > 0 ? "font-medium text-danger" : "text-ink-muted"
+                                }`}
+                              >
+                                {fmtPct(p.rate)}
+                              </Table.Cell>
+                            </Table.Row>
+                          ))}
+                        </Table.Body>
+                      </Table>
+                    )}
+                  </ChartCard>
+                </div>
+              </>
+            )}
 
             {/* ── BEST SEND TIMES ────────────────────────────────────────── */}
             <SectionHeader title="Best Send Times (ET)" color="bg-green-500" />
@@ -982,6 +1379,21 @@ export default function StatsPage() {
             onClose={() => setDrill(null)}
           />
         )}
+
+        <OutreachQualityModal
+          target={qualityTarget}
+          team={team}
+          onClose={() => setQualityTarget(null)}
+          // A backfilled field changes the score, so refresh the charts too.
+          onDataChanged={loadStats}
+        />
+
+        <OutreachQualityRules
+          open={rulesOpen}
+          onClose={() => setRulesOpen(false)}
+          thresholds={quality?.thresholds ?? null}
+          onSaved={loadStats}
+        />
       </PageContent>
     </>
   );
@@ -1043,10 +1455,21 @@ function KpiCard({
   );
 }
 
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ChartCard({
+  title,
+  actions,
+  children,
+}: {
+  title: string;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-      <h3 className="text-sm font-semibold text-navy mb-3">{title}</h3>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <h3 className="text-sm font-semibold text-navy">{title}</h3>
+        {actions}
+      </div>
       {children}
     </div>
   );
