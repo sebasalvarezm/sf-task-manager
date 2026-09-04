@@ -107,7 +107,7 @@ export function OutreachQualityRules({
       open={open}
       onClose={onClose}
       size="md"
-      title="Outreach quality rules"
+      title="BS Meter rules"
       description="An email is flagged when any two of the three checks fail."
       footer={
         <>

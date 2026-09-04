@@ -546,6 +546,8 @@ export type OutreachQualityTaskRow = {
   accountId: string;
   accountName: string;
   website: string | null;
+  /** Deep link to the account record, same convention as the other libs. */
+  accountUrl: string;
   country: string | null;
   yearEstablished: string | null;
   numberOfEmployees: number | null;
@@ -628,6 +630,7 @@ export async function fetchOutreachQualityTasks(
       accountId: r.AccountId,
       accountName: r.Account?.Name ?? "(no account)",
       website: r.Account?.Website ?? null,
+      accountUrl: `${credentials.instance_url}/${r.AccountId}`,
       country: r.Account?.BillingCountry ?? null,
       yearEstablished: r.Account?.Year_Established__c ?? null,
       numberOfEmployees: r.Account?.NumberOfEmployees ?? null,

@@ -43,6 +43,7 @@ type FlaggedRow = {
   accountId: string;
   accountName: string;
   website: string | null;
+  accountUrl: string;
   country: string | null;
   yearEstablished: string | null;
   numberOfEmployees: number | null;
@@ -62,6 +63,14 @@ type Draft = { country: string; year: string; employees: string };
 type SaveState = { status: "idle" | "saving" | "error"; message?: string };
 
 const EMPTY_DRAFT: Draft = { country: "", year: "", employees: "" };
+
+/** "https://www.mecka.com/" → "mecka.com", to fit the narrow company column. */
+function prettyDomain(website: string): string {
+  return website
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/+$/, "");
+}
 
 export function OutreachQualityModal({
   target,
@@ -290,21 +299,35 @@ export function OutreachQualityModal({
                   <Table.Row key={row.taskId}>
                     <Table.Cell>
                       <div className="font-medium text-ink">{row.accountName}</div>
-                      {row.website && (
+                      {/* Two destinations: the company itself, and the record to
+                          fix. No middot separator — this column is narrow, and a
+                          wrapped middot dangles at the end of the line. */}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+                        {row.website && (
+                          <a
+                            href={
+                              row.website.startsWith("http")
+                                ? row.website
+                                : `https://${row.website}`
+                            }
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 whitespace-nowrap text-ink-muted hover:text-ink"
+                          >
+                            {prettyDomain(row.website)}
+                            <ExternalLink className="h-3 w-3" strokeWidth={1.75} />
+                          </a>
+                        )}
                         <a
-                          href={
-                            row.website.startsWith("http")
-                              ? row.website
-                              : `https://${row.website}`
-                          }
+                          href={row.accountUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="mt-0.5 inline-flex items-center gap-1 text-xs text-ink-muted hover:text-ink"
+                          className="inline-flex items-center gap-1 whitespace-nowrap text-ink-muted hover:text-ink"
                         >
-                          {row.website.replace(/^https?:\/\//, "")}
+                          Salesforce
                           <ExternalLink className="h-3 w-3" strokeWidth={1.75} />
                         </a>
-                      )}
+                      </div>
                     </Table.Cell>
 
                     <Table.Cell className="whitespace-nowrap tabular-nums text-ink-secondary">

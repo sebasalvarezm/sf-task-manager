@@ -999,7 +999,7 @@ export default function StatsPage() {
               <>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
                   <ChartCard
-                    title="Outreach quality"
+                    title="BS Meter"
                     actions={
                       <button
                         type="button"
