@@ -142,6 +142,17 @@ function sentRowTone(item: WeeklyOutreachItem): string {
 
 /** Plain-English note explaining how the Outlook chain above the draft was chosen. */
 function replyMatchNote(item: WeeklyOutreachItem): string {
+  if (item.takeover) {
+    const group = item.takeover.groupName
+      ? `Sub-group: ${item.takeover.groupName}${
+          item.takeover.groupConfidence !== null ? ` (${item.takeover.groupConfidence}/100)` : ""
+        }.`
+      : "No confident sub-group match, so the draft describes our interest in general terms.";
+    const contact = item.takeover.contactName
+      ? `${item.takeover.contactName}${item.takeover.contactEmail ? ` <${item.takeover.contactEmail}>` : ""}`
+      : "an unnamed contact";
+    return `Takeover: no chain in your Outlook. Context from Salesforce, where ${item.takeover.colleagueName} exchanged with ${contact}, last on ${item.takeover.lastExchangeDate}. This is a new email to ${item.takeover.contactName ?? "them"}, not a reply. ${group}`;
+  }
   if (item.outlook_reply_confidence === "domain") {
     return `Chain confirmed: ${item.outlook_reply_reason}`;
   }
@@ -1792,11 +1803,15 @@ export default function WeeklyOutreachPage() {
                     {reviewingRce.account_name}
                   </h2>
                   <p className="mt-1 truncate text-sm text-ink-muted">
-                    {reviewingRce.outlook_reply_subject || "No Outlook chain attached"}
+                    {reviewingRce.takeover
+                      ? `New email: ${reviewingRce.outlook_reply_subject || "(subject pending)"}`
+                      : reviewingRce.outlook_reply_subject || "No Outlook chain attached"}
                   </p>
                   <p
                     className={`mt-1 text-xs leading-5 ${
-                      reviewingRce.outlook_reply_confidence === "domain" ? "text-ok" : "text-warning"
+                      reviewingRce.outlook_reply_confidence === "domain" || reviewingRce.takeover
+                        ? "text-ok"
+                        : "text-warning"
                     }`}
                   >
                     {replyMatchNote(reviewingRce)}
@@ -1830,7 +1845,9 @@ export default function WeeklyOutreachPage() {
                     </label>
                     <span className={`text-xs ${reviewingRce.outlook_draft_ready ? "text-ok" : "text-warning"}`}>
                       {reviewingRce.outlook_draft_ready
-                        ? "Connected to an Outlook reply draft"
+                        ? reviewingRce.takeover
+                          ? "Connected to a new Outlook draft"
+                          : "Connected to an Outlook reply draft"
                         : "Ready to copy and paste"}
                     </span>
                   </div>
@@ -1842,8 +1859,12 @@ export default function WeeklyOutreachPage() {
                   />
                   <p className="mt-2 text-xs text-ink-muted">
                     {reviewingRce.outlook_draft_ready
-                      ? "Save keeps Outlook synchronized. Approve and Send sends this exact text as a reply in the existing chain."
-                      : "Edit if needed, copy and paste it into the correct Outlook chain, then use Sent & Next to mark this row sent and open the next draft. Nothing can send from this tool until Outlook approval is available."}
+                      ? reviewingRce.takeover
+                        ? `Save keeps Outlook synchronized. Approve and Send sends this exact text as a new email to ${reviewingRce.takeover.contactEmail ?? "the contact"}.`
+                        : "Save keeps Outlook synchronized. Approve and Send sends this exact text as a reply in the existing chain."
+                      : reviewingRce.takeover
+                        ? "Edit if needed, copy and paste it into a new email to the contact, then use Sent & Next to mark this row sent and open the next draft."
+                        : "Edit if needed, copy and paste it into the correct Outlook chain, then use Sent & Next to mark this row sent and open the next draft. Nothing can send from this tool until Outlook approval is available."}
                   </p>
                 </section>
               </div>

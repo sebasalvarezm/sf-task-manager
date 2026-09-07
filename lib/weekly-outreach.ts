@@ -42,6 +42,28 @@ export type WeeklyOutreachItem = {
   outlook_reply_subject?: string | null;
   outlook_reply_confidence?: RceThreadConfidence;
   outlook_reply_reason?: string | null;
+  /** Where the reconnect context came from. See WeeklyOutreachContextSource. */
+  context_source?: WeeklyOutreachContextSource;
+  takeover?: WeeklyOutreachTakeover | null;
+};
+
+/**
+ * "outlook": the user's own Outlook chain was found and the draft replies into it.
+ * "salesforce": no Outlook chain, but the Salesforce timeline had a colleague's
+ *   exchange, so the draft is a fresh email to that contact (takeover mode).
+ * "none": neither, so the draft has no relationship context.
+ */
+export type WeeklyOutreachContextSource = "outlook" | "salesforce" | "none";
+
+export type WeeklyOutreachTakeover = {
+  colleagueName: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  lastExchangeDate: string;
+  /** Portfolio sub-group the company was classified into, e.g. "Safety Compliance". */
+  groupName: string | null;
+  mainGroup: string | null;
+  groupConfidence: number | null;
 };
 
 export type WeeklyOutreachSourceMetadata = {
@@ -54,6 +76,8 @@ export type WeeklyOutreachSourceMetadata = {
   replyReason: string | null;
   rceDraftEnabled: boolean;
   rceSecondSent: boolean;
+  contextSource: WeeklyOutreachContextSource;
+  takeover: WeeklyOutreachTakeover | null;
 };
 
 export function readWeeklyOutreachSourceMetadata(
@@ -69,6 +93,8 @@ export function readWeeklyOutreachSourceMetadata(
       replyReason: null,
       rceDraftEnabled: true,
       rceSecondSent: false,
+      contextSource: "none",
+      takeover: null,
     };
   }
   try {
@@ -87,6 +113,10 @@ export function readWeeklyOutreachSourceMetadata(
         replyReason: parsed.replyReason ?? null,
         rceDraftEnabled: parsed.rceDraftEnabled !== false,
         rceSecondSent: parsed.rceSecondSent === true,
+        // Rows drafted before takeover mode existed default to the old meaning:
+        // an attached chain means Outlook context, otherwise none.
+        contextSource: parsed.contextSource ?? (parsed.replyToMessageId ? "outlook" : "none"),
+        takeover: parsed.takeover ?? null,
       };
     }
   } catch {
@@ -101,6 +131,8 @@ export function readWeeklyOutreachSourceMetadata(
     replyReason: null,
     rceDraftEnabled: true,
     rceSecondSent: false,
+    contextSource: "none",
+    takeover: null,
   };
 }
 
@@ -113,7 +145,9 @@ export function writeWeeklyOutreachSourceMetadata(
     !metadata.replySubject &&
     !metadata.replyReason &&
     metadata.rceDraftEnabled &&
-    !metadata.rceSecondSent
+    !metadata.rceSecondSent &&
+    metadata.contextSource === "none" &&
+    !metadata.takeover
   ) {
     return metadata.originalReference;
   }
@@ -132,6 +166,8 @@ export function withWeeklyOutreachClientMetadata(
     outlook_reply_subject: metadata.replySubject,
     outlook_reply_confidence: metadata.replyConfidence,
     outlook_reply_reason: metadata.replyReason,
+    context_source: metadata.contextSource,
+    takeover: metadata.takeover,
   };
 }
 

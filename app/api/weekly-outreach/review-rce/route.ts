@@ -49,6 +49,8 @@ export async function POST(request: Request) {
       metadata.outlookDraftId = null;
       metadata.replyToMessageId = null;
       metadata.replySubject = null;
+      metadata.contextSource = "none";
+      metadata.takeover = null;
       const { data: updated, error: updateError } = await supabase
         .from("weekly_outreach")
         .update({

@@ -199,29 +199,6 @@ export async function findMemoForAccount(
   const credentials = await getMsValidCredentials();
   if (!credentials) throw new Error("MS_NOT_CONNECTED");
 
-  // Graph $search uses KQL. Quoting the tag prefix narrows to subjects
-  // that contain the [BRO: prefix; we further refine client-side.
-  const params = new URLSearchParams({
-    $search: '"[BRO:"',
-    $select: "id,subject,from,sentDateTime,hasAttachments,webLink",
-    $top: "50",
-  });
-
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        // $search results aren't sortable; we order client-side by sentDateTime.
-        ConsistencyLevel: "eventual",
-      },
-    },
-  );
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Failed to search memos: ${err}`);
-  }
-  const data = await response.json();
   type Row = {
     id: string;
     subject?: string;
@@ -230,7 +207,35 @@ export async function findMemoForAccount(
     hasAttachments?: boolean;
     webLink?: string;
   };
-  const rows = (data.value ?? []) as Row[];
+
+  // Graph $search ranks by relevance, not date — a single page can silently
+  // drop older memos as newer ones accumulate. Paginate via @odata.nextLink
+  // so memos for older opportunities stay reachable. 500-row cap bounds latency.
+  const initialParams = new URLSearchParams({
+    $search: '"[BRO:"',
+    $select: "id,subject,from,sentDateTime,hasAttachments,webLink",
+    $top: "100",
+  });
+  let nextUrl: string | null =
+    `https://graph.microsoft.com/v1.0/me/messages?${initialParams.toString()}`;
+  const rows: Row[] = [];
+  const MAX_ROWS = 500;
+
+  while (nextUrl && rows.length < MAX_ROWS) {
+    const response: Response = await fetch(nextUrl, {
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        ConsistencyLevel: "eventual",
+      },
+    });
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`Failed to search memos: ${err}`);
+    }
+    const data = await response.json();
+    rows.push(...((data.value ?? []) as Row[]));
+    nextUrl = (data["@odata.nextLink"] as string | undefined) ?? null;
+  }
 
   const matches: BroMemo[] = rows
     .filter((r) => r.subject && matchesAccount(r.subject, accountName))
@@ -414,6 +419,39 @@ export async function createOutlookReplyDraft(
   const created = (await createResponse.json()) as { id: string; subject?: string };
   await updateOutlookDraft(created.id, body);
   return { id: created.id, subject: created.subject ?? "Reply" };
+}
+
+/**
+ * Create a brand-new Outlook draft (not a reply). Used when the user is taking
+ * an account over from a colleague and has no chain of their own to reply into.
+ * Save and Approve & Send work on it exactly like a reply draft.
+ */
+export async function createOutlookNewDraft(params: {
+  to: string;
+  subject: string;
+  body: string;
+}): Promise<OutlookReplyDraft> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch("https://graph.microsoft.com/v1.0/me/messages", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${credentials.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      subject: params.subject,
+      body: { contentType: "Text", content: params.body },
+      toRecipients: [{ emailAddress: { address: params.to } }],
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+    throw new Error(`Could not create Outlook draft: ${detail}`);
+  }
+  const created = (await response.json()) as { id: string; subject?: string };
+  return { id: created.id, subject: created.subject ?? params.subject };
 }
 
 /** Keep edits in the tool synchronized with the real Outlook draft. */
