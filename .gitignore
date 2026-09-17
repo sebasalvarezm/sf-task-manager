@@ -34,3 +34,5 @@ next-env.d.ts
 
 .vercel
 .env*
+.nda_review/
+Claude outputs/
