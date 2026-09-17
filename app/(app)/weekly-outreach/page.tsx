@@ -522,7 +522,7 @@ export default function WeeklyOutreachPage() {
     }
 
     if (entries.length === 0) {
-      setError("Paste Type and Company columns, for example E1 followed by the Salesforce company name.");
+      setError("Paste Type and Company columns, for example E1 followed by the Salesforce company name or website URL.");
       return;
     }
 
@@ -648,7 +648,7 @@ export default function WeeklyOutreachPage() {
     }
     const accountName = selectedAccount?.accountName ?? row.accountName.trim();
     if (!accountName) {
-      patchDraftRow(row.key, { error: "Enter a Salesforce company name." });
+      patchDraftRow(row.key, { error: "Enter a Salesforce company name or website URL." });
       return;
     }
 
@@ -1709,7 +1709,7 @@ export default function WeeklyOutreachPage() {
                         className={`h-10 w-full border-0 bg-transparent px-2 text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-inset ${
                           row.error ? "focus:ring-danger" : "focus:ring-brand"
                         }`}
-                        placeholder={draftIndex === 0 ? "Search Salesforce company…" : ""}
+                        placeholder={draftIndex === 0 ? "Company name or website URL…" : ""}
                       />
                       {row.searching || row.saving ? (
                         <span className="absolute right-2 top-3 text-[10px] text-ink-muted">

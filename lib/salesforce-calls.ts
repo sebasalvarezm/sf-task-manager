@@ -1,5 +1,6 @@
 import { getValidCredentials } from "./token-manager";
 import { sfQuery } from "./sf-query";
+import { accountWhereClause, parseAccountQuery, rankAccounts } from "./account-match";
 import { format, addDays } from "date-fns";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -95,19 +96,28 @@ export async function searchAccountsByName(
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
-  const query = `SELECT Id, Name, Website FROM Account WHERE Name LIKE '%${searchQuery}%' ORDER BY Name ASC LIMIT 10`;
+  // A plain `LIKE '%q%' ... LIMIT 10` sorted by name buries short names
+  // ("ITS") under everything that merely contains the letters. Pull a wider
+  // set, rank exact > starts-with > whole word > contains, and let a pasted
+  // URL match on the Website domain. See lib/account-match.ts.
+  const parsed = parseAccountQuery(searchQuery);
+  const query = `SELECT Id, Name, Website FROM Account WHERE ${accountWhereClause(parsed)} ORDER BY Name ASC LIMIT 200`;
 
   const records = await sfQuery<{ Id: string; Name: string; Website?: string }>(
     query,
     credentials
   );
 
-  return records.map((r) => ({
+  const accounts: SalesforceAccountMatch[] = records.map((r) => ({
     accountId: r.Id,
     accountName: r.Name,
     accountUrl: `${credentials.instance_url}/${r.Id}`,
     website: r.Website ?? null,
   }));
+
+  return rankAccounts(parsed, accounts)
+    .slice(0, 10)
+    .map(({ matchScore: _score, ...rest }) => rest);
 }
 
 // ── Create a completed call task (C1 or RCC) ─────────────────────────────────

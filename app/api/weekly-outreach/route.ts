@@ -84,8 +84,8 @@ export async function POST(request: NextRequest) {
           {
             error:
               resolved.candidates.length > 1
-                ? "More than one Salesforce account matched. Enter the full account name exactly as stored in Salesforce."
-                : "No Salesforce account matched that name.",
+                ? "More than one Salesforce account matched. Pick one from the list, type the exact account name, or paste the company's website URL."
+                : "No Salesforce account matched that name or website.",
             candidates: resolved.candidates.map((a) => a.accountName),
           },
           { status: resolved.candidates.length > 1 ? 409 : 404 },

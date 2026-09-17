@@ -1,6 +1,7 @@
 import { addDays, startOfWeek, format } from "date-fns";
 import { getSupabaseAdmin } from "./supabase";
 import { getValidCredentials } from "./token-manager";
+import { accountWhereClause, parseAccountQuery, pickAccount } from "./account-match";
 import type { RceThreadConfidence } from "./rce-thread-match";
 
 export type WeeklyOutreachType = "E1" | "RCE";
@@ -265,16 +266,16 @@ export async function resolveWeeklyAccountByName(
 ): Promise<{ account: SalesforceAccountDetails | null; candidates: SalesforceAccountDetails[] }> {
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
-  const candidates = await queryAccounts(
-    credentials,
-    `Name LIKE '%${escapeSoql(name.trim())}%'`,
-  );
-  const exact = candidates.find(
-    (a) => a.accountName.trim().toLowerCase() === name.trim().toLowerCase(),
-  );
+  // Accepts a company name or a website / URL. Pulls a generous set of
+  // candidates (not just the first 10 alphabetically) and ranks them:
+  // exact name > starts-with > whole word > contains; URLs match on the
+  // Website domain. See lib/account-match.ts.
+  const query = parseAccountQuery(name);
+  const rows = await queryAccounts(credentials, accountWhereClause(query), 200);
+  const { account, candidates } = pickAccount(query, rows);
   return {
-    account: exact ?? (candidates.length === 1 ? candidates[0] : null),
-    candidates,
+    account,
+    candidates: candidates.slice(0, 10).map(({ matchScore: _score, ...rest }) => rest),
   };
 }
 
@@ -399,10 +400,28 @@ export async function addWeeklyOutreachBatch(input: {
     account: SalesforceAccountDetails;
   }> = [];
   const results: WeeklyOutreachBatchResult[] = [];
-  entries.forEach((entry, index) => {
+  for (const [index, entry] of entries.entries()) {
     if (!entry.accountName || !["E1", "RCE"].includes(entry.outreachType)) {
-      results.push({ index, error: "Each row needs E1 or RCE and a company name." });
-      return;
+      results.push({ index, error: "Each row needs E1 or RCE and a company name or website." });
+      continue;
+    }
+    // Pasted URLs are matched on the Salesforce Website domain instead.
+    if (parseAccountQuery(entry.accountName).kind === "domain") {
+      const resolved = await resolveWeeklyAccountByName(entry.accountName);
+      if (!resolved.account) {
+        results.push({
+          index,
+          error:
+            resolved.candidates.length === 0
+              ? "No Salesforce account has that website."
+              : `Several Salesforce accounts share that domain: ${resolved.candidates
+                  .map((c) => c.accountName)
+                  .join(", ")}.`,
+        });
+        continue;
+      }
+      pending.push({ index, entry, account: resolved.account });
+      continue;
     }
     const matches = matchesByName.get(entry.accountName.toLowerCase()) ?? [];
     if (matches.length !== 1) {
@@ -413,10 +432,10 @@ export async function addWeeklyOutreachBatch(input: {
             ? "No exact Salesforce account matched."
             : "More than one Salesforce account has this exact name.",
       });
-      return;
+      continue;
     }
     pending.push({ index, entry, account: matches[0] });
-  });
+  }
 
   if (pending.length === 0) return results.sort((a, b) => a.index - b.index);
 
