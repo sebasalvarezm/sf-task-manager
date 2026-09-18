@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { MS_SCOPES } from "@/lib/microsoft";
 import { isAuthenticated } from "@/lib/auth";
 
 // Redirects the user to the Microsoft OAuth login page.
@@ -23,7 +24,7 @@ export async function GET() {
     response_type: "code",
     redirect_uri: callbackUrl,
     response_mode: "query",
-    scope: "Calendars.Read Mail.ReadWrite Mail.Send User.Read offline_access",
+    scope: MS_SCOPES,
     prompt: "select_account",
   });
 

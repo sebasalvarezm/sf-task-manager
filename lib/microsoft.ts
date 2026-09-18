@@ -12,6 +12,16 @@ export type MsCredentials = {
   updated_at: string;
 };
 
+// Microsoft Graph permissions the tool asks for. Must match what IT has
+// granted admin consent for on the "Valstone Call Logger" app registration,
+// otherwise Connect shows a "needs admin approval" screen.
+//
+// TEMPORARY: Mail.Read while IT approves Mail.ReadWrite. Creating Outlook
+// drafts (Weekly Outreach RCE drafting) needs Mail.ReadWrite; switch this
+// back to "Calendars.Read Mail.ReadWrite Mail.Send User.Read offline_access"
+// once consent is granted, then reconnect Outlook in the tool.
+export const MS_SCOPES = "Calendars.Read Mail.Read Mail.Send User.Read offline_access";
+
 // ── Token management ──────────────────────────────────────────────────────────
 
 export async function getMsValidCredentials(): Promise<MsCredentials | null> {
@@ -53,7 +63,7 @@ async function refreshMsAccessToken(
     client_id: clientId,
     client_secret: clientSecret,
     refresh_token: credentials.refresh_token,
-    scope: "Calendars.Read Mail.Read Mail.Send User.Read offline_access",
+    scope: MS_SCOPES,
   });
 
   const tenantId = process.env.MS_TENANT_ID ?? "common";
