@@ -29,7 +29,7 @@ describe("buildPrepackagedEmail town guard", () => {
       locationConfidence: "exact",
     });
     if (out.skipped) return;
-    expect(out.body).toMatch(/near Tampa on the/);
+    expect(out.body).toMatch(/near Tampa in the/);
     expect(out.body).not.toContain("[INSERT TOWN]");
   });
 });

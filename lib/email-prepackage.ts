@@ -11,7 +11,7 @@ import path from "path";
 // untouched.
 
 export type PrepackagedEmail = {
-  subject: string | null; // e.g. "Capital Grille Lunch Aug 12: Valstone"
+  subject: string | null; // e.g. "Capital Grille Aug 12: Valstone"
   body: string | null; // finished draft; null when skipped
   templateSubgroup: string | null; // e.g. "Manufacturing — Production Quality"
   warnings: string[]; // things to double-check before sending
@@ -354,9 +354,9 @@ export function buildPrepackagedEmail(args: {
       : null;
   let townWeek: string;
   if (town) {
-    townWeek = `${town} on ${week}`;
+    townWeek = `${town} in ${week}`;
   } else {
-    townWeek = `[INSERT TOWN] on ${week}`;
+    townWeek = `[INSERT TOWN] in ${week}`;
     warnings.push(
       rawLocation
         ? `Location "${rawLocation.slice(0, 80)}" did not look like a real town, so [INSERT TOWN] is left in the draft; fill it in before sending.`
@@ -368,14 +368,14 @@ export function buildPrepackagedEmail(args: {
   // 4. Fill the sender name (single-user tool for now).
   body = body.split("{{sender.first_name}}").join(SENDER_FIRST_NAME);
 
-  // 5. Subject line: "<short restaurant name> Lunch <Mon DD>: Valstone", where
+  // 5. Subject line: "<short restaurant name> <Mon DD>: Valstone", where
   //    the date is the Wednesday of the week the email body references.
   const chosenRestaurant = restaurants.find((r) => r.name && r.name.trim());
   let subject: string;
   if (chosenRestaurant) {
-    subject = `${shortenRestaurantName(chosenRestaurant.name)} Lunch ${lunchDate}: Valstone`;
+    subject = `${shortenRestaurantName(chosenRestaurant.name)} ${lunchDate}: Valstone`;
   } else {
-    subject = `[RESTAURANT] Lunch ${lunchDate}: Valstone`;
+    subject = `[RESTAURANT] ${lunchDate}: Valstone`;
     warnings.push(
       "No restaurant was found — [RESTAURANT] is left in the subject; fill it in before sending.",
     );
