@@ -7,6 +7,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { guardAddress, guardTown } from "./location-guard";
 import fs from "fs";
 import path from "path";
 import { getCachedSnapshot, putCachedSnapshot } from "./wayback-cache";
@@ -1537,25 +1538,27 @@ ${addressEvidence}`,
  */
 function validateAddress(raw: string): string | null {
   if (!raw) return null;
-  const lower = raw.toLowerCase();
+  // The model sometimes returns its reasoning before the answer. Use the last
+  // non-empty line, which is where the address itself lands.
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const last = lines[lines.length - 1];
+  const lower = last.toLowerCase();
   if (lower === "null" || lower === "none" || lower === "n/a") return null;
-  if (raw.length < 4 || raw.length > 200) return null;
 
   // Strip common preambles Claude sometimes adds
-  const cleaned = raw
+  const cleaned = last
     .replace(/^(address|location|hq|headquarters)\s*[:\-]\s*/i, "")
+    .replace(/^["'*`]+|["'*`]+$/g, "")
     .trim();
 
-  // Must look like an address: digit (street number) OR comma + capitalized region
-  const hasDigit = /\d/.test(cleaned);
-  const hasCommaRegion =
-    /,\s*[A-Z]{2}\b/.test(cleaned) || /,\s*[A-Z][a-z]+/.test(cleaned);
-  if (!hasDigit && !hasCommaRegion) return null;
-
-  // Reject obvious commentary even if it has a comma
-  if (/\bi (cannot|can't|couldn't|don't|am unable)/i.test(cleaned)) return null;
-
-  return cleaned;
+  // Single gate for "is this a place or a sentence of commentary?"
+  // (lib/location-guard.ts). A company name with a digit in it, e.g.
+  // Route4Me, used to be enough to pass; it is not any more.
+  return guardAddress(cleaned);
 }
 
 // ---------------------------------------------------------------------------
@@ -1713,7 +1716,8 @@ function parseRestaurantJson(raw: string): RestaurantSearchResult {
     const t = c.trim();
     if (!t || t.toLowerCase() === "null" || t.length < 3 || t.length > 80)
       return null;
-    return t;
+    // Must read as "City" or "City, ST", never as model commentary.
+    return guardTown(t) ?? guardAddress(t);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

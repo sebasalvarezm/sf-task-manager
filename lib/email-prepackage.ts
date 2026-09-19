@@ -1,4 +1,5 @@
 import fs from "fs";
+import { guardTown, looksLikeAddress } from "./location-guard";
 import path from "path";
 
 // Builds a ready-to-send "Email 1" draft by dropping the sourcing tool's
@@ -341,15 +342,25 @@ export function buildPrepackagedEmail(args: {
 
   // 3. Fill in town + week.
   const { phrase: week, shortDate: lunchDate } = referenceWeek(now);
+  // Last line of defence: whatever the location pipeline produced, only a
+  // string that reads as a town goes into the email. Anything else (model
+  // commentary, a street address that failed to parse) becomes a visible
+  // placeholder plus a warning, never silent nonsense in a sent email.
+  const rawLocation =
+    locationConfidence !== "none" && address ? address.trim() : null;
   const town =
-    locationConfidence !== "none" && address ? parseCity(address) : null;
+    rawLocation && looksLikeAddress(rawLocation)
+      ? guardTown(parseCity(rawLocation))
+      : null;
   let townWeek: string;
   if (town) {
     townWeek = `${town} on ${week}`;
   } else {
     townWeek = `[INSERT TOWN] on ${week}`;
     warnings.push(
-      "Town could not be determined — [INSERT TOWN] is left in the draft; fill it in before sending.",
+      rawLocation
+        ? `Location "${rawLocation.slice(0, 80)}" did not look like a real town, so [INSERT TOWN] is left in the draft; fill it in before sending.`
+        : "Town could not be determined — [INSERT TOWN] is left in the draft; fill it in before sending.",
     );
   }
   body = body.replace(TOWN_WEEK_PLACEHOLDER, () => townWeek);
