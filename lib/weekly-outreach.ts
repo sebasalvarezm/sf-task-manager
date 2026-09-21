@@ -39,6 +39,9 @@ export type WeeklyOutreachItem = {
   updated_at: string;
   rce_draft_enabled?: boolean;
   rce_second_sent?: boolean;
+  /** Set when the first RCE email was sent from the tool; enables the follow-up button. */
+  rce_first_sent_at?: string | null;
+  rce_follow_up_trackable?: boolean;
   outlook_draft_ready?: boolean;
   outlook_reply_subject?: string | null;
   outlook_reply_confidence?: RceThreadConfidence;
@@ -79,6 +82,13 @@ export type WeeklyOutreachSourceMetadata = {
   rceSecondSent: boolean;
   contextSource: WeeklyOutreachContextSource;
   takeover: WeeklyOutreachTakeover | null;
+  /**
+   * Captured when the first RCE email is sent from the tool, so the short
+   * follow-up can reply into the same Outlook thread and check for answers.
+   */
+  rceFirstSentAt: string | null;
+  conversationId: string | null;
+  recipients: Array<{ name: string | null; email: string }>;
 };
 
 export function readWeeklyOutreachSourceMetadata(
@@ -96,6 +106,9 @@ export function readWeeklyOutreachSourceMetadata(
       rceSecondSent: false,
       contextSource: "none",
       takeover: null,
+      rceFirstSentAt: null,
+      conversationId: null,
+      recipients: [],
     };
   }
   try {
@@ -118,6 +131,9 @@ export function readWeeklyOutreachSourceMetadata(
         // an attached chain means Outlook context, otherwise none.
         contextSource: parsed.contextSource ?? (parsed.replyToMessageId ? "outlook" : "none"),
         takeover: parsed.takeover ?? null,
+        rceFirstSentAt: parsed.rceFirstSentAt ?? null,
+        conversationId: parsed.conversationId ?? null,
+        recipients: Array.isArray(parsed.recipients) ? parsed.recipients : [],
       };
     }
   } catch {
@@ -134,6 +150,9 @@ export function readWeeklyOutreachSourceMetadata(
     rceSecondSent: false,
     contextSource: "none",
     takeover: null,
+    rceFirstSentAt: null,
+    conversationId: null,
+    recipients: [],
   };
 }
 
@@ -148,7 +167,9 @@ export function writeWeeklyOutreachSourceMetadata(
     metadata.rceDraftEnabled &&
     !metadata.rceSecondSent &&
     metadata.contextSource === "none" &&
-    !metadata.takeover
+    !metadata.takeover &&
+    !metadata.rceFirstSentAt &&
+    !metadata.conversationId
   ) {
     return metadata.originalReference;
   }
@@ -163,6 +184,8 @@ export function withWeeklyOutreachClientMetadata(
     ...item,
     rce_draft_enabled: metadata.rceDraftEnabled,
     rce_second_sent: metadata.rceSecondSent,
+    rce_first_sent_at: metadata.rceFirstSentAt,
+    rce_follow_up_trackable: Boolean(metadata.rceFirstSentAt && metadata.conversationId),
     outlook_draft_ready: Boolean(metadata.outlookDraftId),
     outlook_reply_subject: metadata.replySubject,
     outlook_reply_confidence: metadata.replyConfidence,

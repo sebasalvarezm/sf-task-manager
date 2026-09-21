@@ -3,6 +3,7 @@ import { isAdmin } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   deleteOutlookDraft,
+  getOutlookDraftThreadInfo,
   sendOutlookDraft,
   updateOutlookDraft,
 } from "@/lib/microsoft";
@@ -85,7 +86,16 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "send") {
+      // Remember the thread and recipients so the short follow-up can reply
+      // into the same chain later and check whether anyone answered.
+      const threadInfo = await getOutlookDraftThreadInfo(metadata.outlookDraftId!).catch(() => ({
+        conversationId: null,
+        recipients: [],
+      }));
       await sendOutlookDraft(metadata.outlookDraftId!);
+      metadata.rceFirstSentAt = new Date().toISOString();
+      metadata.conversationId = threadInfo.conversationId;
+      metadata.recipients = threadInfo.recipients;
     }
 
     const { data: updated, error: updateError } = await supabase
@@ -93,6 +103,7 @@ export async function POST(request: Request) {
       .update({
         draft,
         status: body.action === "send" ? "sent" : "draft_ready",
+        source_reference: writeWeeklyOutreachSourceMetadata(metadata),
       })
       .eq("id", item.id)
       .select("*")

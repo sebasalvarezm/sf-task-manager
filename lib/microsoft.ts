@@ -279,7 +279,7 @@ export async function fetchEmailThread(
     $filter: `conversationId eq '${conversationId}'`,
     $select: "id,subject,from,receivedDateTime,bodyPreview,body,conversationId,isRead",
     $orderby: "receivedDateTime asc",
-    $top: "10",
+    $top: "25",
   });
 
   const response = await fetch(
@@ -459,6 +459,85 @@ export async function createOutlookNewDraft(params: {
   }
   const created = (await response.json()) as { id: string; subject?: string };
   return { id: created.id, subject: created.subject ?? params.subject };
+}
+
+
+/** Thread id and recipients of a draft, captured just before it is sent. */
+export async function getOutlookDraftThreadInfo(draftId: string): Promise<{
+  conversationId: string | null;
+  recipients: Array<{ name: string | null; email: string }>;
+}> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}?$select=conversationId,toRecipients`,
+    { headers: { Authorization: `Bearer ${credentials.access_token}` } },
+  );
+  if (!response.ok) return { conversationId: null, recipients: [] };
+  const data = (await response.json()) as {
+    conversationId?: string;
+    toRecipients?: Array<{ emailAddress?: { name?: string; address?: string } }>;
+  };
+  return {
+    conversationId: data.conversationId ?? null,
+    recipients: (data.toRecipients ?? [])
+      .map((r) => ({
+        name: r.emailAddress?.name?.trim() || null,
+        email: (r.emailAddress?.address ?? "").toLowerCase(),
+      }))
+      .filter((r) => r.email),
+  };
+}
+
+/**
+ * Reply draft into an existing thread with the recipients set explicitly.
+ * Replying to one of our own sent messages would otherwise address the reply
+ * to ourselves, so the follow-up always states who it is for.
+ */
+export async function createOutlookFollowUpDraft(params: {
+  replyToMessageId: string;
+  to: Array<{ name: string | null; email: string }>;
+  body: string;
+}): Promise<OutlookReplyDraft> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const createResponse = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(params.replyToMessageId)}/createReply`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    },
+  );
+  if (!createResponse.ok) {
+    if (createResponse.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+    throw new Error(`Could not create Outlook follow-up draft: ${await createResponse.text()}`);
+  }
+  const created = (await createResponse.json()) as { id: string; subject?: string };
+  const patch = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(created.id)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${credentials.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        body: { contentType: "Text", content: params.body },
+        toRecipients: params.to.map((r) => ({
+          emailAddress: r.name ? { name: r.name, address: r.email } : { address: r.email },
+        })),
+        ccRecipients: [],
+      }),
+    },
+  );
+  if (!patch.ok) {
+    throw new Error(`Could not address Outlook follow-up draft: ${await patch.text()}`);
+  }
+  return { id: created.id, subject: created.subject ?? "Reply" };
 }
 
 /** Keep edits in the tool synchronized with the real Outlook draft. */

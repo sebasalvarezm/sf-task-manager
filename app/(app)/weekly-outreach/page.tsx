@@ -180,6 +180,22 @@ export default function WeeklyOutreachPage() {
   const [reviewingRceId, setReviewingRceId] = useState<string | null>(null);
   const [reviewDraft, setReviewDraft] = useState("");
   const [reviewSaving, setReviewSaving] = useState(false);
+  // Short follow-up after a sent reconnect (see /api/weekly-outreach/followup-rce).
+  const [followUpItemId, setFollowUpItemId] = useState<string | null>(null);
+  const [followUpBody, setFollowUpBody] = useState("");
+  const [followUpLoading, setFollowUpLoading] = useState(false);
+  const [followUpSending, setFollowUpSending] = useState(false);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const [followUpIgnoreReply, setFollowUpIgnoreReply] = useState(false);
+  const [followUpPreview, setFollowUpPreview] = useState<{
+    daysSinceFirst: number;
+    firstSentAt: string;
+    recipients: Array<{ name: string | null; email: string }>;
+    threadFound: boolean;
+    firstNamePlaceholder: boolean;
+    replyDetected: { from: string; at: string; preview: string } | null;
+  } | null>(null);
+  const [followUpNotTracked, setFollowUpNotTracked] = useState(false);
   const [outlookReconnectRequired, setOutlookReconnectRequired] = useState(false);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const loadingRef = useRef(false);
@@ -800,6 +816,96 @@ export default function WeeklyOutreachPage() {
         next.delete(item.id);
         return next;
       });
+    }
+  }
+
+  const followUpItem = followUpItemId
+    ? items.find((item) => item.id === followUpItemId) ?? null
+    : null;
+
+  function closeFollowUp() {
+    setFollowUpItemId(null);
+    setFollowUpBody("");
+    setFollowUpPreview(null);
+    setFollowUpError(null);
+    setFollowUpNotTracked(false);
+    setFollowUpIgnoreReply(false);
+  }
+
+  async function openFollowUp(item: WeeklyOutreachItem) {
+    setFollowUpItemId(item.id);
+    setFollowUpBody("");
+    setFollowUpPreview(null);
+    setFollowUpError(null);
+    setFollowUpIgnoreReply(false);
+    setFollowUpNotTracked(!item.rce_follow_up_trackable);
+    if (!item.rce_follow_up_trackable) return;
+    setFollowUpLoading(true);
+    try {
+      const res = await fetch("/api/weekly-outreach/followup-rce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, action: "preview" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.code === "NOT_TRACKED") {
+          setFollowUpNotTracked(true);
+          return;
+        }
+        throw new Error(data.error ?? "Could not prepare the follow-up");
+      }
+      setFollowUpBody(data.body ?? "");
+      setFollowUpPreview({
+        daysSinceFirst: data.daysSinceFirst ?? 0,
+        firstSentAt: data.firstSentAt,
+        recipients: data.recipients ?? [],
+        threadFound: Boolean(data.threadFound),
+        firstNamePlaceholder: Boolean(data.firstNamePlaceholder),
+        replyDetected: data.replyDetected ?? null,
+      });
+    } catch (previewError) {
+      setFollowUpError(
+        previewError instanceof Error ? previewError.message : "Could not prepare the follow-up",
+      );
+    } finally {
+      setFollowUpLoading(false);
+    }
+  }
+
+  async function sendFollowUp() {
+    if (!followUpItem || followUpSending) return;
+    if (
+      !window.confirm(
+        `Send this follow-up to ${followUpItem.account_name} through Outlook now?`,
+      )
+    ) {
+      return;
+    }
+    setFollowUpSending(true);
+    setFollowUpError(null);
+    try {
+      const res = await fetch("/api/weekly-outreach/followup-rce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: followUpItem.id,
+          action: "send",
+          body: followUpBody,
+          ignoreReply: followUpIgnoreReply,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not send the follow-up");
+      setItems((previous) =>
+        sortItems(previous.map((row) => (row.id === data.item.id ? data.item : row))),
+      );
+      setMessage(`Follow-up sent to ${followUpItem.account_name}. Row complete.`);
+      closeFollowUp();
+    } catch (sendError) {
+      setFollowUpError(sendError instanceof Error ? sendError.message : "Could not send the follow-up");
+    } finally {
+      setFollowUpSending(false);
     }
   }
 
@@ -1567,10 +1673,17 @@ export default function WeeklyOutreachPage() {
                             ref={registerGridCell(index, 9)}
                             type="button"
                             onKeyDown={(event) => handleGridNavigation(event, index, 9)}
-                            onClick={() => void confirmSecondRceSent(item)}
+                            onClick={() => void openFollowUp(item)}
                             className="h-10 w-full px-2 text-left font-semibold text-emerald-800 hover:bg-emerald-100"
+                            title={
+                              item.rce_follow_up_trackable
+                                ? "Preview and send the short follow-up into the same Outlook thread"
+                                : "Mark the second email as sent"
+                            }
                           >
-                            Confirm 2nd sent
+                            {item.rce_follow_up_trackable
+                              ? `Follow-up${item.rce_first_sent_at ? ` · ${Math.max(0, Math.floor((Date.now() - new Date(item.rce_first_sent_at).getTime()) / 86_400_000))}d` : ""}`
+                              : "Confirm 2nd sent"}
                           </button>
                         )
                       ) : item.outreach_type === "RCE" && !item.draft ? (
@@ -1779,6 +1892,140 @@ export default function WeeklyOutreachPage() {
         <p className="mt-3 text-xs text-ink-muted">
           Entries from Open Tasks and Re-Contact are added to the bottom automatically. The sheet keeps five empty rows after the weekly target and continues expanding beyond 30. On desktop, Shift + Space selects a saved row and Ctrl + - removes it.
         </p>
+
+        {followUpItem ? (
+          <div
+            className="fixed inset-0 z-50 flex items-end bg-navy/50 sm:items-center sm:justify-center sm:p-6"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closeFollowUp();
+            }}
+          >
+            <div
+              className="flex max-h-[95vh] w-full flex-col rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rce-followup-title"
+            >
+              <div className="flex items-start justify-between border-b border-line px-4 py-4 sm:px-6">
+                <div className="min-w-0">
+                  <h2 id="rce-followup-title" className="text-lg font-semibold text-ink">
+                    Follow-up · {followUpItem.account_name}
+                  </h2>
+                  <p className="mt-1 text-sm text-ink-muted">
+                    {followUpNotTracked
+                      ? "The first email was not sent from this tool, so its Outlook thread is unknown."
+                      : followUpPreview
+                        ? `First email sent ${followUpPreview.daysSinceFirst} day${followUpPreview.daysSinceFirst === 1 ? "" : "s"} ago${
+                            followUpPreview.recipients.length > 0
+                              ? ` to ${followUpPreview.recipients.map((r) => r.name ?? r.email).join(", ")}`
+                              : ""
+                          }.`
+                        : "Checking the Outlook thread…"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeFollowUp}
+                  className="ml-4 rounded-lg px-2 py-1 text-sm text-ink-muted hover:bg-surface-2"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+                {followUpError ? <Alert variant="danger">{followUpError}</Alert> : null}
+
+                {followUpNotTracked ? (
+                  <p className="text-sm text-ink">
+                    Send the follow-up from Outlook yourself, then mark the row complete below.
+                  </p>
+                ) : followUpLoading ? (
+                  <p className="text-sm text-ink-muted">Reading the thread…</p>
+                ) : followUpPreview ? (
+                  <>
+                    {followUpPreview.replyDetected ? (
+                      <div className="mb-4 rounded-xl border border-danger/40 bg-danger/5 p-4 text-sm text-ink">
+                        <p className="font-semibold text-danger">
+                          {followUpPreview.replyDetected.from} already replied on{" "}
+                          {format(new Date(followUpPreview.replyDetected.at), "MMM d")}.
+                        </p>
+                        {followUpPreview.replyDetected.preview ? (
+                          <p className="mt-1 text-ink-muted">“{followUpPreview.replyDetected.preview}”</p>
+                        ) : null}
+                        <label className="mt-3 flex items-center gap-2 text-xs text-ink-muted">
+                          <input
+                            type="checkbox"
+                            checked={followUpIgnoreReply}
+                            onChange={(event) => setFollowUpIgnoreReply(event.target.checked)}
+                          />
+                          I have read it and still want to send this follow-up
+                        </label>
+                      </div>
+                    ) : (
+                      <p className="mb-3 text-xs text-ok">
+                        No reply in the thread since your first email.
+                      </p>
+                    )}
+                    {!followUpPreview.threadFound ? (
+                      <Alert variant="danger">
+                        The original thread could not be found in Outlook, so nothing can be sent from here.
+                      </Alert>
+                    ) : null}
+                    {followUpPreview.firstNamePlaceholder ? (
+                      <p className="mb-2 text-xs text-warning">
+                        The first name could not be determined. Replace [First name] before sending.
+                      </p>
+                    ) : null}
+                    <textarea
+                      value={followUpBody}
+                      onChange={(event) => setFollowUpBody(event.target.value)}
+                      className="min-h-44 w-full resize-y rounded-xl border border-line p-4 text-[15px] leading-6 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                    />
+                    <p className="mt-2 text-xs text-ink-muted">
+                      Sends this exact text as a reply in the same Outlook thread, to the same people. Outlook adds your signature.
+                    </p>
+                  </>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap justify-between gap-2 border-t border-line bg-surface-2 p-4 sm:px-6">
+                <Button variant="ghost" disabled={followUpSending} onClick={closeFollowUp}>
+                  Cancel
+                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    disabled={followUpSending}
+                    onClick={() => {
+                      const item = followUpItem;
+                      closeFollowUp();
+                      void confirmSecondRceSent(item);
+                    }}
+                  >
+                    Mark sent manually
+                  </Button>
+                  {!followUpNotTracked ? (
+                    <Button
+                      loading={followUpSending}
+                      disabled={
+                        followUpLoading ||
+                        !followUpPreview ||
+                        !followUpPreview.threadFound ||
+                        !followUpBody.trim() ||
+                        /\[First name\]/i.test(followUpBody) ||
+                        (Boolean(followUpPreview.replyDetected) && !followUpIgnoreReply)
+                      }
+                      onClick={() => void sendFollowUp()}
+                    >
+                      Send follow-up
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {reviewingRce ? (
           <div
