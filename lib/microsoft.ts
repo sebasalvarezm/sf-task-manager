@@ -15,12 +15,9 @@ export type MsCredentials = {
 // Microsoft Graph permissions the tool asks for. Must match what IT has
 // granted admin consent for on the "Valstone Call Logger" app registration,
 // otherwise Connect shows a "needs admin approval" screen.
-//
-// TEMPORARY: Mail.Read while IT approves Mail.ReadWrite. Creating Outlook
-// drafts (Weekly Outreach RCE drafting) needs Mail.ReadWrite; switch this
-// back to "Calendars.Read Mail.ReadWrite Mail.Send User.Read offline_access"
-// once consent is granted, then reconnect Outlook in the tool.
-export const MS_SCOPES = "Calendars.Read Mail.Read Mail.Send User.Read offline_access";
+// Mail.ReadWrite is required to create, edit and delete the Outlook drafts
+// behind Weekly Outreach RCE drafting (granted Sept 2026).
+export const MS_SCOPES = "Calendars.Read Mail.ReadWrite Mail.Send User.Read offline_access";
 
 // ── Token management ──────────────────────────────────────────────────────────
 
