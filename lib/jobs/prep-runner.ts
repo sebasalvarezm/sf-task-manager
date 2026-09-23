@@ -29,8 +29,12 @@ async function fetchPageText(
     const jinaUrl = `https://r.jina.ai/${url}`;
     const res = await fetch(jinaUrl, {
       signal: AbortSignal.timeout(timeoutMs),
-      headers: { Accept: "text/plain" },
+      headers: {
+        Accept: "text/plain",
+        ...(process.env.JINA_API_KEY ? { Authorization: `Bearer ${process.env.JINA_API_KEY}` } : {}),
+      },
     });
+    if (!res.ok) return null;
     const text = await res.text();
     return text.trim() || null;
   } catch {

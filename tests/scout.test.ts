@@ -132,3 +132,28 @@ describe("validateColdAnchors — what survives into a hook", () => {
     expect(out).toHaveLength(0);
   });
 });
+
+import { humanizeDomainStem, quickCompanyName } from "../lib/scout";
+
+describe("humanizeDomainStem", () => {
+  it("uses the page title when its letters spell the stem", () => {
+    const text = "Title: Navitas Safety | Food Safety Software\n\nWelcome to Navitas Safety.";
+    expect(humanizeDomainStem("navitassafety", text)).toBe("Navitas Safety");
+  });
+  it("finds the spelling in body text when the title is different", () => {
+    const text = "Title: Home\n\nForesight Intelligence builds fleet tools. Foresight Intelligence was founded in 2012.";
+    expect(humanizeDomainStem("foresightintelligence", text)).toBe("Foresight Intelligence");
+  });
+  it("splits a known suffix word without any page text", () => {
+    expect(humanizeDomainStem("navitassafety", null)).toBe("Navitas Safety");
+    expect(humanizeDomainStem("locicontrols", null)).toBe("Loci Controls");
+    expect(humanizeDomainStem("fast-soft", null)).toBe("Fast Soft");
+  });
+  it("leaves single-word names alone", () => {
+    expect(humanizeDomainStem("carga", "Title: Carga")).toBe("Carga");
+    expect(humanizeDomainStem("route4me", null)).toBe("Route4me");
+  });
+  it("is used by quickCompanyName", () => {
+    expect(quickCompanyName("https://www.navitassafety.com/about", null)).toBe("Navitas Safety");
+  });
+});

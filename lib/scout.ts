@@ -320,20 +320,48 @@ export type DetailsResult = {
  * Jina renders the page like a browser and returns clean readable text.
  * Best for live/modern websites. Do NOT use for Wayback Machine URLs.
  */
+function jinaHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { Accept: "text/plain" };
+  // A free Jina key lifts the anonymous rate limit (~20 req/min) about tenfold.
+  // Without it, bulk sourcing (3 companies x ~17 pages, twice) gets throttled
+  // and random companies fail with "could not extract any text".
+  const key = process.env.JINA_API_KEY;
+  if (key) headers.Authorization = `Bearer ${key}`;
+  return headers;
+}
+
+/** Jina's own error bodies are short and never useful as page text. */
+function looksLikeJinaError(status: number, text: string): boolean {
+  if (status >= 400) return true;
+  const head = text.slice(0, 200).toLowerCase();
+  return (
+    text.length < 300 &&
+    /rate ?limit|too many requests|quota|temporarily unavailable|service unavailable|timeout|error/.test(head)
+  );
+}
+
 async function fetchPageText(
   url: string,
-  timeoutMs = 10000
+  timeoutMs = 10000,
+  retries = 0,
 ): Promise<string | null> {
-  try {
-    const jinaUrl = `https://r.jina.ai/${url}`;
-    const res = await fetch(jinaUrl, {
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { Accept: "text/plain" },
-    });
-    const text = await res.text();
-    return text.trim() || null;
-  } catch {
-    return null;
+  for (let attempt = 0; ; attempt++) {
+    let retryable = false;
+    try {
+      const jinaUrl = `https://r.jina.ai/${url}`;
+      const res = await fetch(jinaUrl, {
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: jinaHeaders(),
+      });
+      const text = (await res.text()).trim();
+      if (!looksLikeJinaError(res.status, text)) return text || null;
+      // 429 / 5xx / throttling text: worth another go after a pause.
+      retryable = res.status === 429 || res.status >= 500 || res.status < 400;
+    } catch {
+      retryable = true; // network hiccup or timeout
+    }
+    if (!retryable || attempt >= retries) return null;
+    await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1) + Math.random() * 500));
   }
 }
 
@@ -431,8 +459,8 @@ export async function scrapeWithJina(
   const normalized = baseUrl.startsWith("http") ? baseUrl : `https://${baseUrl}`;
   const base = normalized.replace(/\/+$/, "");
 
-  // Try homepage first
-  let homepageText = await fetchPageText(base, 12000);
+  // Try homepage first (with retries: losing the homepage fails the whole company)
+  let homepageText = await fetchPageText(base, 12000, 2);
 
   // If homepage fails, try www / non-www variant
   if (!homepageText || homepageText.length < 300) {
@@ -444,7 +472,7 @@ export async function scrapeWithJina(
       /\/+$/,
       ""
     );
-    homepageText = await fetchPageText(altBase, 12000);
+    homepageText = await fetchPageText(altBase, 12000, 2);
   }
 
   if (!homepageText || homepageText.length < 300) {
@@ -456,10 +484,17 @@ export async function scrapeWithJina(
 
   // Crawl sub-pages in parallel, preserving the configured priority order when
   // assembling the capped text.
-  const subpages = await Promise.all(
-    CRAWL_PATHS.map((p) => fetchPageText(base + p, 8000)),
-  );
-  for (let i = 0; i < CRAWL_PATHS.length; i++) {
+  // Four at a time rather than all at once: with three companies sourcing in
+  // parallel, a full burst is what trips the reader's rate limit.
+  const subpages: Array<string | null> = [];
+  for (let start = 0; start < CRAWL_PATHS.length; start += 4) {
+    const group = CRAWL_PATHS.slice(start, start + 4);
+    subpages.push(...(await Promise.all(group.map((p) => fetchPageText(base + p, 8000)))));
+    if (subpages.filter((t) => t && t.length > 200).reduce((n, t) => n + (t?.length ?? 0), 0) >= maxTotalChars) {
+      break;
+    }
+  }
+  for (let i = 0; i < subpages.length; i++) {
     if (total >= maxTotalChars) break;
     const text = subpages[i];
     if (text && text.length > 200) {
@@ -1184,14 +1219,84 @@ function buildMapsLink(address: string): string {
  * needs to qualify a web search like "<name> headquarters address". Mirrors the
  * fallback-name logic used in researchCompanyAnchors.
  */
-export function quickCompanyName(url: string): string {
+export function quickCompanyName(url: string, pageText?: string | null): string {
   try {
     const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
     const stem = parsed.hostname.replace("www.", "").split(".")[0];
-    return stem.charAt(0).toUpperCase() + stem.slice(1);
+    return humanizeDomainStem(stem, pageText ?? null);
   } catch {
     return "";
   }
+}
+
+// Words that often end a domain stem and should stand on their own:
+// "navitassafety" -> "Navitas Safety". Longest first so "solutions" beats "solution".
+const STEM_SUFFIX_WORDS = [
+  "intelligence", "technologies", "technology", "engineering", "international",
+  "management", "consulting", "innovations", "solutions", "analytics", "logistics",
+  "compliance", "industries", "controls", "software", "systems", "services",
+  "dynamics", "networks", "sciences", "digital", "safety", "energy", "global",
+  "group", "works", "labs", "tech", "soft", "data", "apps", "hub", "app", "ops",
+  "pro", "ai", "io", "hq",
+];
+
+/**
+ * Turn a squashed domain stem into the company's real spelling.
+ *
+ *  1. The page title Jina prints first ("Title: Navitas Safety | Food ...").
+ *  2. Any run of words in the page text whose letters spell the stem
+ *     ("Foresight Intelligence" for foresightintelligence).
+ *  3. Split off a common trailing word ("navitas" + "safety").
+ *  4. Capitalise the stem as-is.
+ */
+export function humanizeDomainStem(stem: string, pageText: string | null): string {
+  const clean = stem.replace(/[^a-z0-9-]/gi, "").toLowerCase();
+  if (!clean) return "";
+  const squash = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const target = squash(clean);
+
+  if (pageText) {
+    // 1. Page title, first segment before a separator.
+    const titleLine = pageText.match(/^\s*Title:\s*(.+)$/m)?.[1]?.trim();
+    if (titleLine) {
+      for (const segment of titleLine.split(/\s*[|–—:·•\-]\s+|\s+-\s+/)) {
+        const seg = segment.trim();
+        if (seg && squash(seg) === target && /\s/.test(seg)) return seg;
+      }
+    }
+    // 2. Letters of the stem separated by optional spaces/hyphens, on word boundaries.
+    const letters = target.split("").map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const pattern = new RegExp(`(?<![A-Za-z0-9])${letters.join("[ \\t-]?")}(?![A-Za-z0-9])`, "gi");
+    const counts = new Map<string, number>();
+    for (const match of pageText.matchAll(pattern)) {
+      const spelled = match[0].replace(/\s+/g, " ").trim();
+      if (!/[ -]/.test(spelled)) continue; // only multi-word spellings help
+      counts.set(spelled, (counts.get(spelled) ?? 0) + 1);
+    }
+    if (counts.size > 0) {
+      // Most frequent spelling; prefer ones with capital letters on ties.
+      return [...counts.entries()].sort(
+        (a, b) => b[1] - a[1] || (/[A-Z]/.test(b[0]) ? 1 : 0) - (/[A-Z]/.test(a[0]) ? 1 : 0),
+      )[0][0];
+    }
+  }
+
+  // 3. Hyphenated stems are already split; otherwise peel a known suffix word.
+  let words: string[];
+  if (clean.includes("-")) {
+    words = clean.split("-").filter(Boolean);
+  } else {
+    words = [clean];
+    for (const suffix of STEM_SUFFIX_WORDS) {
+      if (clean.length > suffix.length + 2 && clean.endsWith(suffix)) {
+        words = [clean.slice(0, -suffix.length), suffix];
+        break;
+      }
+    }
+  }
+  return words
+    .map((w) => (w.length <= 2 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(" ");
 }
 
 // Longest form first: regex alternation takes the first match, so "Corp" ahead

@@ -147,7 +147,7 @@ export async function rerunHookResearch(
   }
 
   const companyNameHint =
-    extractCompanyNameFromText(currentText) || quickCompanyName(normalized);
+    extractCompanyNameFromText(currentText) || quickCompanyName(normalized, currentText);
 
   logs.push("Researching rebrand and product history from public sources...");
   const research = await researchCompanyAnchors(
@@ -782,7 +782,7 @@ export async function runFullSourcing(input: {
   // stem is often not the company ("fast-soft.com" is FasTrak SoftWorks), and
   // every lookup below searches by this name.
   const extractedCompanyName = extractCompanyNameFromText(currentText);
-  const sourceCompanyName = extractedCompanyName || quickCompanyName(normalized);
+  const sourceCompanyName = extractedCompanyName || quickCompanyName(normalized, currentText);
   logs.push(
     extractedCompanyName
       ? `Company name from the website: ${sourceCompanyName}.`
