@@ -2109,8 +2109,68 @@ export function extractOutreachParagraph(groupContent: string): string {
   return groupContent.trim();
 }
 
+/** Split a paragraph into sentences, keeping the terminal punctuation. */
+function splitSentences(paragraph: string): string[] {
+  return (paragraph.match(/[^.!?]+[.!?]+(?:["')\]]+)?|[^.!?]+$/g) ?? [])
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
 /**
- * Ask Claude to personalize the outreach paragraph with a company-specific reference.
+ * Enforce the paragraph shape Seb wants in every sequence: the template's
+ * sentences first (ending with "In simple terms, ..."), then the
+ * company-specific sentence(s) last.
+ *
+ * With the template supplied, any sentence not found in the template is
+ * treated as company-specific and moved to the end. Without it, the only
+ * safe move is to keep "In simple terms" second to last when something
+ * already follows it.
+ */
+export function orderOutreachParagraph(paragraph: string, template?: string): string {
+  const sentences = splitSentences(paragraph);
+  if (sentences.length < 2) return paragraph.trim();
+  const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+  if (template) {
+    const templateSentences = splitSentences(template);
+    const templateKeys = new Set(templateSentences.map(norm));
+    const extras = sentences.filter((sentence) => !templateKeys.has(norm(sentence)));
+    const kept = templateSentences.filter((sentence) =>
+      sentences.some((candidate) => norm(candidate) === norm(sentence)),
+    );
+    // Only re-order when the template is recognisably present; otherwise the
+    // model rewrote it and the generic rule below is all we can do.
+    if (kept.length >= Math.max(1, templateSentences.length - 1)) {
+      return [...kept, ...extras].join(" ");
+    }
+  }
+
+  const simpleIndex = sentences.findIndex((sentence) => /^in simple terms\b/i.test(sentence));
+  if (simpleIndex === -1 || simpleIndex >= sentences.length - 2) return sentences.join(" ");
+  const [simple] = sentences.splice(simpleIndex, 1);
+  sentences.splice(sentences.length - 1, 0, simple);
+  return sentences.join(" ");
+}
+
+function cleanCompanySentence(raw: string): string | null {
+  let text = raw.trim().replace(/^["'`]+|["'`]+$/g, "").replace(/\s*—\s*/g, ", ").trim();
+  if (!text) return null;
+  const sentences = splitSentences(text);
+  if (sentences.length !== 1) return null;
+  if (/^in simple terms\b/i.test(text)) return null;
+  const words = text.split(/\s+/).length;
+  if (words < 8 || words > 60) return null;
+  if (!/[.!?]$/.test(text)) text += ".";
+  return text;
+}
+
+/**
+ * Personalize the outreach paragraph with one company-specific sentence.
+ *
+ * The model returns ONLY that sentence; the code appends it after the
+ * template, whose last sentence is the group's "In simple terms" line. That
+ * fixes the order (simple-terms second to last, company sentence last) instead
+ * of hoping the model inserts it in the right place.
  */
 export async function personalizeOutreach(
   client: Anthropic,
@@ -2126,34 +2186,36 @@ export async function personalizeOutreach(
 
   const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
-    max_tokens: 500,
+    max_tokens: 300,
     messages: [
       {
         role: "user",
-        content: `Here is an outreach paragraph. Add one company-specific reference to the company at ${url} that makes it feel written for them specifically. The sentence should sound like something you'd say out loud to a founder over coffee. Use short clauses, plain language, and avoid stacking multiple concepts into a single noun phrase.
+        content: `Below is an outreach paragraph that will be sent to the company at ${url}. Write ONE additional sentence that will be appended as the paragraph's final sentence. It must reference something specific about this company (a named product, a niche they serve, how they fit the group described) and explain why they fit, e.g. "What Cargosnap does on the material handling side, making every damage claim and handoff visible and traceable, is exactly the kind of execution layer this group is built around." The sentence should sound like something you'd say out loud to a founder over coffee. Use short clauses, plain language, and avoid stacking multiple concepts into a single noun phrase.
 ${productsHint}
 Rules:
-- Do NOT rewrite the paragraph
-- Do NOT change the structure or length meaningfully
-- Keep the tone identical
-- Prefer mentioning a specific product name or niche market over generic industry descriptions
-- Do NOT use em dashes (—) anywhere in the output
+- Return ONLY the one new sentence. Do not repeat or rewrite the paragraph.
+- Exactly one sentence, 12 to 40 words.
+- Do NOT start with "In simple terms".
+- Do NOT use em dashes (—) anywhere in the output.
+- Keep the tone identical to the paragraph.
 
-PARAGRAPH:
+PARAGRAPH (for tone and context, do not return it):
 ${paragraph}
 
 COMPANY CONTEXT:
-${currentText.slice(0, 2500)}
-
-Return only the modified paragraph. Nothing else.`,
+${currentText.slice(0, 2500)}`,
       },
     ],
   });
 
-  let result = resp.content[0].text.trim();
-  // Safety net: replace any em dashes with a comma
-  result = result.replace(/\s*—\s*/g, ", ");
-  return result;
+  const sentence = cleanCompanySentence(resp.content[0].text);
+  if (sentence) {
+    return orderOutreachParagraph(`${paragraph.trim()} ${sentence}`, paragraph);
+  }
+  // The model did not return a clean single sentence; keep the template
+  // rather than risk a mangled paragraph. The email is still correct, just
+  // less personal, and the log tells Seb to re-run if he wants the line.
+  return orderOutreachParagraph(paragraph.trim(), paragraph);
 }
 
 // ---------------------------------------------------------------------------

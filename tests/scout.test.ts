@@ -157,3 +157,29 @@ describe("humanizeDomainStem", () => {
     expect(quickCompanyName("https://www.navitassafety.com/about", null)).toBe("Navitas Safety");
   });
 });
+
+import { orderOutreachParagraph } from "../lib/scout";
+
+describe("orderOutreachParagraph", () => {
+  const a = "We are building a dedicated Freight and Supply Chain Enablement group, the horizontal layer of our broader logistics vision.";
+  const b = "Rather than being tied to a single mode or industry, this group is a long-term home for the software categories that apply across the entire value chain, including transportation management, warehouse and inventory management, supplier and vendor management and sourcing, freight visibility and track-and-trace, and yard and workforce coordination.";
+  const simple = "In simple terms, we help operators plan, move, store, and source across any mode and any industry, with fewer manual steps and one less IT vendor to manage.";
+  const company = "What Cargosnap does on the material handling side, making every damage claim and handoff visible and traceable, is exactly the kind of execution layer this group is built around.";
+  const template = `${a} ${b} ${simple}`;
+
+  it("moves the company sentence after In simple terms (the 'No' example)", () => {
+    expect(orderOutreachParagraph(`${a} ${b} ${company} ${simple}`, template)).toBe(`${a} ${b} ${simple} ${company}`);
+  });
+  it("leaves a correctly ordered paragraph alone", () => {
+    expect(orderOutreachParagraph(`${a} ${b} ${simple} ${company}`, template)).toBe(`${a} ${b} ${simple} ${company}`);
+  });
+  it("leaves the plain template alone", () => {
+    expect(orderOutreachParagraph(template, template)).toBe(template);
+  });
+  it("moves a company sentence out of the middle", () => {
+    expect(orderOutreachParagraph(`${a} ${company} ${b} ${simple}`, template)).toBe(`${a} ${b} ${simple} ${company}`);
+  });
+  it("without the template, still keeps In simple terms second to last when something follows it", () => {
+    expect(orderOutreachParagraph(`${a} ${simple} ${b} ${company}`)).toBe(`${a} ${b} ${simple} ${company}`);
+  });
+});
