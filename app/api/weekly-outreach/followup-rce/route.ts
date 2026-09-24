@@ -78,8 +78,14 @@ export async function POST(request: Request) {
   }
 
   try {
+    let threadError: string | null = null;
     const [thread, mailbox] = await Promise.all([
-      fetchEmailThread(metadata.conversationId),
+      fetchEmailThread(metadata.conversationId).catch((lookupError: unknown) => {
+        const message = lookupError instanceof Error ? lookupError.message : String(lookupError);
+        if (message === "OUTLOOK_RECONNECT_REQUIRED" || message === "MS_NOT_CONNECTED") throw lookupError;
+        threadError = message;
+        return [] as Awaited<ReturnType<typeof fetchEmailThread>>;
+      }),
       getMailboxAddress().catch(() => ""),
     ]);
     const me = mailbox.toLowerCase();
@@ -96,7 +102,11 @@ export async function POST(request: Request) {
     const replyFromRecipient = replies.find((m) => recipientEmails.has(m.from.email)) ?? replies[0] ?? null;
 
     // Reply into the most recent message in the chain so Outlook threads it.
-    const latest = thread[thread.length - 1] ?? null;
+    // If the conversation lookup came back empty, fall back to the message the
+    // first email itself replied to; it lives in the same thread.
+    const latestFromThread = thread[thread.length - 1] ?? null;
+    const replyTargetId = latestFromThread?.id ?? metadata.replyToMessageId ?? null;
+    const threadKnown = thread.length > 0;
 
     const recipient = metadata.recipients[0] ?? null;
     const firstName =
@@ -110,7 +120,10 @@ export async function POST(request: Request) {
         daysSinceFirst: daysBetween(metadata.rceFirstSentAt, new Date()),
         firstSentAt: metadata.rceFirstSentAt,
         recipients: metadata.recipients,
-        threadFound: Boolean(latest),
+        threadFound: Boolean(replyTargetId),
+        // Only claim "no reply" when the thread was actually read.
+        threadChecked: threadKnown,
+        threadError,
         replyDetected: replyFromRecipient
           ? {
               from: replyFromRecipient.from.name || replyFromRecipient.from.email,
@@ -133,9 +146,9 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    if (!latest) {
+    if (!replyTargetId) {
       return NextResponse.json(
-        { error: "The original thread could not be found in Outlook.", code: "THREAD_MISSING" },
+        { error: `The original thread could not be found in Outlook.${threadError ? ` (${threadError})` : ""}`, code: "THREAD_MISSING" },
         { status: 409 },
       );
     }
@@ -147,7 +160,7 @@ export async function POST(request: Request) {
     }
 
     const draft = await createOutlookFollowUpDraft({
-      replyToMessageId: latest.id,
+      replyToMessageId: replyTargetId,
       to: metadata.recipients,
       body: text,
     });

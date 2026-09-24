@@ -192,6 +192,8 @@ export default function WeeklyOutreachPage() {
     firstSentAt: string;
     recipients: Array<{ name: string | null; email: string }>;
     threadFound: boolean;
+    threadChecked: boolean;
+    threadError: string | null;
     firstNamePlaceholder: boolean;
     replyDetected: { from: string; at: string; preview: string } | null;
   } | null>(null);
@@ -861,6 +863,8 @@ export default function WeeklyOutreachPage() {
         firstSentAt: data.firstSentAt,
         recipients: data.recipients ?? [],
         threadFound: Boolean(data.threadFound),
+        threadChecked: Boolean(data.threadChecked),
+        threadError: data.threadError ?? null,
         firstNamePlaceholder: Boolean(data.firstNamePlaceholder),
         replyDetected: data.replyDetected ?? null,
       });
@@ -1962,9 +1966,14 @@ export default function WeeklyOutreachPage() {
                           I have read it and still want to send this follow-up
                         </label>
                       </div>
-                    ) : (
+                    ) : followUpPreview.threadChecked ? (
                       <p className="mb-3 text-xs text-ok">
                         No reply in the thread since your first email.
+                      </p>
+                    ) : (
+                      <p className="mb-3 text-xs text-warning">
+                        Could not read the thread to check for a reply
+                        {followUpPreview.threadError ? ` (${followUpPreview.threadError})` : ""}. Check your inbox before sending.
                       </p>
                     )}
                     {!followUpPreview.threadFound ? (

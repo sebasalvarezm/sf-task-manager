@@ -57,7 +57,7 @@ export async function POST() {
     // Fetch threads for each conversation
     const emailsWithThreads = await Promise.all(
       toProcess.map(async (email) => {
-        const thread = await fetchEmailThread(email.conversationId);
+        const thread = await fetchEmailThread(email.conversationId).catch(() => []);
         return { email, thread };
       })
     );

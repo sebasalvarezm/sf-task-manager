@@ -275,11 +275,13 @@ export async function fetchEmailThread(
   const credentials = await getMsValidCredentials();
   if (!credentials) throw new Error("MS_NOT_CONNECTED");
 
+  // No $orderby here: Graph rejects "filter on conversationId + sort on
+  // receivedDateTime" on many mailboxes ("restriction or sort order is too
+  // complex"), which used to read as an empty thread. Sort in code instead.
   const params = new URLSearchParams({
-    $filter: `conversationId eq '${conversationId}'`,
+    $filter: `conversationId eq '${conversationId.replace(/'/g, "''")}'`,
     $select: "id,subject,from,receivedDateTime,bodyPreview,body,conversationId,isRead",
-    $orderby: "receivedDateTime asc",
-    $top: "25",
+    $top: "50",
   });
 
   const response = await fetch(
@@ -293,11 +295,15 @@ export async function fetchEmailThread(
     }
   );
 
-  if (!response.ok) return [];
+  if (!response.ok) {
+    const detail = await response.text();
+    if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+    throw new Error(`Outlook thread lookup failed (${response.status}): ${detail.slice(0, 300)}`);
+  }
 
   const data = await response.json();
 
-  return (data.value ?? []).map(
+  const messages = (data.value ?? []).map(
     (e: {
       id: string;
       subject: string;
@@ -320,6 +326,10 @@ export async function fetchEmailThread(
       conversationId: e.conversationId,
       isRead: e.isRead,
     })
+  );
+  return messages.sort(
+    (a: OutlookEmail, b: OutlookEmail) =>
+      new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime(),
   );
 }
 
