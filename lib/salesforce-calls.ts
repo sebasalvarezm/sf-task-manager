@@ -160,15 +160,29 @@ export async function createCompletedCallTask(params: {
   return result.id; // newly created task ID
 }
 
-// ── Create an open follow-up task (RCE) ──────────────────────────────────────
+// ── Create or move the open follow-up task (RCE) ─────────────────────────────
 
-export async function createFollowUpTask(params: {
+export type FollowUpOutcome = {
+  action: "created" | "moved";
+  taskId: string;
+  date: string; // yyyy-MM-dd
+  /** For "moved": where the task was due before. */
+  previousDate: string | null;
+};
+
+/**
+ * "RCE30" means "the next touch is 30 days out". If the account already has
+ * an open reconnect task, that task is moved to the new date rather than a
+ * second one being created next to it (which is what used to happen, leaving
+ * the old date in place). With no open task, one is created.
+ */
+export async function upsertFollowUpTask(params: {
   accountId: string;
   subject: string;
   subjectType: string; // e.g. "RCE1"
   meetingDate: string; // ISO date of the original meeting
   daysFromMeeting: number; // e.g. 14 for RCE14
-}): Promise<string> {
+}): Promise<FollowUpOutcome> {
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
@@ -176,6 +190,42 @@ export async function createFollowUpTask(params: {
     addDays(new Date(params.meetingDate), params.daysFromMeeting),
     "yyyy-MM-dd"
   );
+
+  // Earliest open task on the account owned by the user. Any open task
+  // counts (RCE, "Reconnect Call", or whatever it was named): there should
+  // only ever be one next step per account.
+  const openTasks = await sfQuery<{ Id: string; ActivityDate: string | null; Subject: string }>(
+    `SELECT Id, ActivityDate, Subject FROM Task ` +
+      `WHERE WhatId = '${params.accountId.replace(/'/g, "\\'")}' ` +
+      `AND IsClosed = false ` +
+      `AND OwnerId = '${credentials.salesforce_user_id}' ` +
+      `ORDER BY ActivityDate ASC NULLS LAST LIMIT 5`,
+    credentials
+  );
+
+  if (openTasks.length > 0) {
+    const existing = openTasks[0];
+    const response = await fetch(
+      `${credentials.instance_url}/services/data/v62.0/sobjects/Task/${existing.Id}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${credentials.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ActivityDate: followUpDate }),
+      }
+    );
+    if (!response.ok && response.status !== 204) {
+      throw new Error(`Failed to move follow-up task: ${await response.text()}`);
+    }
+    return {
+      action: "moved",
+      taskId: existing.Id,
+      date: followUpDate,
+      previousDate: existing.ActivityDate,
+    };
+  }
 
   const response = await fetch(
     `${credentials.instance_url}/services/data/v62.0/sobjects/Task`,
@@ -203,7 +253,18 @@ export async function createFollowUpTask(params: {
   }
 
   const result = await response.json();
-  return result.id;
+  return { action: "created", taskId: result.id, date: followUpDate, previousDate: null };
+}
+
+/** @deprecated use upsertFollowUpTask; kept for callers that only need an id. */
+export async function createFollowUpTask(params: {
+  accountId: string;
+  subject: string;
+  subjectType: string;
+  meetingDate: string;
+  daysFromMeeting: number;
+}): Promise<string> {
+  return (await upsertFollowUpTask(params)).taskId;
 }
 
 // ── Create a ContentNote linked to an Account ─────────────────────────────────

@@ -1,6 +1,6 @@
 import {
   createCompletedCallTask,
-  createFollowUpTask,
+  upsertFollowUpTask,
   createAccountNote,
 } from "@/lib/salesforce-calls";
 
@@ -22,6 +22,9 @@ export type CallLogResult = {
   success: boolean;
   error?: string;
   followUpCreated: boolean;
+  /** created = new task; moved = existing open task pushed to the new date. */
+  followUpAction?: "created" | "moved" | null;
+  followUpDate?: string | null;
   noteCreated: boolean;
 };
 
@@ -41,8 +44,10 @@ export async function runOneCallLog(entry: CallLogEntry): Promise<CallLogResult>
       meetingDate: entry.meetingDate,
     });
     let followUpCreated = false;
+    let followUpAction: "created" | "moved" | null = null;
+    let followUpDate: string | null = null;
     if (entry.followUpDays && entry.followUpDays > 0) {
-      await createFollowUpTask({
+      const outcome = await upsertFollowUpTask({
         accountId: entry.accountId,
         subject: "RCE",
         subjectType: "RCE1",
@@ -50,6 +55,8 @@ export async function runOneCallLog(entry: CallLogEntry): Promise<CallLogResult>
         daysFromMeeting: entry.followUpDays,
       });
       followUpCreated = true;
+      followUpAction = outcome.action;
+      followUpDate = outcome.date;
     }
     let noteCreated = false;
     if (entry.notes && entry.notes.trim()) {
@@ -60,7 +67,7 @@ export async function runOneCallLog(entry: CallLogEntry): Promise<CallLogResult>
       });
       noteCreated = true;
     }
-    return { eventId: entry.eventId, accountName: entry.accountName, callType: entry.callType, success: true, followUpCreated, noteCreated };
+    return { eventId: entry.eventId, accountName: entry.accountName, callType: entry.callType, success: true, followUpCreated, followUpAction, followUpDate, noteCreated };
   } catch (err) {
     return {
       eventId: entry.eventId,

@@ -30,6 +30,8 @@ type SubmitResult = {
     success: boolean;
     error?: string;
     followUpCreated: boolean;
+    followUpAction?: "created" | "moved" | null;
+    followUpDate?: string | null;
     noteCreated: boolean;
   }>;
 };
@@ -571,8 +573,15 @@ function CallsPageContent() {
                         (
                         {submitResult.results.filter((r) => r.followUpCreated).length > 0 && (
                           <span>
-                            {submitResult.results.filter((r) => r.followUpCreated).length}{" "}
-                            follow-up task{submitResult.results.filter((r) => r.followUpCreated).length !== 1 ? "s" : ""}
+                            {submitResult.results.filter((r) => r.followUpAction !== "moved" && r.followUpCreated).length}{" "}
+                            follow-up task{submitResult.results.filter((r) => r.followUpAction !== "moved" && r.followUpCreated).length !== 1 ? "s" : ""}
+                            {submitResult.results.filter((r) => r.followUpAction === "moved").length > 0 && (
+                              <>
+                                {", "}
+                                {submitResult.results.filter((r) => r.followUpAction === "moved").length} existing task
+                                {submitResult.results.filter((r) => r.followUpAction === "moved").length !== 1 ? "s" : ""} moved
+                              </>
+                            )}
                           </span>
                         )}
                         {submitResult.results.filter((r) => r.followUpCreated).length > 0 &&
