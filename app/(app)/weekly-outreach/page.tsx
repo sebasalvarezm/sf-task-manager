@@ -198,6 +198,13 @@ export default function WeeklyOutreachPage() {
     replyDetected: { from: string; at: string; preview: string } | null;
   } | null>(null);
   const [followUpNotTracked, setFollowUpNotTracked] = useState(false);
+  // Phone layout for the review sheets: context collapsed, secondary actions
+  // behind a "..." menu, and the sheet sized to the visible viewport so the
+  // action bar stays above the keyboard.
+  const [reviewContextOpen, setReviewContextOpen] = useState(false);
+  const [reviewMenuOpen, setReviewMenuOpen] = useState(false);
+  const [followUpMenuOpen, setFollowUpMenuOpen] = useState(false);
+  const [visibleViewport, setVisibleViewport] = useState<{ height: number; keyboard: boolean } | null>(null);
   const [outlookReconnectRequired, setOutlookReconnectRequired] = useState(false);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const loadingRef = useRef(false);
@@ -824,6 +831,42 @@ export default function WeeklyOutreachPage() {
   const followUpItem = followUpItemId
     ? items.find((item) => item.id === followUpItemId) ?? null
     : null;
+
+  const anySheetOpen = Boolean(reviewingRceId || followUpItemId);
+  useEffect(() => {
+    if (!anySheetOpen || typeof window === "undefined") return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      const keyboard = window.innerHeight - vv.height > 120;
+      setVisibleViewport({ height: Math.round(vv.height), keyboard });
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      setVisibleViewport(null);
+    };
+  }, [anySheetOpen]);
+  useEffect(() => {
+    setReviewContextOpen(false);
+    setReviewMenuOpen(false);
+  }, [reviewingRceId]);
+  useEffect(() => {
+    setFollowUpMenuOpen(false);
+  }, [followUpItemId]);
+  // On phones the sheet is exactly the visible viewport (keyboard excluded);
+  // on larger screens the old centred box.
+  const sheetStyle: React.CSSProperties | undefined =
+    visibleViewport && typeof window !== "undefined" && window.innerWidth < 640
+      ? { height: visibleViewport.height, maxHeight: visibleViewport.height }
+      : undefined;
+  const keyboardOpen = Boolean(visibleViewport?.keyboard);
+  function blurActive() {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+  }
 
   function closeFollowUp() {
     setFollowUpItemId(null);
@@ -1906,14 +1949,15 @@ export default function WeeklyOutreachPage() {
             }}
           >
             <div
-              className="flex max-h-[95vh] w-full flex-col rounded-t-2xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl"
+              className="flex h-[100dvh] w-full flex-col bg-white shadow-2xl sm:h-auto sm:max-h-[95vh] sm:max-w-2xl sm:rounded-2xl"
+              style={sheetStyle}
               role="dialog"
               aria-modal="true"
               aria-labelledby="rce-followup-title"
             >
-              <div className="flex items-start justify-between border-b border-line px-4 py-4 sm:px-6">
+              <div className="flex items-start justify-between border-b border-line px-4 py-3 sm:px-6 sm:py-4">
                 <div className="min-w-0">
-                  <h2 id="rce-followup-title" className="text-lg font-semibold text-ink">
+                  <h2 id="rce-followup-title" className="truncate text-lg font-semibold text-ink">
                     Follow-up · {followUpItem.account_name}
                   </h2>
                   <p className="mt-1 text-sm text-ink-muted">
@@ -1937,7 +1981,7 @@ export default function WeeklyOutreachPage() {
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-6">
                 {followUpError ? <Alert variant="danger">{followUpError}</Alert> : null}
 
                 {followUpNotTracked ? (
@@ -1989,22 +2033,63 @@ export default function WeeklyOutreachPage() {
                     <textarea
                       value={followUpBody}
                       onChange={(event) => setFollowUpBody(event.target.value)}
-                      className="min-h-44 w-full resize-y rounded-xl border border-line p-4 text-[15px] leading-6 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                      className="min-h-40 w-full flex-1 resize-none rounded-xl border border-line p-4 text-base leading-6 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 sm:min-h-44 sm:flex-none sm:resize-y sm:text-[15px]"
                     />
-                    <p className="mt-2 text-xs text-ink-muted">
+                    <p className="mt-2 hidden text-xs text-ink-muted sm:block">
                       Sends this exact text as a reply in the same Outlook thread, to the same people. Outlook adds your signature.
                     </p>
                   </>
                 ) : null}
               </div>
 
-              <div className="flex flex-wrap justify-between gap-2 border-t border-line bg-surface-2 p-4 sm:px-6">
-                <Button variant="ghost" disabled={followUpSending} onClick={closeFollowUp}>
-                  Cancel
-                </Button>
-                <div className="flex gap-2">
+              <div className="relative flex items-center justify-between gap-2 border-t border-line bg-surface-2 p-3 sm:p-4 sm:px-6">
+                {/* Phone: "..." menu + one primary button. Laptop: everything inline. */}
+                <div className="flex items-center gap-2 sm:hidden">
+                  <button
+                    type="button"
+                    aria-label="More actions"
+                    onClick={() => setFollowUpMenuOpen((open) => !open)}
+                    className="flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-white text-xl text-ink"
+                  >
+                    ⋯
+                  </button>
+                  {keyboardOpen ? (
+                    <Button variant="secondary" onClick={blurActive}>
+                      Done
+                    </Button>
+                  ) : null}
+                </div>
+                {followUpMenuOpen ? (
+                  <div className="absolute bottom-full left-3 z-10 mb-2 w-56 overflow-hidden rounded-xl border border-line bg-white shadow-xl sm:hidden">
+                    <button
+                      type="button"
+                      className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2"
+                      onClick={() => {
+                        const item = followUpItem;
+                        closeFollowUp();
+                        void confirmSecondRceSent(item);
+                      }}
+                    >
+                      Mark sent manually
+                    </button>
+                    <button
+                      type="button"
+                      className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2"
+                      onClick={closeFollowUp}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : null}
+                <div className="hidden sm:block">
+                  <Button variant="ghost" disabled={followUpSending} onClick={closeFollowUp}>
+                    Cancel
+                  </Button>
+                </div>
+                <div className="flex flex-1 justify-end gap-2 sm:flex-none">
                   <Button
                     variant="secondary"
+                    className="hidden sm:inline-flex"
                     disabled={followUpSending}
                     onClick={() => {
                       const item = followUpItem;
@@ -2016,6 +2101,7 @@ export default function WeeklyOutreachPage() {
                   </Button>
                   {!followUpNotTracked ? (
                     <Button
+                      className="flex-1 sm:flex-none"
                       loading={followUpSending}
                       disabled={
                         followUpLoading ||
@@ -2029,7 +2115,18 @@ export default function WeeklyOutreachPage() {
                     >
                       Send follow-up
                     </Button>
-                  ) : null}
+                  ) : (
+                    <Button
+                      className="flex-1 sm:hidden"
+                      onClick={() => {
+                        const item = followUpItem;
+                        closeFollowUp();
+                        void confirmSecondRceSent(item);
+                      }}
+                    >
+                      Mark sent manually
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -2047,24 +2144,33 @@ export default function WeeklyOutreachPage() {
             }}
           >
             <div
-              className="flex max-h-[95vh] w-full flex-col rounded-t-2xl bg-white shadow-2xl sm:max-w-3xl sm:rounded-2xl"
+              className="flex h-[100dvh] w-full flex-col bg-white shadow-2xl sm:h-auto sm:max-h-[95vh] sm:max-w-3xl sm:rounded-2xl"
+              style={sheetStyle}
               role="dialog"
               aria-modal="true"
               aria-labelledby="rce-review-title"
             >
-              <div className="flex items-start justify-between border-b border-line px-4 py-4 sm:px-6">
-                <div className="min-w-0">
-                  <span className="text-xs font-bold uppercase tracking-wide text-brand">RCE review</span>
-                  <h2 id="rce-review-title" className="mt-1 truncate text-xl font-semibold text-ink">
-                    {reviewingRce.account_name}
-                  </h2>
-                  <p className="mt-1 truncate text-sm text-ink-muted">
+              {/* Header: one line on phones (company · position · next), full detail on laptops. */}
+              <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3 sm:px-6 sm:py-4">
+                <div className="min-w-0 flex-1">
+                  <span className="hidden text-xs font-bold uppercase tracking-wide text-brand sm:block">RCE review</span>
+                  <div className="flex items-center gap-2">
+                    <h2 id="rce-review-title" className="truncate text-lg font-semibold text-ink sm:mt-1 sm:text-xl">
+                      {reviewingRce.account_name}
+                    </h2>
+                    {pendingRceReviews.length > 1 ? (
+                      <span className="shrink-0 rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
+                        {Math.max(1, pendingRceReviews.findIndex((item) => item.id === reviewingRce.id) + 1)} of {pendingRceReviews.length}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 hidden truncate text-sm text-ink-muted sm:block">
                     {reviewingRce.takeover
                       ? `New email: ${reviewingRce.outlook_reply_subject || "(subject pending)"}`
                       : reviewingRce.outlook_reply_subject || "No Outlook chain attached"}
                   </p>
                   <p
-                    className={`mt-1 text-xs leading-5 ${
+                    className={`mt-1 hidden text-xs leading-5 sm:block ${
                       reviewingRce.outlook_reply_confidence === "domain" || reviewingRce.takeover
                         ? "text-ok"
                         : "text-warning"
@@ -2072,30 +2178,78 @@ export default function WeeklyOutreachPage() {
                   >
                     {replyMatchNote(reviewingRce)}
                   </p>
+                  {/* Phone: status chip + a toggle for the long explanation. */}
+                  <div className="mt-1 flex items-center gap-2 sm:hidden">
+                    <span
+                      className={`truncate rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        reviewingRce.outlook_draft_ready
+                          ? "bg-ok/10 text-ok"
+                          : "bg-warning/10 text-warning"
+                      }`}
+                    >
+                      {reviewingRce.takeover
+                        ? `Takeover · new email to ${reviewingRce.takeover.contactName ?? "contact"}`
+                        : reviewingRce.outlook_draft_ready
+                          ? "Reply in Outlook chain"
+                          : "Copy and paste"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setReviewContextOpen((open) => !open)}
+                      className="shrink-0 text-[11px] font-semibold text-brand"
+                    >
+                      {reviewContextOpen ? "Hide context" : "Why this draft"}
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void closeRceReview()}
-                  className="ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xl text-ink-muted"
-                  aria-label="Close reconnect review"
-                >
-                  ×
-                </button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {nextPendingRceReview ? (
+                    <button
+                      type="button"
+                      onClick={() => openRceReview(nextPendingRceReview)}
+                      className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-3 text-lg text-ink-muted sm:hidden"
+                      aria-label="Skip to next draft"
+                      title="Skip to the next draft without marking this one"
+                    >
+                      ›
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void closeRceReview()}
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xl text-ink-muted"
+                    aria-label="Close reconnect review"
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
 
-              <div className="overflow-y-auto px-4 py-4 sm:px-6">
-                <section className="rounded-xl border border-info/20 bg-info-soft p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-sm font-semibold text-ink">Where the conversation left off</h3>
-                    <span className="shrink-0 text-[11px] text-ink-muted">Under 30 seconds</span>
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-ink">
-                    {reviewingRce.context_summary || "No relationship summary was available."}
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-3 sm:px-6 sm:py-4">
+                {/* Context: always on laptops, behind the toggle on phones. */}
+                <div className={reviewContextOpen ? "block" : "hidden sm:block"}>
+                  <p
+                    className={`mb-2 text-xs leading-5 sm:hidden ${
+                      reviewingRce.outlook_reply_confidence === "domain" || reviewingRce.takeover
+                        ? "text-ok"
+                        : "text-warning"
+                    }`}
+                  >
+                    {replyMatchNote(reviewingRce)}
                   </p>
-                </section>
+                  <section className="rounded-xl border border-info/20 bg-info-soft p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold text-ink">Where the conversation left off</h3>
+                      <span className="shrink-0 text-[11px] text-ink-muted">Under 30 seconds</span>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-ink">
+                      {reviewingRce.context_summary || "No relationship summary was available."}
+                    </p>
+                  </section>
+                </div>
 
-                <section className="mt-4">
-                  <div className="mb-2 flex items-center justify-between gap-3">
+                <section className="flex min-h-0 flex-1 flex-col sm:mt-4 sm:block">
+                  <div className="mb-2 hidden items-center justify-between gap-3 sm:flex">
                     <label htmlFor="rce-review-draft" className="text-sm font-semibold text-ink">
                       Reconnect email
                     </label>
@@ -2109,11 +2263,12 @@ export default function WeeklyOutreachPage() {
                   </div>
                   <textarea
                     id="rce-review-draft"
+                    aria-label="Reconnect email"
                     value={reviewDraft}
                     onChange={(event) => setReviewDraft(event.target.value)}
-                    className="min-h-64 w-full resize-y rounded-xl border border-line p-4 text-[15px] leading-6 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                    className="min-h-48 w-full flex-1 resize-none rounded-xl border border-line p-4 text-base leading-7 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 sm:min-h-64 sm:flex-none sm:resize-y sm:text-[15px] sm:leading-6"
                   />
-                  <p className="mt-2 text-xs text-ink-muted">
+                  <p className="mt-2 hidden text-xs text-ink-muted sm:block">
                     {reviewingRce.outlook_draft_ready
                       ? reviewingRce.takeover
                         ? `Save keeps Outlook synchronized. Approve and Send sends this exact text as a new email to ${reviewingRce.takeover.contactEmail ?? "the contact"}.`
@@ -2125,19 +2280,105 @@ export default function WeeklyOutreachPage() {
                 </section>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 border-t border-line bg-surface-2 p-4 sm:flex sm:justify-between sm:px-6">
+              {/* Phone action bar: "..." menu, Done (keyboard), one primary button. */}
+              <div className="relative flex items-center gap-2 border-t border-line bg-surface-2 p-3 sm:hidden">
+                <button
+                  type="button"
+                  aria-label="More actions"
+                  onClick={() => setReviewMenuOpen((open) => !open)}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-line bg-white text-xl text-ink"
+                >
+                  ⋯
+                </button>
+                {keyboardOpen ? (
+                  <Button variant="secondary" onClick={blurActive}>
+                    Done
+                  </Button>
+                ) : null}
+                {reviewMenuOpen ? (
+                  <div className="absolute bottom-full left-3 z-10 mb-2 w-60 overflow-hidden rounded-xl border border-line bg-white shadow-xl">
+                    <button
+                      type="button"
+                      className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
+                      disabled={!reviewDraft.trim() || reviewSaving}
+                      onClick={() => {
+                        setReviewMenuOpen(false);
+                        void reviewRce("save");
+                      }}
+                    >
+                      {reviewingRce.outlook_draft_ready ? "Save to Outlook" : "Save draft"}
+                    </button>
+                    <button
+                      type="button"
+                      className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
+                      disabled={!reviewDraft.trim()}
+                      onClick={() => {
+                        setReviewMenuOpen(false);
+                        void copyReviewDraft();
+                      }}
+                    >
+                      Copy draft
+                    </button>
+                    {reviewingRce.outlook_draft_ready ? (
+                      <button
+                        type="button"
+                        className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
+                        disabled={!reviewDraft.trim() || reviewSaving}
+                        onClick={() => {
+                          setReviewMenuOpen(false);
+                          void markRceSentAndOpenNext();
+                        }}
+                      >
+                        {nextPendingRceReview ? "Mark sent & next (no send)" : "Mark sent (no send)"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="block w-full px-4 py-3 text-left text-sm text-danger hover:bg-surface-2"
+                      disabled={reviewSaving}
+                      onClick={() => {
+                        setReviewMenuOpen(false);
+                        void reviewRce("dismiss");
+                      }}
+                    >
+                      Dismiss draft
+                    </button>
+                  </div>
+                ) : null}
+                {reviewingRce.outlook_draft_ready ? (
+                  <Button
+                    className="flex-1"
+                    loading={reviewSaving}
+                    disabled={!reviewDraft.trim()}
+                    onClick={() => void reviewRce("send")}
+                  >
+                    Approve &amp; Send
+                  </Button>
+                ) : (
+                  <Button
+                    className="flex-1"
+                    loading={reviewSaving}
+                    disabled={!reviewDraft.trim()}
+                    onClick={() => void markRceSentAndOpenNext()}
+                  >
+                    {nextPendingRceReview ? "Sent & Next" : "Mark sent"}
+                  </Button>
+                )}
+              </div>
+
+              {/* Laptop action bar: unchanged. */}
+              <div className="hidden border-t border-line bg-surface-2 p-4 sm:flex sm:justify-between sm:px-6">
                 <Button
                   variant="ghost"
-                  className="order-5 col-span-2 text-danger sm:order-none sm:col-span-1"
+                  className="text-danger"
                   disabled={reviewSaving}
                   onClick={() => void reviewRce("dismiss")}
                 >
                   Dismiss draft
                 </Button>
-                <div className="contents sm:flex sm:gap-2">
+                <div className="flex gap-2">
                   <Button
                     variant="secondary"
-                    className="order-1 w-full sm:order-none"
                     loading={reviewSaving}
                     disabled={!reviewDraft.trim()}
                     onClick={() => void reviewRce("save")}
@@ -2146,7 +2387,6 @@ export default function WeeklyOutreachPage() {
                   </Button>
                   <Button
                     variant="secondary"
-                    className="order-2 w-full sm:order-none"
                     disabled={!reviewDraft.trim()}
                     onClick={() => void copyReviewDraft()}
                   >
@@ -2154,7 +2394,6 @@ export default function WeeklyOutreachPage() {
                   </Button>
                   <Button
                     variant="secondary"
-                    className="order-4 col-span-2 w-full sm:order-none sm:col-span-1"
                     loading={reviewSaving}
                     disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim()}
                     onClick={() => void reviewRce("send")}
@@ -2162,7 +2401,6 @@ export default function WeeklyOutreachPage() {
                     Approve &amp; Send
                   </Button>
                   <Button
-                    className="order-3 col-span-2 w-full sm:order-none sm:col-span-1"
                     loading={reviewSaving}
                     disabled={!reviewDraft.trim()}
                     title={
