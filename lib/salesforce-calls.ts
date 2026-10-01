@@ -1,7 +1,8 @@
 import { getValidCredentials } from "./token-manager";
-import { assertSalesforceId, sfErrorText, sfFetch, sfQuery } from "./sf-query";
+import { assertSalesforceId, isSalesforceId, sfErrorText, sfFetch, sfQuery } from "./sf-query";
 import {
   accountWhereClause,
+  escapeSoql,
   exactNameWhereClause,
   mergeAccountsById,
   parseAccountQuery,
@@ -28,7 +29,7 @@ export async function findAccountByDomain(
 
   // Salesforce stores websites like "https://www.certaintysoftware.com/"
   // We search with LIKE to match regardless of trailing slashes or protocol
-  const query = `SELECT Id, Name, Website FROM Account WHERE Website LIKE '%${domain}%' LIMIT 1`;
+  const query = `SELECT Id, Name, Website FROM Account WHERE Website LIKE '%${escapeSoql(domain)}%' LIMIT 1`;
 
   const records = await sfQuery<{ Id: string; Name: string; Website?: string }>(
     query,
@@ -77,9 +78,16 @@ export async function findExistingCallTasks(
   startDate: string,
   endDate: string
 ): Promise<Set<string>> {
-  if (accountIds.length === 0) return new Set();
+  // Only well-formed ids and yyyy-MM-dd dates reach the query: these come
+  // from the browser, and a stray quote would break (or bend) the SOQL.
+  const ids = accountIds.filter(isSalesforceId);
+  if (ids.length === 0) return new Set();
+  const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+  if (!isoDate.test(startDate) || !isoDate.test(endDate)) {
+    throw new Error("Invalid date range");
+  }
 
-  const idList = accountIds.map((id) => `'${id}'`).join(",");
+  const idList = ids.map((id) => `'${id}'`).join(",");
   const query = `SELECT Id, WhatId FROM Task WHERE WhatId IN (${idList}) AND ActivityDate >= ${startDate} AND ActivityDate <= ${endDate} AND Status = 'Completed' AND (Subject_Type__c = 'C1' OR Subject_Type__c = 'RCC')`;
 
   let records: Array<{ WhatId: string }>;
