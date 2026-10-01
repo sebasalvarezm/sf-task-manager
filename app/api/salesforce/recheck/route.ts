@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { friendlyConnectionError } from "@/lib/connection-errors";
 import { isAuthenticated } from "@/lib/auth";
 import { checkRecontact, RECONTACT_THRESHOLD_DAYS } from "@/lib/salesforce-recheck";
 
@@ -57,6 +58,9 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
     const status = message === "NOT_CONNECTED" ? 409 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      { error: friendlyConnectionError(message), code: status === 409 ? message : undefined },
+      { status },
+    );
   }
 }

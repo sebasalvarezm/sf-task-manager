@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { friendlyConnectionError, isConnectionError } from "@/lib/connection-errors";
 import { isAuthenticated } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
@@ -114,7 +115,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ item: withWeeklyOutreachClientMetadata(item) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: friendlyConnectionError(message), code: isConnectionError(message) ? message : undefined },
+      { status: isConnectionError(message) ? 409 : 500 },
+    );
   }
 }
 

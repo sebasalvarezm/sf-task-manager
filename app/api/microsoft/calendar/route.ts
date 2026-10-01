@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { friendlyConnectionError } from "@/lib/connection-errors";
 import { isAuthenticated } from "@/lib/auth";
 import { fetchCalendarEvents } from "@/lib/microsoft";
 import { findAccountsByDomains, findExistingCallTasks } from "@/lib/salesforce-calls";
@@ -184,6 +185,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         { error: "MS_NOT_CONNECTED" },
         { status: 401 }
+      );
+    }
+    if (message === "NOT_CONNECTED") {
+      return NextResponse.json(
+        { error: friendlyConnectionError(message), code: message },
+        { status: 409 }
       );
     }
 
