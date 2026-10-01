@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearOAuthState, oauthStateMatches } from "@/lib/oauth-state";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { MS_SCOPES } from "@/lib/microsoft";
 
 // Microsoft sends the user here after they log in and approve access.
 // We exchange the temporary code for real tokens and save them to Supabase.
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
     client_id: clientId,
     client_secret: clientSecret,
     redirect_uri: callbackUrl,
-    scope: "Calendars.Read Mail.Read Mail.Send User.Read offline_access",
+    scope: MS_SCOPES,
   });
 
   const tenantId = process.env.MS_TENANT_ID ?? "common";
