@@ -1,5 +1,5 @@
 import { inngest } from "@/lib/inngest/client";
-import { markRunning, markSucceeded, markFailed, updateProgress } from "@/lib/jobs";
+import { isJobCancelled, markRunning, markSucceeded, markFailed, updateProgress } from "@/lib/jobs";
 import {
   runOneCallLog,
   type CallLogEntry,
@@ -24,6 +24,9 @@ export const callsLogJob = inngest.createFunction(
       const results: CallLogResult[] = [];
       const total = input.entries.length;
       for (let i = 0; i < total; i++) {
+        // Cancel really stops the batch: no more Salesforce writes after it.
+        const cancelled = await step.run(`check-cancelled-${i}`, () => isJobCancelled(jobId));
+        if (cancelled) return;
         // One memoized step per call makes retries safe: completed calls are not
         // re-created if a later entry fails or the function resumes.
         const result = await step.run(`log-call-${i}`, () => runOneCallLog(input.entries[i]));

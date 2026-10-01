@@ -84,7 +84,9 @@ export async function markRunning(jobId: string): Promise<void> {
   const { error } = await supabase
     .from("jobs")
     .update({ status: "running", started_at: new Date().toISOString() })
-    .eq("id", jobId);
+    .eq("id", jobId)
+    // A job cancelled before Inngest picked it up stays cancelled.
+    .in("status", ["queued", "running"]);
   if (error) throw new Error(`Failed to mark job running: ${error.message}`);
 }
 
@@ -102,7 +104,7 @@ export async function markSucceeded(
   touchCompletion = true,
 ): Promise<void> {
   const supabase = getSupabaseAdmin();
-  const { error } = await supabase
+  let query = supabase
     .from("jobs")
     .update(
       touchCompletion
@@ -115,6 +117,10 @@ export async function markSucceeded(
         : { result },
     )
     .eq("id", jobId);
+  // Never turn a cancelled job back into "succeeded". Patch-only updates
+  // (touchCompletion false) apply to already-finished runs, so no filter.
+  if (touchCompletion) query = query.in("status", ["queued", "running"]);
+  const { error } = await query;
   if (error) throw new Error(`Failed to mark job succeeded: ${error.message}`);
 }
 
@@ -130,7 +136,8 @@ export async function markFailed(
       completed_at: new Date().toISOString(),
       error: errorMessage,
     })
-    .eq("id", jobId);
+    .eq("id", jobId)
+    .in("status", ["queued", "running"]);
   if (error) throw new Error(`Failed to mark job failed: ${error.message}`);
 }
 
@@ -227,6 +234,16 @@ export async function getJob(
  * — already-completed jobs are not touched. Returns true if a row was
  * cancelled.
  */
+/** True once the user has pressed Cancel on this job. */
+export async function isJobCancelled(jobId: string): Promise<boolean> {
+  const { data } = await getSupabaseAdmin()
+    .from("jobs")
+    .select("status")
+    .eq("id", jobId)
+    .maybeSingle();
+  return data?.status === "cancelled";
+}
+
 export async function cancelJob(
   jobId: string,
   sessionId: string = DEFAULT_SESSION,
