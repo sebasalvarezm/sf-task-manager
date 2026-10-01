@@ -197,9 +197,9 @@ function OutreachPageContent() {
       } catch {
         // Non-JSON response (likely a 500 HTML error page from Vercel)
         setError(
-          `Server error ${res.status}: ${text.slice(0, 400)}${
-            text.length > 400 ? "…" : ""
-          }`
+          res.status === 504
+            ? "Loading the queue took too long (the server timed out). Try again in a minute."
+            : `The server had a problem loading the queue (HTTP ${res.status}). Try again in a minute.`,
         );
         setLoading(false);
         return;

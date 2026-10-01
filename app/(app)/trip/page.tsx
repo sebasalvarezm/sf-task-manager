@@ -198,6 +198,9 @@ export default function TripPage() {
     } else if (latest.status === "failed" || latest.status === "cancelled") {
       setScanning(false);
       setScanDone(false);
+      if (latest.status === "failed") {
+        setSearchError(`The account scan failed${latest.error ? `: ${latest.error}` : "."} Try scanning again.`);
+      }
     }
   }, [jobs]);
 
@@ -313,11 +316,15 @@ export default function TripPage() {
         }),
       });
       if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSearchError(data.error ?? "Couldn't start the account scan. Try again.");
         setScanning(false);
       } else {
+        setSearchError(null);
         refetchJobs();
       }
     } catch {
+      setSearchError("Couldn't start the account scan. Check your connection and try again.");
       setScanning(false);
     }
   }

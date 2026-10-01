@@ -670,7 +670,9 @@ function PrepPageContent() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch {
-      // Silently fail — button state will reset
+      setLoadError(
+        `Couldn't download the one-pager for ${meeting.onePager.companyName}. Try again.`,
+      );
     } finally {
       setMeetings((prev) =>
         prev.map((m) =>
