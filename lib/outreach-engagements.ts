@@ -1,3 +1,4 @@
+import { upstreamErrorText } from "./upstream-error";
 import { getOutreachValidCredentials, OutreachCredentials } from "./outreach";
 
 const OUTREACH_API_BASE = "https://api.outreach.io/api/v2";
@@ -32,7 +33,7 @@ async function paginate<T>(
     const res = await outreachFetch(credentials, next);
     if (!res.ok) {
       if (res.status === 401) throw new Error("OUTREACH_NOT_CONNECTED");
-      throw new Error(`Outreach request failed: ${await res.text()}`);
+      throw new Error(`Outreach request failed: ${await upstreamErrorText("Outreach", res)}`);
     }
     const body = (await res.json()) as JsonApiBody;
     all.push(...extractRows(body));
@@ -138,7 +139,7 @@ export async function fetchMailingsWithEngagement(
     const res = await outreachFetch(credentials, next);
     if (!res.ok) {
       if (res.status === 401) throw new Error("OUTREACH_NOT_CONNECTED");
-      throw new Error(`Outreach request failed: ${await res.text()}`);
+      throw new Error(`Outreach request failed: ${await upstreamErrorText("Outreach", res)}`);
     }
     const body = (await res.json()) as JsonApiBody;
 
@@ -260,7 +261,7 @@ export async function fetchCdmMailboxIds(
     const res = await outreachFetch(credentials, next);
     if (!res.ok) {
       if (res.status === 401) throw new Error("OUTREACH_NOT_CONNECTED");
-      throw new Error(`fetchCdmMailboxIds failed: ${await res.text()}`);
+      throw new Error(`fetchCdmMailboxIds failed: ${await upstreamErrorText("Outreach", res)}`);
     }
     const body = (await res.json()) as {
       data?: Array<{

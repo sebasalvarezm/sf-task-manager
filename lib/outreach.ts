@@ -1,3 +1,4 @@
+import { upstreamErrorText } from "./upstream-error";
 import { isDeadRefreshToken, transientRefreshError } from "./oauth-refresh";
 import { getSupabaseAdmin } from "./supabase";
 
@@ -130,7 +131,7 @@ export async function listSequences(): Promise<OutreachSequence[]> {
   while (next) {
     const res: Response = await outreachFetch(next);
     if (!res.ok) {
-      const err = await res.text();
+      const err = await upstreamErrorText("Outreach", res);
       throw new Error(`Outreach listSequences failed: ${err}`);
     }
     const body = (await res.json()) as {
@@ -165,7 +166,7 @@ export type OutreachMailbox = {
 export async function listMailboxes(): Promise<OutreachMailbox[]> {
   const res = await outreachFetch("/mailboxes?page[size]=100");
   if (!res.ok) {
-    const err = await res.text();
+    const err = await upstreamErrorText("Outreach", res);
     throw new Error(`Outreach listMailboxes failed: ${err}`);
   }
   const body = (await res.json()) as {
@@ -240,7 +241,7 @@ export async function createProspect(params: {
   });
 
   if (!res.ok) {
-    const err = await res.text();
+    const err = await upstreamErrorText("Outreach", res);
     throw new Error(`Outreach createProspect failed: ${err}`);
   }
 
@@ -406,7 +407,7 @@ export async function tryPatchMailing(params: {
         `/mailings?filter[prospect][id]=${params.prospectId}&sort=-createdAt&page[size]=1`
       );
       if (!findRes.ok) {
-        const errText = await findRes.text();
+        const errText = await upstreamErrorText("Outreach", findRes);
         if (attempt === 4) {
           return { patched: false, reason: `Query failed: ${errText.slice(0, 200)}` };
         }
@@ -454,7 +455,7 @@ export async function tryPatchMailing(params: {
       }),
     });
     if (!patchRes.ok) {
-      const err = await patchRes.text();
+      const err = await upstreamErrorText("Outreach", patchRes);
       return { patched: false, mailingId: mailing.id, reason: err };
     }
     return { patched: true, mailingId: mailing.id };
@@ -491,7 +492,7 @@ export async function addProspectToSequence(params: {
   });
 
   if (!res.ok) {
-    const err = await res.text();
+    const err = await upstreamErrorText("Outreach", res);
     throw new Error(`Outreach addProspectToSequence failed: ${err}`);
   }
 

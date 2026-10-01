@@ -1,3 +1,4 @@
+import { upstreamErrorText } from "./upstream-error";
 import { isDeadRefreshToken, transientRefreshError } from "./oauth-refresh";
 import { getSupabaseAdmin } from "./supabase";
 
@@ -144,7 +145,7 @@ export async function fetchRecentEmails(
   );
 
   if (!response.ok) {
-    const err = await response.text();
+    const err = await upstreamErrorText("Outlook", response);
     throw new Error(`Failed to fetch emails: ${err}`);
   }
 
@@ -241,7 +242,7 @@ export async function findMemoForAccount(
       },
     });
     if (!response.ok) {
-      const err = await response.text();
+      const err = await upstreamErrorText("Outlook", response);
       throw new Error(`Failed to search memos: ${err}`);
     }
     const data = await response.json();
@@ -301,7 +302,7 @@ export async function fetchEmailThread(
   );
 
   if (!response.ok) {
-    const detail = await response.text();
+    const detail = await upstreamErrorText("Outlook", response);
     if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
     throw new Error(`Outlook thread lookup failed (${response.status}): ${detail.slice(0, 300)}`);
   }
@@ -371,7 +372,7 @@ export async function searchMailboxMessages(
       },
     },
   );
-  if (!response.ok) throw new Error(`Failed to search Outlook: ${await response.text()}`);
+  if (!response.ok) throw new Error(`Failed to search Outlook: ${await upstreamErrorText("Outlook", response)}`);
   const data = (await response.json()) as {
     value?: Array<{
       id: string;
@@ -403,7 +404,7 @@ export async function getMailboxAddress(): Promise<string> {
     "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName",
     { headers: { Authorization: `Bearer ${credentials.access_token}` } },
   );
-  if (!response.ok) throw new Error(`Failed to read Outlook profile: ${await response.text()}`);
+  if (!response.ok) throw new Error(`Failed to read Outlook profile: ${await upstreamErrorText("Outlook", response)}`);
   const data = (await response.json()) as { mail?: string; userPrincipalName?: string };
   return (data.mail ?? data.userPrincipalName ?? "").toLowerCase();
 }
@@ -432,7 +433,7 @@ export async function createOutlookReplyDraft(
     },
   );
   if (!createResponse.ok) {
-    const detail = await createResponse.text();
+    const detail = await upstreamErrorText("Outlook", createResponse);
     if (createResponse.status === 403) {
       throw new Error("OUTLOOK_RECONNECT_REQUIRED");
     }
@@ -468,7 +469,7 @@ export async function createOutlookNewDraft(params: {
     }),
   });
   if (!response.ok) {
-    const detail = await response.text();
+    const detail = await upstreamErrorText("Outlook", response);
     if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
     throw new Error(`Could not create Outlook draft: ${detail}`);
   }
@@ -529,7 +530,7 @@ export async function createOutlookFollowUpDraft(params: {
   );
   if (!createResponse.ok) {
     if (createResponse.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
-    throw new Error(`Could not create Outlook follow-up draft: ${await createResponse.text()}`);
+    throw new Error(`Could not create Outlook follow-up draft: ${await upstreamErrorText("Outlook", createResponse)}`);
   }
   const created = (await createResponse.json()) as { id: string; subject?: string };
   const patch = await fetch(
@@ -550,7 +551,7 @@ export async function createOutlookFollowUpDraft(params: {
     },
   );
   if (!patch.ok) {
-    throw new Error(`Could not address Outlook follow-up draft: ${await patch.text()}`);
+    throw new Error(`Could not address Outlook follow-up draft: ${await upstreamErrorText("Outlook", patch)}`);
   }
   return { id: created.id, subject: created.subject ?? "Reply" };
 }
@@ -572,7 +573,7 @@ export async function updateOutlookDraft(draftId: string, body: string): Promise
   );
   if (!response.ok) {
     if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
-    throw new Error(`Could not update Outlook draft: ${await response.text()}`);
+    throw new Error(`Could not update Outlook draft: ${await upstreamErrorText("Outlook", response)}`);
   }
 }
 
@@ -590,7 +591,7 @@ export async function sendOutlookDraft(draftId: string): Promise<void> {
       },
     },
   );
-  if (!response.ok) throw new Error(`Could not send Outlook reply: ${await response.text()}`);
+  if (!response.ok) throw new Error(`Could not send Outlook reply: ${await upstreamErrorText("Outlook", response)}`);
 }
 
 /** Remove an Outlook draft when its Weekly Outreach review is dismissed. */
@@ -605,7 +606,7 @@ export async function deleteOutlookDraft(draftId: string): Promise<void> {
     },
   );
   if (!response.ok && response.status !== 404) {
-    throw new Error(`Could not remove Outlook draft: ${await response.text()}`);
+    throw new Error(`Could not remove Outlook draft: ${await upstreamErrorText("Outlook", response)}`);
   }
 }
 
@@ -665,7 +666,7 @@ export async function sendEmail(params: {
   );
 
   if (!response.ok) {
-    const err = await response.text();
+    const err = await upstreamErrorText("Outlook", response);
     throw new Error(`Failed to send email: ${err}`);
   }
 }
@@ -712,7 +713,7 @@ export async function fetchCalendarEvents(
   );
 
   if (!response.ok) {
-    const err = await response.text();
+    const err = await upstreamErrorText("Outlook", response);
     throw new Error(`Microsoft Graph API failed: ${err}`);
   }
 
