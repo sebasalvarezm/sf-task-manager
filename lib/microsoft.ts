@@ -609,6 +609,23 @@ export async function deleteOutlookDraft(draftId: string): Promise<void> {
   }
 }
 
+/**
+ * Delete a draft only if Outlook still has it as an unsent draft. Used when an
+ * RCE is prepared again, so the old draft doesn't pile up next to the new one,
+ * without any risk of touching an email that has already been sent.
+ */
+export async function deleteOutlookDraftIfUnsent(draftId: string): Promise<void> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}?$select=isDraft`,
+    { headers: { Authorization: `Bearer ${credentials.access_token}` } },
+  );
+  if (!response.ok) return; // already gone (404) or unreadable: leave it alone
+  const data = (await response.json()) as { isDraft?: boolean };
+  if (data.isDraft === true) await deleteOutlookDraft(draftId);
+}
+
 // ── Send Email API ───────────────────────────────────────────────────────────
 
 export async function sendEmail(params: {

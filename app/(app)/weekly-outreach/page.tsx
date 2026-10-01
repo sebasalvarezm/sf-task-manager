@@ -1044,7 +1044,10 @@ export default function WeeklyOutreachPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: item.id }),
       });
-      const data = await res.json();
+      // A timeout returns an HTML error page, not JSON.
+      const data = await res.json().catch(() => ({
+        error: "Preparing this reconnect took too long or failed on the server. Try again.",
+      }));
       if (!res.ok) {
         if (data.code === "OUTLOOK_RECONNECT_REQUIRED") {
           setOutlookReconnectRequired(true);

@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from "@/lib/supabase";
 import { getAnthropicClient } from "@/lib/anthropic";
 import {
   createOutlookNewDraft,
+  deleteOutlookDraftIfUnsent,
   createOutlookReplyDraft,
   getMailboxAddress,
   searchMailboxMessages,
@@ -169,6 +170,9 @@ Return ONLY JSON:
 }`;
 }
 
+// Several Outlook searches, Salesforce history and an AI draft in one call.
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = (await request.json()) as { id?: string };
@@ -254,6 +258,13 @@ export async function POST(request: Request) {
     };
 
     const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
+    // Preparing again replaces the Outlook draft. Remove the previous one
+    // (only if it is still an unsent draft) so Outlook doesn't collect
+    // duplicate drafts for the same company.
+    if (metadata.outlookDraftId && !metadata.rceFirstSentAt) {
+      await deleteOutlookDraftIfUnsent(metadata.outlookDraftId).catch(() => {});
+      metadata.outlookDraftId = null;
+    }
     metadata.replyConfidence = threadMatch.confidence;
     metadata.replyReason = threadMatch.reason || null;
     metadata.contextSource = contextSource;
