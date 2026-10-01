@@ -41,7 +41,9 @@ export const sourcingBulkJob = inngest.createFunction(
     try {
       // Resolve URLs / account names up front (cheap Salesforce lookups).
       const items = await step.run("resolve", () =>
-        resolveEntries(input.entries ?? []),
+        resolveEntries(input.entries ?? [], {
+          oneToOne: Array.isArray(input.weeklyOutreachIds),
+        }),
       );
 
       // Store the resolved URLs on the job so a later cache lookup can match a

@@ -50,14 +50,33 @@ export function parseEntries(raw: string): string[] {
 // Resolve each entry to a sourcing URL. URLs pass through; account names are
 // looked up in Salesforce and resolved to the account's Website. Unresolvable
 // entries get an `error` and are surfaced (they don't block the rest of the run).
+//
+// `oneToOne`: keep exactly one item per entry, in order (no comma splitting,
+// de-duplication or cap). Weekly Outreach batches need this, because results
+// are written back to rows by position: dropping or splitting one entry
+// would shift every later company's draft onto the wrong row.
 export async function resolveEntries(
   entries: string[],
+  options: { oneToOne?: boolean } = {},
 ): Promise<BulkSourcingItem[]> {
   // Defensive re-normalize in case the caller passed raw/oversized input.
-  const clean = parseEntries(entries.join("\n"));
+  const clean = options.oneToOne
+    ? entries.map((e) => (typeof e === "string" ? e.trim() : ""))
+    : parseEntries(entries.join("\n"));
 
   const items: BulkSourcingItem[] = [];
   for (const input of clean) {
+    if (!input) {
+      items.push({
+        input,
+        url: null,
+        resolvedFrom: "account",
+        cached: false,
+        error: "No website or company name on this row",
+        result: null,
+      });
+      continue;
+    }
     if (looksLikeUrl(input)) {
       items.push({
         input,
