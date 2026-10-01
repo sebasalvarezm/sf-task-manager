@@ -42,16 +42,20 @@ export async function runOneCallLog(entry: CallLogEntry): Promise<CallLogResult>
   try {
     // Duplicate guard. A double submit, a cancelled-then-resubmitted batch or
     // a retry after a timeout must not create a second C1/RCC task, follow-up
-    // or note. If Salesforce already has a completed C1/RCC task on this
-    // account for the meeting date, skip the whole entry.
+    // or note. If Salesforce already has a completed task of the same call
+    // type on this account for the meeting date, skip the whole entry.
     assertSalesforceId(entry.accountId, "account id");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.meetingDate)) {
       throw new Error("Invalid meeting date");
+    }
+    if (entry.callType !== "C1" && entry.callType !== "RCC") {
+      throw new Error("Call type must be C1 or RCC");
     }
     const existing = await findExistingCallTasks(
       [entry.accountId],
       entry.meetingDate,
       entry.meetingDate,
+      entry.callType,
     );
     if (existing.has(entry.accountId)) {
       return {

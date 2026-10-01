@@ -76,7 +76,9 @@ export async function findAccountsByDomains(
 export async function findExistingCallTasks(
   accountIds: string[],
   startDate: string,
-  endDate: string
+  endDate: string,
+  /** Only count this call type ("C1" or "RCC"); both when omitted. */
+  subjectType?: "C1" | "RCC",
 ): Promise<Set<string>> {
   // Only well-formed ids and yyyy-MM-dd dates reach the query: these come
   // from the browser, and a stray quote would break (or bend) the SOQL.
@@ -88,7 +90,11 @@ export async function findExistingCallTasks(
   }
 
   const idList = ids.map((id) => `'${id}'`).join(",");
-  const query = `SELECT Id, WhatId FROM Task WHERE WhatId IN (${idList}) AND ActivityDate >= ${startDate} AND ActivityDate <= ${endDate} AND Status = 'Completed' AND (Subject_Type__c = 'C1' OR Subject_Type__c = 'RCC')`;
+  const query = `SELECT Id, WhatId FROM Task WHERE WhatId IN (${idList}) AND ActivityDate >= ${startDate} AND ActivityDate <= ${endDate} AND Status = 'Completed' AND ${
+    subjectType
+      ? `Subject_Type__c = '${subjectType === "RCC" ? "RCC" : "C1"}'`
+      : "(Subject_Type__c = 'C1' OR Subject_Type__c = 'RCC')"
+  }`;
 
   let records: Array<{ WhatId: string }>;
   try {
