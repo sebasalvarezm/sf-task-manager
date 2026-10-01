@@ -6,6 +6,8 @@ import {
   getOutlookDraftThreadInfo,
   sendOutlookDraft,
   updateOutlookDraft,
+  OUTLOOK_DRAFT_PERMISSION_MESSAGE,
+  OUTLOOK_NOT_CONNECTED_MESSAGE,
 } from "@/lib/microsoft";
 import {
   readWeeklyOutreachSourceMetadata,
@@ -112,10 +114,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ item: withWeeklyOutreachClientMetadata(updated) });
   } catch (reviewError) {
     const message = reviewError instanceof Error ? reviewError.message : "Could not review reconnect";
-    if (message === "OUTLOOK_RECONNECT_REQUIRED") {
+    if (message === "OUTLOOK_RECONNECT_REQUIRED" || message === "MS_NOT_CONNECTED") {
       return NextResponse.json(
         {
-          error: "Reconnect Outlook once to edit reply drafts.",
+          error:
+            message === "MS_NOT_CONNECTED"
+              ? OUTLOOK_NOT_CONNECTED_MESSAGE
+              : OUTLOOK_DRAFT_PERMISSION_MESSAGE,
           code: "OUTLOOK_RECONNECT_REQUIRED",
           reconnectUrl: "/api/microsoft/connect",
         },

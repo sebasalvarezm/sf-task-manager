@@ -409,6 +409,17 @@ export async function getMailboxAddress(): Promise<string> {
   return (data.mail ?? data.userPrincipalName ?? "").toLowerCase();
 }
 
+/**
+ * What to tell the user when Outlook refuses a draft action (HTTP 403) or is
+ * not connected. Drafting needs the Mail.ReadWrite permission: a reconnect
+ * fixes a token issued before it was granted; if IT ever withdraws it,
+ * reconnecting won't help, so say that too.
+ */
+export const OUTLOOK_DRAFT_PERMISSION_MESSAGE =
+  "Outlook didn't allow this draft change. Reconnect Outlook once. If it still fails, IT needs to confirm the Mail.ReadWrite permission for the Valstone Call Logger app. No email was sent.";
+export const OUTLOOK_NOT_CONNECTED_MESSAGE =
+  "Outlook isn't connected. Connect Outlook and try again. No email was sent.";
+
 export type OutlookReplyDraft = {
   id: string;
   subject: string;
@@ -551,6 +562,7 @@ export async function createOutlookFollowUpDraft(params: {
     },
   );
   if (!patch.ok) {
+    if (patch.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
     throw new Error(`Could not address Outlook follow-up draft: ${await upstreamErrorText("Outlook", patch)}`);
   }
   return { id: created.id, subject: created.subject ?? "Reply" };
@@ -591,7 +603,10 @@ export async function sendOutlookDraft(draftId: string): Promise<void> {
       },
     },
   );
-  if (!response.ok) throw new Error(`Could not send Outlook reply: ${await upstreamErrorText("Outlook", response)}`);
+  if (!response.ok) {
+    if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+    throw new Error(`Could not send Outlook reply: ${await upstreamErrorText("Outlook", response)}`);
+  }
 }
 
 /** Remove an Outlook draft when its Weekly Outreach review is dismissed. */

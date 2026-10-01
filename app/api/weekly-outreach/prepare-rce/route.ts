@@ -8,6 +8,8 @@ import {
   createOutlookReplyDraft,
   getMailboxAddress,
   searchMailboxMessages,
+  OUTLOOK_DRAFT_PERMISSION_MESSAGE,
+  OUTLOOK_NOT_CONNECTED_MESSAGE,
 } from "@/lib/microsoft";
 import { fetchAccountHistory, type AccountHistory } from "@/lib/salesforce-account-history";
 import { matchRceReplyThread } from "@/lib/rce-thread-match";
@@ -193,7 +195,14 @@ export async function POST(request: Request) {
 
   try {
     const domain = domainFromWebsite(item.website);
-    const mailboxAddress = await getMailboxAddress().catch(() => "");
+    // Outlook not connected must stop here with a clear message. Before, every
+    // lookup below quietly returned nothing and a generic draft was saved.
+    const mailboxAddress = await getMailboxAddress().catch((mailboxError: unknown) => {
+      if (mailboxError instanceof Error && mailboxError.message === "MS_NOT_CONNECTED") {
+        throw mailboxError;
+      }
+      return "";
+    });
     const [domainEmails, nameEmails, personalAngleEmails, history] = await Promise.all([
       domain ? searchMailboxMessages(domain, 50).catch(() => []) : Promise.resolve([]),
       searchMailboxMessages(item.account_name, 50).catch(() => []),
@@ -292,7 +301,7 @@ export async function POST(request: Request) {
       } catch (draftError) {
         if (draftError instanceof Error && draftError.message === "OUTLOOK_RECONNECT_REQUIRED") {
           outlookWarning =
-            "A copyable reconnect draft is ready. Outlook approval is still pending, so paste it into the existing email chain manually.";
+            "A copyable reconnect draft is ready, but Outlook didn't allow creating the draft. Reconnect Outlook and prepare again, or paste it into the existing email chain yourself.";
         } else {
           throw draftError;
         }
@@ -326,7 +335,7 @@ export async function POST(request: Request) {
         } catch (draftError) {
           if (draftError instanceof Error && draftError.message === "OUTLOOK_RECONNECT_REQUIRED") {
             outlookWarning =
-              "A copyable takeover draft is ready. Outlook approval is still pending, so paste it into a new email yourself.";
+              "A copyable takeover draft is ready, but Outlook didn't allow creating the draft. Reconnect Outlook and prepare again, or paste it into a new email yourself.";
           } else {
             throw draftError;
           }
@@ -371,10 +380,13 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not prepare reconnect";
-    if (message === "OUTLOOK_RECONNECT_REQUIRED") {
+    if (message === "OUTLOOK_RECONNECT_REQUIRED" || message === "MS_NOT_CONNECTED") {
       return NextResponse.json(
         {
-          error: "Reconnect Outlook once to allow editable reply drafts. No email was sent.",
+          error:
+            message === "MS_NOT_CONNECTED"
+              ? OUTLOOK_NOT_CONNECTED_MESSAGE
+              : OUTLOOK_DRAFT_PERMISSION_MESSAGE,
           code: "OUTLOOK_RECONNECT_REQUIRED",
           reconnectUrl: "/api/microsoft/connect",
         },

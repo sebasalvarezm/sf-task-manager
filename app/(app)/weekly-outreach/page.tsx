@@ -919,6 +919,7 @@ export default function WeeklyOutreachPage() {
           setFollowUpNotTracked(true);
           return;
         }
+        if (data.code === "OUTLOOK_RECONNECT_REQUIRED") setOutlookReconnectRequired(true);
         throw new Error(data.error ?? "Could not prepare the follow-up");
       }
       setFollowUpBody(data.body ?? "");
@@ -963,8 +964,13 @@ export default function WeeklyOutreachPage() {
           ignoreReply: followUpIgnoreReply,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Could not send the follow-up");
+      const data = await res.json().catch(() => ({
+        error: "The server didn't answer properly. Check Outlook's Sent Items before trying again.",
+      }));
+      if (!res.ok) {
+        if (data.code === "OUTLOOK_RECONNECT_REQUIRED") setOutlookReconnectRequired(true);
+        throw new Error(data.error ?? "Could not send the follow-up");
+      }
       setItems((previous) =>
         sortItems(previous.map((row) => (row.id === data.item.id ? data.item : row))),
       );
