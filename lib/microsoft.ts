@@ -696,6 +696,10 @@ export type CalendarEvent = {
   organizer: { name: string; email: string } | null;
   attendees: Array<{ name: string; email: string }>;
   bodyText: string; // plain-text body (used to recover attendee emails)
+  /** Calendar-wide id; Granola may link a note to this instead of `id`. */
+  iCalUId: string | null;
+  /** Time zone of `start` as Graph returned it (UTC unless told otherwise). */
+  startTimeZone: string;
 };
 
 export async function fetchCalendarEvents(
@@ -712,7 +716,7 @@ export async function fetchCalendarEvents(
   const params = new URLSearchParams({
     startDateTime,
     endDateTime,
-    $select: "id,subject,start,end,organizer,attendees,body",
+    $select: "id,iCalUId,subject,start,end,organizer,attendees,body",
     $orderby: "start/dateTime",
     $top: "100",
   });
@@ -737,6 +741,7 @@ export async function fetchCalendarEvents(
   return (data.value ?? []).map(
     (e: {
       id: string;
+      iCalUId?: string | null;
       subject: string;
       start: { dateTime: string; timeZone: string };
       end: { dateTime: string; timeZone: string };
@@ -761,6 +766,8 @@ export async function fetchCalendarEvents(
         email: (a.emailAddress?.address ?? "").toLowerCase(),
       })),
       bodyText: e.body?.content ?? "",
+      iCalUId: e.iCalUId ?? null,
+      startTimeZone: e.start.timeZone ?? "UTC",
     })
   );
 }

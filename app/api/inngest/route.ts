@@ -7,6 +7,7 @@ import { tripGeocodeJob } from "@/lib/inngest/functions/trip-geocode";
 import { callsLogJob } from "@/lib/inngest/functions/calls-log";
 import { prepJob } from "@/lib/inngest/functions/prep";
 import { accountsEnrichJob } from "@/lib/inngest/functions/accounts-enrich";
+import { granolaSyncJob } from "@/lib/inngest/functions/granola-sync";
 
 export const maxDuration = 300;
 
@@ -20,5 +21,6 @@ export const { GET, POST, PUT } = serve({
     callsLogJob,
     prepJob,
     accountsEnrichJob,
+    granolaSyncJob,
   ],
 });

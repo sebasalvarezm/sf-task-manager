@@ -3,26 +3,7 @@ import { friendlyConnectionError } from "@/lib/connection-errors";
 import { isAuthenticated } from "@/lib/auth";
 import { fetchCalendarEvents } from "@/lib/microsoft";
 import { findAccountsByDomains, findExistingCallTasks } from "@/lib/salesforce-calls";
-
-// Domains to exclude (internal organizations)
-const EXCLUDED_DOMAINS = [
-  "valstonecorp.com",
-  "valsoftcorp.com",
-  "awsys.com",
-  "valstonecorporation.onmicrosoft.com",
-  "creativeinfo.net",
-];
-
-// Extract email addresses from HTML or plain-text body content
-const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-
-function extractEmailsFromBody(bodyText: string): string[] {
-  if (!bodyText) return [];
-  const matches = bodyText.match(EMAIL_REGEX);
-  if (!matches) return [];
-  // Deduplicate and lowercase
-  return [...new Set(matches.map((e) => e.toLowerCase()))];
-}
+import { externalMeetingsFromEvents, weekDomains } from "@/lib/call-logger-meetings";
 
 export type MeetingMatch = {
   eventId: string;
@@ -66,62 +47,15 @@ export async function GET(request: NextRequest) {
 
     // Collect every external domain first, then resolve them in one Salesforce
     // query. This replaces the former one-query-per-domain slow path.
-    const weekDomains = new Set<string>();
-    for (const event of events) {
-      const emails = [
-        event.organizer?.email,
-        ...event.attendees.map((a) => a.email),
-        ...extractEmailsFromBody(event.bodyText),
-      ].filter(Boolean) as string[];
-      for (const email of emails) {
-        const domain = email.split("@")[1]?.toLowerCase();
-        if (domain && !EXCLUDED_DOMAINS.includes(domain)) weekDomains.add(domain);
-      }
-    }
-    const accountByDomain = await findAccountsByDomains(Array.from(weekDomains));
+    const accountByDomain = await findAccountsByDomains(weekDomains(events));
 
-    // Step 2: Process each event — filter attendees, match to Salesforce
+    // Step 2: Keep meetings with an external attendee and match each external
+    // domain to a Salesforce Account. (Same rule the Granola sync uses.)
     const meetings: MeetingMatch[] = [];
 
-    for (const event of events) {
-      // Collect all attendees (including organizer)
-      const allEmails: string[] = [];
-      if (event.organizer?.email) allEmails.push(event.organizer.email);
-      for (const a of event.attendees) {
-        if (a.email) allEmails.push(a.email);
-      }
+    for (const external of externalMeetingsFromEvents(events)) {
+      const { event, externalDomains, meetingDate, startTime } = external;
 
-      // Extract unique domains, excluding internal ones
-      const domainSet = new Set<string>();
-      for (const email of allEmails) {
-        const domain = email.split("@")[1];
-        if (domain && !EXCLUDED_DOMAINS.includes(domain.toLowerCase())) {
-          domainSet.add(domain.toLowerCase());
-        }
-      }
-
-      // Extract just the date portion from the start datetime
-      const meetingDate = event.start.split("T")[0];
-      const startTime = event.start.split("T")[1]?.substring(0, 5) ?? "";
-
-      // If no external attendees found, try extracting emails from the body
-      // (migration sometimes strips attendees but keeps them in body text)
-      if (domainSet.size === 0 && event.bodyText) {
-        const bodyEmails = extractEmailsFromBody(event.bodyText);
-        for (const email of bodyEmails) {
-          const domain = email.split("@")[1];
-          if (domain && !EXCLUDED_DOMAINS.includes(domain.toLowerCase())) {
-            domainSet.add(domain.toLowerCase());
-          }
-        }
-      }
-
-      // Skip meetings with no external attendees (truly internal)
-      if (domainSet.size === 0) continue;
-
-      const externalDomains = Array.from(domainSet);
-
-      // Step 3: Match each external domain to a Salesforce Account
       const allMatches: MeetingMatch["allMatches"] = [];
       for (const domain of externalDomains) {
         const match = accountByDomain.get(domain);

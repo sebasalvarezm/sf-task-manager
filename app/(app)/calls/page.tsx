@@ -83,6 +83,17 @@ function CallsPageContent() {
   // Bumped on every Analyze / week change so late answers for an old week are ignored.
   const loadGeneration = useRef(0);
 
+  // "Sync from Granola" + the last sync time / error (button and 30-minute schedule).
+  type GranolaSyncState = {
+    lastSyncAt: string | null;
+    lastSuccessAt: string | null;
+    lastError: string | null;
+    lastResult: { matched: number } | null;
+  };
+  const [granolaSync, setGranolaSync] = useState<GranolaSyncState | null>(null);
+  const [granolaSyncing, setGranolaSyncing] = useState(false);
+  const [granolaSyncMessage, setGranolaSyncMessage] = useState<string | null>(null);
+
   const [completedWeeks, setCompletedWeeks] = useState<Set<string>>(
     () => getCompletedWeeks()
   );
@@ -95,8 +106,63 @@ function CallsPageContent() {
       router.replace("/calls");
     }
     checkConnections();
+    void loadGranolaSyncState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadGranolaSyncState() {
+    try {
+      const res = await fetch("/api/granola/sync", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { state?: GranolaSyncState | null };
+      setGranolaSync(data.state ?? null);
+    } catch {
+      /* the status line just stays empty */
+    }
+  }
+
+  async function handleGranolaSync() {
+    if (!selectedWeek || granolaSyncing) return;
+    setGranolaSyncing(true);
+    setGranolaSyncMessage(null);
+    try {
+      const res = await fetch("/api/granola/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start: selectedWeek.start, end: selectedWeek.end }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.state) setGranolaSync(data.state);
+      if (!res.ok) {
+        if (!data.state) setGranolaSync((prev) => ({ lastSyncAt: new Date().toISOString(), lastSuccessAt: prev?.lastSuccessAt ?? null, lastError: data.error ?? "Granola sync failed.", lastResult: prev?.lastResult ?? null }));
+        return;
+      }
+      const r = data.result as { matched: number; unchanged: number; meetings: number } | undefined;
+      setGranolaSyncMessage(
+        r
+          ? r.matched > 0
+            ? `${r.matched} new or updated Granola note${r.matched === 1 ? "" : "s"} matched.`
+            : r.unchanged > 0
+              ? "Up to date. No new Granola notes for this week."
+              : r.meetings === 0
+                ? "No external meetings this week."
+                : "No Granola notes matched this week's meetings yet. Notes appear a few minutes after a call ends."
+          : null,
+      );
+      if (hasAnalyzed) await loadGranolaNotes(selectedWeek, meetings);
+    } catch {
+      setGranolaSync((prev) => ({ lastSyncAt: new Date().toISOString(), lastSuccessAt: prev?.lastSuccessAt ?? null, lastError: "Couldn't reach the app. Check your connection and try again.", lastResult: prev?.lastResult ?? null }));
+    } finally {
+      setGranolaSyncing(false);
+    }
+  }
+
+  function syncTime(iso: string): string {
+    const d = new Date(iso);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return sameDay ? `today at ${time}` : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} at ${time}`;
+  }
 
   async function checkConnections() {
     try {
@@ -670,7 +736,7 @@ function CallsPageContent() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3">
                 <WeekSelector
                   selected={selectedWeek}
                   completedWeeks={completedWeeks}
@@ -688,12 +754,39 @@ function CallsPageContent() {
                 <button
                   onClick={handleAnalyze}
                   disabled={analyzing}
-                  className="bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg transition-colors text-sm"
+                  className="whitespace-nowrap bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg transition-colors text-sm"
                 >
                   {analyzing ? "Analyzing..." : "Analyze Week"}
                 </button>
+                <button
+                  onClick={() => void handleGranolaSync()}
+                  disabled={granolaSyncing || !selectedWeek}
+                  className="whitespace-nowrap bg-white hover:bg-gray-50 disabled:opacity-50 text-navy border border-gray-200 font-semibold px-4 py-2 rounded-lg transition-colors text-sm"
+                  title="Pull this week's Granola notes into the matching rows. Also runs every 30 minutes."
+                >
+                  {granolaSyncing ? "Syncing…" : "Sync from Granola"}
+                </button>
               </div>
             </div>
+
+            {/* Granola sync status: last sync time, and any error in plain words */}
+            {(granolaSync?.lastSyncAt || granolaSyncMessage) && (
+              <div className="-mt-3 mb-4 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs" aria-live="polite">
+                {granolaSync?.lastError ? (
+                  <span className="text-red-600">
+                    Granola sync failed {granolaSync.lastSyncAt ? syncTime(granolaSync.lastSyncAt) : ""}: {granolaSync.lastError}
+                    {granolaSync.lastSuccessAt ? (
+                      <span className="text-gray-400"> (last good sync {syncTime(granolaSync.lastSuccessAt)})</span>
+                    ) : null}
+                  </span>
+                ) : granolaSync?.lastSuccessAt ? (
+                  <span className="text-gray-400">Granola last synced {syncTime(granolaSync.lastSuccessAt)}</span>
+                ) : null}
+                {granolaSyncMessage && !granolaSync?.lastError ? (
+                  <span className="text-gray-500">{granolaSyncMessage}</span>
+                ) : null}
+              </div>
+            )}
 
             {/* Error */}
             {analyzeError && (
