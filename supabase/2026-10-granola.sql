@@ -26,3 +26,20 @@ CREATE TABLE IF NOT EXISTS granola_notes (
 CREATE UNIQUE INDEX IF NOT EXISTS granola_notes_event_id_key ON granola_notes (event_id);
 CREATE INDEX IF NOT EXISTS granola_notes_meeting_date_idx ON granola_notes (meeting_date);
 ALTER TABLE granola_notes ENABLE ROW LEVEL SECURITY;
+
+-- 2. Suggested Call Logger fields per meeting (item 4). Regenerated when the
+--    Granola note changes. Nothing here is logged to Salesforce on its own.
+CREATE TABLE IF NOT EXISTS call_suggestions (
+  event_id          TEXT        PRIMARY KEY,         -- Outlook calendar event id
+  granola_note_id   TEXT,                            -- null when made from pasted notes
+  note_updated_at   TIMESTAMPTZ,                     -- Granola version it was made from
+  meeting_date      DATE        NOT NULL,
+  commentary        TEXT,
+  call_type         TEXT,                            -- C1 | RCC | null
+  type_reason       TEXT,
+  follow_up_days    INTEGER,                         -- RCE number; null = none
+  follow_up_reason  TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS call_suggestions_meeting_date_idx ON call_suggestions (meeting_date);
+ALTER TABLE call_suggestions ENABLE ROW LEVEL SECURITY;

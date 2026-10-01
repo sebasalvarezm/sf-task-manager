@@ -45,7 +45,31 @@ export type CallEntry = {
   followUpDays: number | null;
   selectedAccountIdx: number; // index into allMatches
   notes: string; // Granola meeting notes
+  /** Fields you've typed in or accepted. A suggestion stops showing once touched. */
+  touched?: { callType?: boolean; commentary?: boolean; followUp?: boolean };
 };
+
+/** Suggested fields for a row, shown lighter until you edit or accept them. */
+export type RowSuggestion = {
+  commentary: string | null;
+  callType: "C1" | "RCC" | null;
+  typeReason: string | null;
+  followUpDays: number | null;
+  followUpReason: string | null;
+};
+
+type SuggestField = "callType" | "commentary" | "followUp";
+
+/** Which suggested fields are still waiting (not typed over, accepted or cleared). */
+export function pendingSuggestionFields(entry: CallEntry | undefined, s: RowSuggestion | undefined): SuggestField[] {
+  if (!s) return [];
+  const touched = entry?.touched ?? {};
+  const out: SuggestField[] = [];
+  if (s.callType && !touched.callType && !entry?.callType) out.push("callType");
+  if (s.commentary && !touched.commentary && !entry?.commentary) out.push("commentary");
+  if (s.followUpDays && !touched.followUp && !entry?.followUpDays) out.push("followUp");
+  return out;
+}
 
 // ── Shortcode parser for follow-up column ─────────────────────────────────────
 
@@ -74,6 +98,11 @@ type Props = {
   onManualMatch: (eventId: string, match: ManualMatch) => void;
   /** Granola notes by meeting eventId. Rows without one stay as they are. */
   granolaNotes?: Map<string, GranolaRowNote>;
+  /** Suggested fields by eventId (from Granola notes or pasted notes). */
+  suggestions?: Map<string, RowSuggestion>;
+  /** Rows whose suggestion is being written right now. */
+  suggestionsLoading?: Set<string>;
+  onSuggestion?: (eventId: string, suggestion: RowSuggestion) => void;
 };
 
 type TranscriptState = { open: boolean; loading: boolean; text?: string; error?: string };
@@ -89,6 +118,9 @@ export default function CallLoggerTable({
   manualMatches,
   onManualMatch,
   granolaNotes,
+  suggestions,
+  suggestionsLoading,
+  onSuggestion,
 }: Props) {
   const [activeCell, setActiveCell] = useState<{
     row: number;
@@ -144,32 +176,71 @@ export default function CallLoggerTable({
     setSuggesting((prev) => new Set(prev).add(meeting.eventId));
     setSuggestErrors((prev) => { const next = new Map(prev); next.delete(meeting.eventId); return next; });
     try {
+      const account = getSelectedMatch(meeting);
       const res = await fetch("/api/calls/suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          notes: entry.notes,
+          eventId: meeting.eventId,
           meetingTitle: meeting.subject,
-          accountName: getSelectedMatch(meeting)?.accountName,
+          meetingDate: meeting.meetingDate,
+          accountId: account?.accountId,
+          accountName: account?.accountName,
+          // Hand-pasted notes are only used when the row has no Granola note.
+          notes: granolaNotes?.has(meeting.eventId) ? undefined : entry.notes,
+          force: true,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Suggestion failed");
-      const suggestion = data.suggestion as { callType?: "C1" | "RCC"; commentary?: string; followUpDays?: number | null };
-      const next: CallEntry = {
-        ...entry,
-        callType: suggestion.callType === "RCC" ? "RCC" : "C1",
-        commentary: suggestion.commentary ?? entry.commentary,
-        followUpDays: typeof suggestion.followUpDays === "number" ? suggestion.followUpDays : null,
-      };
-      onEntryChange(meeting.eventId, next);
-      setTypeRawValues((prev) => new Map(prev).set(meeting.eventId, next.callType));
-      setFollowUpRawValues((prev) => new Map(prev).set(meeting.eventId, next.followUpDays ? `RCE${next.followUpDays}` : ""));
+      const s = data.suggestion as RowSuggestion;
+      // A fresh suggestion shows again in the fields you haven't typed in yet.
+      onEntryChange(meeting.eventId, { ...entry, touched: {} });
+      onSuggestion?.(meeting.eventId, {
+        commentary: s.commentary ?? null,
+        callType: s.callType ?? null,
+        typeReason: s.typeReason ?? null,
+        followUpDays: s.followUpDays ?? null,
+        followUpReason: s.followUpReason ?? null,
+      });
     } catch (err) {
       setSuggestErrors((prev) => new Map(prev).set(meeting.eventId, err instanceof Error ? err.message : "Suggestion failed"));
     } finally {
       setSuggesting((prev) => { const next = new Set(prev); next.delete(meeting.eventId); return next; });
     }
+  }
+
+  function acceptSuggestion(eventId: string, field: SuggestField) {
+    const s = suggestions?.get(eventId);
+    if (!s) return;
+    const prev = getEntry(eventId);
+    const touched = { ...(prev.touched ?? {}), [field]: true };
+    if (field === "callType" && s.callType) {
+      onEntryChange(eventId, { ...prev, callType: s.callType, touched });
+      setTypeRawValues((m) => new Map(m).set(eventId, s.callType!));
+    } else if (field === "commentary" && s.commentary) {
+      onEntryChange(eventId, { ...prev, commentary: s.commentary, touched });
+    } else if (field === "followUp" && s.followUpDays) {
+      onEntryChange(eventId, { ...prev, followUpDays: s.followUpDays, touched });
+      setFollowUpRawValues((m) => new Map(m).set(eventId, `RCE${s.followUpDays}`));
+    }
+  }
+
+  function renderSuggestedMarker(eventId: string, field: SuggestField, reason: string | null) {
+    return (
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={(e) => {
+          e.stopPropagation();
+          acceptSuggestion(eventId, field);
+        }}
+        title={reason ? `${reason}. Click to accept.` : "Click to accept this suggestion"}
+        className="self-start inline-flex items-center gap-1 rounded bg-sky-50 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-sky-700 hover:bg-sky-100"
+      >
+        Suggested <span aria-hidden="true">·</span> <span className="normal-case tracking-normal">Accept</span>
+      </button>
+    );
   }
 
   function hasAccountMatch(meeting: MeetingRow): boolean {
@@ -228,18 +299,18 @@ export default function CallLoggerTable({
     const upper = value.trim().toUpperCase();
     const valid = upper === "C1" || upper === "RCC" ? upper : "";
     const prev = getEntry(eventId);
-    onEntryChange(eventId, { ...prev, eventId, callType: valid as "" | "C1" | "RCC" });
+    onEntryChange(eventId, { ...prev, eventId, callType: valid as "" | "C1" | "RCC", touched: { ...(prev.touched ?? {}), callType: true } });
   }
 
   function handleCommentaryChange(eventId: string, value: string) {
     const prev = getEntry(eventId);
-    onEntryChange(eventId, { ...prev, eventId, commentary: value });
+    onEntryChange(eventId, { ...prev, eventId, commentary: value, touched: { ...(prev.touched ?? {}), commentary: true } });
   }
 
   function handleFollowUpChange(eventId: string, value: string) {
     const prev = getEntry(eventId);
     const days = parseFollowUp(value);
-    onEntryChange(eventId, { ...prev, eventId, followUpDays: days });
+    onEntryChange(eventId, { ...prev, eventId, followUpDays: days, touched: { ...(prev.touched ?? {}), followUp: true } });
   }
 
   function handleAccountSelect(eventId: string, idx: number) {
@@ -466,8 +537,19 @@ export default function CallLoggerTable({
             const selectedMatch = getSelectedMatch(meeting);
             const hasMatch = hasAccountMatch(meeting);
             const isManualMatch = manualMatches.has(meeting.eventId);
-            const typeRaw = typeRawValues.get(meeting.eventId) ?? (entry.callType || "");
-            const followUpRaw = followUpRawValues.get(meeting.eventId) ?? (entry.followUpDays ? `RCE${entry.followUpDays}` : "");
+            const suggestion = hasMatch ? suggestions?.get(meeting.eventId) : undefined;
+            const pending = new Set(pendingSuggestionFields(entry, suggestion));
+            const typePending = pending.has("callType");
+            const commentaryPending = pending.has("commentary");
+            const followUpPending = pending.has("followUp");
+            const suggestionLoading = hasMatch && suggestionsLoading?.has(meeting.eventId);
+            const typeRaw = typePending
+              ? suggestion!.callType!
+              : typeRawValues.get(meeting.eventId) ?? (entry.callType || "");
+            const followUpRaw = followUpPending
+              ? `RCE${suggestion!.followUpDays}`
+              : followUpRawValues.get(meeting.eventId) ?? (entry.followUpDays ? `RCE${entry.followUpDays}` : "");
+            const suggestedClass = "border-dashed border-sky-300 bg-white text-gray-400 italic";
 
             // Row background: gray for already-logged, alternating for normal
             const rowBg = meeting.alreadyLogged
@@ -695,16 +777,22 @@ export default function CallLoggerTable({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
+                          if (typePending) acceptSuggestion(meeting.eventId, "callType");
                           focusCell(rowIdx, 6); // move to commentary
                         }
                       }}
+                      title={typePending ? suggestion?.typeReason ?? undefined : undefined}
                       className={`w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors ${
                         !hasMatch
                           ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                          : getTypeBorderClass(entry.callType)
+                          : typePending
+                            ? suggestedClass
+                            : getTypeBorderClass(entry.callType)
                       }`}
                     />
-                    {renderTypeBadge(entry.callType)}
+                    {typePending
+                      ? renderSuggestedMarker(meeting.eventId, "callType", suggestion?.typeReason ?? null)
+                      : renderTypeBadge(entry.callType)}
                   </div>
                 </td>
 
@@ -721,8 +809,10 @@ export default function CallLoggerTable({
                       else inputRefs.current.delete(key);
                     }}
                     type="text"
-                    value={entry.commentary}
-                    placeholder={hasMatch ? "e.g. 10M, young, reconnect" : "—"}
+                    value={commentaryPending ? suggestion!.commentary! : entry.commentary}
+                    placeholder={
+                      !hasMatch ? "—" : suggestionLoading ? "Writing a suggestion from Granola…" : "e.g. 10M, young, reconnect"
+                    }
                     disabled={!hasMatch}
                     onChange={(e) =>
                       handleCommentaryChange(meeting.eventId, e.target.value)
@@ -731,15 +821,22 @@ export default function CallLoggerTable({
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();
+                        if (commentaryPending) acceptSuggestion(meeting.eventId, "commentary");
                         focusCell(rowIdx, 7); // move to follow-up
                       }
                     }}
+                    title={commentaryPending ? suggestion!.commentary! : undefined}
                     className={`w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors ${
                       !hasMatch
                         ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200"
-                        : "border-gray-200 bg-white"
+                        : commentaryPending
+                          ? suggestedClass
+                          : "border-gray-200 bg-white"
                     }`}
                   />
+                  {commentaryPending ? (
+                    <div className="mt-0.5 flex">{renderSuggestedMarker(meeting.eventId, "commentary", null)}</div>
+                  ) : null}
                 </td>
 
                 {/* Follow-up — col 7 */}
@@ -769,19 +866,30 @@ export default function CallLoggerTable({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
+                          if (followUpPending) acceptSuggestion(meeting.eventId, "followUp");
                           if (rowIdx < meetings.length - 1)
                             focusCell(rowIdx + 1, 5); // next row, type col
                         }
                       }}
+                      title={
+                        suggestion?.followUpReason &&
+                        (followUpPending || entry.followUpDays === suggestion.followUpDays)
+                          ? suggestion.followUpReason
+                          : undefined
+                      }
                       className={`w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors ${
                         !hasMatch
                           ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200"
-                          : entry.followUpDays
-                            ? "border-purple-400 bg-purple-50"
-                            : "border-gray-200 bg-white"
+                          : followUpPending
+                            ? suggestedClass
+                            : entry.followUpDays
+                              ? "border-purple-400 bg-purple-50"
+                              : "border-gray-200 bg-white"
                       }`}
                     />
-                    {renderFollowUpBadge(entry.followUpDays)}
+                    {followUpPending
+                      ? renderSuggestedMarker(meeting.eventId, "followUp", suggestion?.followUpReason ?? null)
+                      : renderFollowUpBadge(entry.followUpDays)}
                   </div>
                 </td>
 
@@ -853,7 +961,11 @@ export default function CallLoggerTable({
                             disabled={suggesting.has(meeting.eventId)}
                             className="rounded-md bg-navy px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                           >
-                            {suggesting.has(meeting.eventId) ? "Reviewing notes…" : "Suggest call log"}
+                            {suggesting.has(meeting.eventId)
+                              ? "Reviewing notes…"
+                              : granolaNotes?.has(meeting.eventId)
+                                ? "Suggest again"
+                                : "Suggest call log"}
                           </button>
                           <span className="text-xs text-gray-400">
                             {entry.notes.length} characters

@@ -1,51 +1,50 @@
 import { NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
-import { getAnthropicClient } from "@/lib/anthropic";
+import { isAdmin } from "@/lib/auth";
+import { suggestForRow } from "@/lib/call-suggest-run";
+import { isSalesforceId } from "@/lib/sf-query";
 
+export const maxDuration = 60;
+
+/**
+ * Suggested commentary, follow-up and type for one Call Logger row, from its
+ * Granola note (or hand-pasted notes when it has none). Nothing is logged to
+ * Salesforce here; the page shows the result as a suggestion.
+ */
 export async function POST(request: Request) {
-  if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const body = ((await request.json().catch(() => ({}))) ?? {}) as { notes?: string; meetingTitle?: string; accountName?: string };
-  if (!body.notes?.trim()) return NextResponse.json({ error: "Paste Granola notes first" }, { status: 400 });
-  const client = getAnthropicClient();
-  if (!client) return NextResponse.json({ error: "AI service not configured" }, { status: 503 });
-  let message;
+  if (!(await isAdmin())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const body = ((await request.json().catch(() => ({}))) ?? {}) as {
+    eventId?: string;
+    meetingTitle?: string;
+    meetingDate?: string;
+    accountId?: string;
+    accountName?: string;
+    notes?: string;
+    force?: boolean;
+  };
+  if (!body.eventId || typeof body.eventId !== "string") {
+    return NextResponse.json({ error: "Missing meeting" }, { status: 400 });
+  }
+  if (!body.meetingDate || !/^\d{4}-\d{2}-\d{2}$/.test(body.meetingDate)) {
+    return NextResponse.json({ error: "Missing meeting date" }, { status: 400 });
+  }
   try {
-    message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 700,
-      messages: [{ role: "user", content: `Turn these Granola meeting notes into a proposed Salesforce call log. Preserve concrete facts and the user's straightforward language; avoid AI jargon, hype, and invented conclusions.
-
-Meeting: ${body.meetingTitle ?? "Unknown"}
-Salesforce account: ${body.accountName ?? "Unknown"}
-
-Return ONLY JSON:
-{
-  "callType": "C1 or RCC",
-  "commentary": "1-3 concise sentences covering outcome, key objection or signal, and agreed next step",
-  "followUpDays": 7,
-  "outcome": "short explicit outcome",
-  "objections": ["specific objection"],
-  "nextStep": "specific agreed follow-up"
-}
-
-Use null for followUpDays when no follow-up was agreed. C1 means first call; RCC means reconnect/catch-up call.
-
-GRANOLA NOTES:
-${body.notes.slice(0, 18000)}` }],
+    const suggestion = await suggestForRow({
+      eventId: body.eventId,
+      meetingTitle: body.meetingTitle ?? "",
+      meetingDate: body.meetingDate,
+      accountId: isSalesforceId(body.accountId) ? body.accountId : null,
+      accountName: body.accountName ?? null,
+      pastedNotes: typeof body.notes === "string" ? body.notes.slice(0, 20000) : undefined,
+      force: body.force === true,
     });
+    if (!suggestion) {
+      return NextResponse.json({ error: "No Granola note or pasted notes for this meeting yet" }, { status: 404 });
+    }
+    return NextResponse.json({ suggestion });
   } catch (err) {
-    // Rate limit / outage: answer with JSON the page can show, not a crash.
-    console.error("calls/suggest AI error:", err instanceof Error ? err.message : err);
     return NextResponse.json(
-      { error: "The AI suggestion service is busy or unavailable. Try again in a minute, or fill the fields in yourself." },
+      { error: err instanceof Error ? err.message : "Couldn't write a suggestion" },
       { status: 503 },
     );
-  }
-  const text = message.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n");
-  try {
-    const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text);
-    return NextResponse.json({ suggestion: parsed });
-  } catch {
-    return NextResponse.json({ error: "Could not read the AI suggestion" }, { status: 502 });
   }
 }

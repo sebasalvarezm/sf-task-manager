@@ -14,6 +14,8 @@ import CallLoggerTable, {
   CallEntry,
   ManualMatch,
   GranolaRowNote,
+  RowSuggestion,
+  pendingSuggestionFields,
 } from "../../components/CallLoggerTable";
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
@@ -75,6 +77,11 @@ function CallsPageContent() {
 
   // Granola summaries matched to this week's rows (by Outlook eventId).
   const [granolaNotes, setGranolaNotes] = useState<Map<string, GranolaRowNote>>(new Map());
+  // Suggested Type / Commentary / Follow-up per row. Never logged until accepted.
+  const [suggestions, setSuggestions] = useState<Map<string, RowSuggestion>>(new Map());
+  const [suggestionsLoading, setSuggestionsLoading] = useState<Set<string>>(new Set());
+  // Bumped on every Analyze / week change so late answers for an old week are ignored.
+  const loadGeneration = useRef(0);
 
   const [completedWeeks, setCompletedWeeks] = useState<Set<string>>(
     () => getCompletedWeeks()
@@ -142,7 +149,9 @@ function CallsPageContent() {
     setAnalyzing(true);
     setAnalyzeError(null);
     setMeetings([]);
+    loadGeneration.current++;
     setGranolaNotes(new Map());
+    setSuggestions(new Map());
     setEntries(new Map());
     setDismissedIds(new Set());
     setManualMatches(new Map());
@@ -166,7 +175,7 @@ function CallsPageContent() {
       const data = await res.json();
       setMeetings(data.meetings ?? []);
       setHasAnalyzed(true);
-      void loadGranolaNotes(selectedWeek);
+      void loadGranolaNotes(selectedWeek, data.meetings ?? []);
     } catch (err) {
       setAnalyzeError(
         err instanceof Error ? err.message : "Unexpected error"
@@ -180,7 +189,8 @@ function CallsPageContent() {
   // Attach each matched summary to its row's Notes (only when the row has no
   // notes yet, so nothing typed by hand is replaced). Rows without a Granola
   // note stay as they are. A failure here never blocks the Call Logger.
-  async function loadGranolaNotes(week: WeekRange) {
+  async function loadGranolaNotes(week: WeekRange, weekMeetings: MeetingRow[]) {
+    const generation = ++loadGeneration.current;
     try {
       const res = await fetch(`/api/granola/notes?start=${week.start}&end=${week.end}`, { cache: "no-store" });
       if (!res.ok) return;
@@ -191,6 +201,7 @@ function CallsPageContent() {
       for (const n of data.notes ?? []) {
         byEvent.set(n.eventId, { noteId: n.noteId, title: n.title, summary: n.summary, webUrl: n.webUrl });
       }
+      if (generation !== loadGeneration.current) return;
       setGranolaNotes(byEvent);
       setEntries((prev) => {
         const next = new Map(prev);
@@ -208,9 +219,85 @@ function CallsPageContent() {
         }
         return next;
       });
+      await loadSuggestions(week, weekMeetings, byEvent, generation);
     } catch {
       // Non-critical: the rows just show no Granola note.
     }
+  }
+
+  // Stored suggestions first; then write any missing ones (two at a time),
+  // for rows that have a Granola note and a matched account.
+  async function loadSuggestions(
+    week: WeekRange,
+    weekMeetings: MeetingRow[],
+    notesByEvent: Map<string, GranolaRowNote>,
+    generation: number,
+  ) {
+    const stored = new Map<string, RowSuggestion & { granolaNoteId?: string | null }>();
+    try {
+      const res = await fetch(`/api/calls/suggestions?start=${week.start}&end=${week.end}`, { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { suggestions?: Array<RowSuggestion & { eventId: string; granolaNoteId: string | null }> };
+        for (const s of data.suggestions ?? []) stored.set(s.eventId, s);
+      }
+    } catch {
+      /* fall through: missing ones are written below */
+    }
+    if (generation !== loadGeneration.current) return;
+    setSuggestions(new Map(stored));
+
+    const missing = weekMeetings.filter((m) => {
+      const note = notesByEvent.get(m.eventId);
+      if (!note || m.allMatches.length === 0) return false;
+      const s = stored.get(m.eventId);
+      return !s || s.granolaNoteId !== note.noteId;
+    });
+    let index = 0;
+    async function worker() {
+      while (index < missing.length) {
+        const m = missing[index++];
+        if (generation !== loadGeneration.current) return;
+        setSuggestionsLoading((prev) => new Set(prev).add(m.eventId));
+        try {
+          const res = await fetch("/api/calls/suggest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              eventId: m.eventId,
+              meetingTitle: m.subject,
+              meetingDate: m.meetingDate,
+              accountId: m.allMatches[0]?.accountId,
+              accountName: m.allMatches[0]?.accountName,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.suggestion && generation === loadGeneration.current) {
+            handleSuggestion(m.eventId, data.suggestion as RowSuggestion);
+          }
+        } catch {
+          // The row just has no suggestion; "Suggest again" in its notes retries.
+        } finally {
+          setSuggestionsLoading((prev) => {
+            const next = new Set(prev);
+            next.delete(m.eventId);
+            return next;
+          });
+        }
+      }
+    }
+    await Promise.all([worker(), worker()]);
+  }
+
+  function handleSuggestion(eventId: string, s: RowSuggestion) {
+    setSuggestions((prev) =>
+      new Map(prev).set(eventId, {
+        commentary: s.commentary ?? null,
+        callType: s.callType ?? null,
+        typeReason: s.typeReason ?? null,
+        followUpDays: s.followUpDays ?? null,
+        followUpReason: s.followUpReason ?? null,
+      }),
+    );
   }
 
   // ── Dismiss management ─────────────────────────────────────────────────────
@@ -453,6 +540,15 @@ function CallsPageContent() {
     ([id, e]) => !dismissedIds.has(id) && (e.callType === "C1" || e.callType === "RCC")
   ).length;
 
+  // Rows about to be logged that still show suggestions you haven't accepted:
+  // those fields log empty, exactly as if they'd been left blank.
+  const rowsWithUnaccepted = Array.from(entries.entries()).filter(
+    ([id, e]) =>
+      !dismissedIds.has(id) &&
+      (e.callType === "C1" || e.callType === "RCC") &&
+      pendingSuggestionFields(e, suggestions.get(id)).length > 0,
+  ).length;
+
   const bothConnected = sfConnected === true && msConnected === true;
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -549,7 +645,9 @@ function CallsPageContent() {
                   onChange={(week) => {
                     setSelectedWeek(week);
                     setMeetings([]);
+                    loadGeneration.current++;
                     setGranolaNotes(new Map());
+                    setSuggestions(new Map());
                     setEntries(new Map());
                     setHasAnalyzed(false);
                     setSubmitResult(null);
@@ -603,6 +701,9 @@ function CallsPageContent() {
                   manualMatches={manualMatches}
                   onManualMatch={handleManualMatch}
                   granolaNotes={granolaNotes}
+                  suggestions={suggestions}
+                  suggestionsLoading={suggestionsLoading}
+                  onSuggestion={handleSuggestion}
                 />
               </>
             )}
@@ -694,6 +795,11 @@ function CallsPageContent() {
                 <span className="text-white text-sm">
                   <strong>{actionableCount}</strong> call
                   {actionableCount !== 1 ? "s" : ""} ready to log
+                  {rowsWithUnaccepted > 0 && (
+                    <span className="ml-2 text-xs text-gray-300">
+                      ({rowsWithUnaccepted} with suggestions not accepted yet: those fields log empty)
+                    </span>
+                  )}
                 </span>
                 <div className="flex gap-3">
                   <button
