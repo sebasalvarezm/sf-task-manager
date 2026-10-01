@@ -40,5 +40,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Static images in /public (the Valstone logo) are not behind the login:
+  // the Next image optimizer fetches them server-side without the session
+  // cookie, so protecting them broke the logo on every page.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico)$).*)"],
 };
