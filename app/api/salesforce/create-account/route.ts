@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { createAccount, AccountCreatePayload } from "@/lib/salesforce-accounts";
+import { searchAccountsByName } from "@/lib/salesforce-calls";
+import { normalizeDomain } from "@/lib/account-match";
 
 type CreateAccountRequest = {
   companyName: string;
@@ -35,6 +37,24 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Duplicate guard, checked live at click time (the warning on the page
+    // was computed when the enrichment ran and can be stale, e.g. after a
+    // reload). If an account with this website already exists, don't create
+    // a second one.
+    if (normalizeDomain(body.website)) {
+      const existing = await searchAccountsByName(body.website.trim());
+      if (existing.length > 0) {
+        return NextResponse.json(
+          {
+            error: `Already in Salesforce as "${existing[0].accountName}". Not created again.`,
+            accountId: existing[0].accountId,
+            accountUrl: existing[0].accountUrl,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const payload: AccountCreatePayload = {
       Name: body.companyName.trim(),
       Website: body.website.trim(),
@@ -69,6 +89,12 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
 
+    if (message === "NOT_CONNECTED") {
+      return NextResponse.json(
+        { error: "Salesforce is not connected. Connect it and try again." },
+        { status: 401 },
+      );
+    }
     if (message.includes("DUPLICATE")) {
       return NextResponse.json(
         { error: "An account with this name or website may already exist in Salesforce." },
