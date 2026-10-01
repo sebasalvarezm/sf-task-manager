@@ -790,24 +790,36 @@ export default function WeeklyOutreachPage() {
     setItems((previous) =>
       previous.map((row) => (row.id === item.id ? { ...row, ...optimisticChanges } : row)),
     );
-    const res = await fetch("/api/weekly-outreach", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: item.id, ...changes }),
-    });
-    if (!res.ok) {
-      setError((await res.json()).error ?? "Could not update row");
-      await load(true);
+    try {
+      const res = await fetch("/api/weekly-outreach", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, ...changes }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Could not update row");
+        await load(true);
+        return false;
+      }
+      return true;
+    } catch {
+      // Offline or the request never arrived: undo the optimistic edit so
+      // the screen doesn't show a change that was never saved.
+      setError(`Couldn't save the change to ${item.account_name}. Check your connection and try again.`);
+      await load(true).catch(() => {});
       return false;
     }
-    return true;
   }
 
   async function removeRow(item: WeeklyOutreachItem) {
     if (!window.confirm(`Remove ${item.account_name} from this week?`)) return;
-    const res = await fetch(`/api/weekly-outreach?id=${item.id}`, { method: "DELETE" });
-    if (!res.ok) {
-      setError((await res.json()).error ?? "Could not remove row");
+    const res = await fetch(`/api/weekly-outreach?id=${item.id}`, { method: "DELETE" }).catch(
+      () => null,
+    );
+    if (!res || !res.ok) {
+      const data = res ? await res.json().catch(() => ({})) : {};
+      setError(data.error ?? `Couldn't remove ${item.account_name}. Check your connection and try again.`);
       return;
     }
     setItems((previous) => previous.filter((row) => row.id !== item.id));
@@ -1014,7 +1026,7 @@ export default function WeeklyOutreachPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not create sourcing batch");
-      await fetch("/api/weekly-outreach", {
+      const markRes = await fetch("/api/weekly-outreach", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1023,6 +1035,13 @@ export default function WeeklyOutreachPage() {
           sourcingJobId: data.jobId,
         }),
       });
+      if (!markRes.ok) {
+        // The batch is running, but the rows weren't marked, so they still
+        // look unsourced. Say so, so the button isn't pressed again.
+        setError(
+          "The Sourcing batch started, but these rows couldn't be marked as researching. Don't start another batch; refresh in a minute.",
+        );
+      }
       setMessage(`Created one Sourcing batch for ${e1s.length} E1s. Nothing was sent.`);
       await load(true);
       router.push(`/sourcing?jobId=${data.jobId}`);
