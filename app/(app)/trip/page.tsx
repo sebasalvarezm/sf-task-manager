@@ -587,7 +587,7 @@ export default function TripPage() {
                                   }
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-gray-400 hover:text-navy"
+                                  className="text-gray-400 hover:text-navy break-all"
                                 >
                                   {r.website}
                                 </a>

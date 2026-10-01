@@ -359,7 +359,7 @@ export default function CallLoggerTable({
         <thead>
           <tr>
             <th className="w-8" />
-            <th>Meeting Title</th>
+            <th className="min-w-[180px]">Meeting Title</th>
             <th>Account</th>
             <th>Salesforce</th>
             <th>Date</th>

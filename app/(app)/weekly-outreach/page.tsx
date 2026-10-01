@@ -1325,7 +1325,7 @@ export default function WeeklyOutreachPage() {
         )}
 
         <div className="mb-4 rounded-xl border border-line bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
                 <span className="text-3xl font-bold text-ink">{counts.total}</span>
@@ -1454,14 +1454,14 @@ export default function WeeklyOutreachPage() {
           {items.map((item, index) => (
             <div key={item.id} className={`rounded-xl border border-line p-4 shadow-sm ${sentRowTone(item)}`}>
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="rounded bg-brand-soft px-2 py-1 text-xs font-bold text-brand">
                       {item.outreach_type}
                     </span>
                     <span className="text-xs text-ink-muted">#{index + 1}</span>
                   </div>
-                  <h3 className="mt-2 truncate text-base font-semibold text-ink">
+                  <h3 className="mt-2 break-words text-base font-semibold text-ink">
                     {item.account_name}
                   </h3>
                   <p className="mt-1 text-xs text-ink-muted">
@@ -1498,7 +1498,7 @@ export default function WeeklyOutreachPage() {
                 </div>
                 <div className="rounded-lg bg-surface-2 p-2">
                   <span className="block text-ink-muted">Subgroup / Sequence</span>
-                  <span className="font-medium text-ink">{item.group_name || "—"}</span>
+                  <span className="break-words font-medium text-ink">{item.group_name || "—"}</span>
                 </div>
               </div>
 
@@ -1642,7 +1642,7 @@ export default function WeeklyOutreachPage() {
               <thead className="sticky top-0 z-10 bg-surface-3 text-left font-semibold text-ink-muted">
                 <tr>
                   <th className="w-10 border-b border-r border-line px-2 py-2 text-center">#</th>
-                  <th className="w-20 border-b border-r border-line px-2 py-2">Type</th>
+                  <th className="w-24 border-b border-r border-line px-2 py-2">Type</th>
                   <th className="min-w-60 border-b border-r border-line px-2 py-2">Company</th>
                   <th className="min-w-40 border-b border-r border-line px-2 py-2">Industry</th>
                   <th className="min-w-32 border-b border-r border-line px-2 py-2">Country</th>
