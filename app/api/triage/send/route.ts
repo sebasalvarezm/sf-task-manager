@@ -48,6 +48,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Double-send guard: claim the row by stamping sent_at, only if it is
+  // still empty. A second click (or a second tab) finds it already claimed.
+  // If the sent_at column hasn't been added yet (supabase/2026-10-review-
+  // fixes.sql), the claim errors and we fall back to sending unguarded.
+  const { data: claimed, error: claimError } = await supabase
+    .from("email_triage")
+    .update({ sent_at: new Date().toISOString() })
+    .eq("id", id)
+    .is("sent_at", null)
+    .select("id");
+  if (!claimError && (claimed?.length ?? 0) === 0) {
+    return NextResponse.json(
+      { error: "This reply was already sent." },
+      { status: 409 }
+    );
+  }
+
   try {
     await sendEmail({
       to: email.sender_email,
@@ -67,6 +84,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to send email";
+
+    // Nothing went out, so release the claim and allow a retry.
+    if (!claimError) {
+      await supabase.from("email_triage").update({ sent_at: null }).eq("id", id);
+    }
 
     if (message === "MS_NOT_CONNECTED") {
       return NextResponse.json(

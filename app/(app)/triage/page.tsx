@@ -29,6 +29,8 @@ type TriageEmail = {
   review_status: "pending" | "approved" | "edited" | "rejected" | null;
   edited_draft: string | null;
   reviewed_at: string | null;
+  /** Set once the reply has gone out (column added Oct 2026; may be absent). */
+  sent_at?: string | null;
   created_at: string;
 };
 
@@ -127,7 +129,12 @@ export default function TriagePage() {
         setEmails((prev) =>
           prev.map((e) =>
             e.id === id
-              ? { ...e, review_status: e.edited_draft ? "edited" : "approved", reviewed_at: new Date().toISOString() }
+              ? {
+                  ...e,
+                  review_status: e.edited_draft ? "edited" : "approved",
+                  reviewed_at: new Date().toISOString(),
+                  sent_at: new Date().toISOString(),
+                }
               : e
           )
         );
@@ -526,9 +533,13 @@ export default function TriagePage() {
                                 ? "Edited & Saved"
                                 : "Rejected"}
                             </span>
-                            {/* Allow sending even after approval */}
+                            {email.sent_at && (
+                              <span className="text-xs font-medium text-green-700">Reply sent</span>
+                            )}
+                            {/* Allow sending after approval, but only once */}
                             {msConnected &&
                               email.sender_email &&
+                              !email.sent_at &&
                               email.review_status !== "rejected" && (
                                 <button
                                   onClick={() => handleSend(email.id)}
