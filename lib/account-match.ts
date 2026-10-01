@@ -150,3 +150,30 @@ export function accountWhereClause(query: AccountQuery): string {
   const name = escapeSoql(query.name);
   return `(Name = '${name}' OR Name LIKE '%${name}%')`;
 }
+
+/**
+ * WHERE clause for exact-name matches only, or null for a website query.
+ *
+ * The broad clause above is capped at 200 rows in alphabetical order, so for a
+ * short or common name ("ITS") the exact account can sort past the cut-off and
+ * never reach the ranking. Callers run this narrow query too and merge, so an
+ * exact match is always among the candidates.
+ */
+export function exactNameWhereClause(query: AccountQuery): string | null {
+  if (query.kind !== "name" || !query.name.trim()) return null;
+  return `Name = '${escapeSoql(query.name)}'`;
+}
+
+/** Merge account lists, keeping the first copy of each id. */
+export function mergeAccountsById<T extends { accountId: string }>(...lists: T[][]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const list of lists) {
+    for (const account of list) {
+      if (seen.has(account.accountId)) continue;
+      seen.add(account.accountId);
+      out.push(account);
+    }
+  }
+  return out;
+}

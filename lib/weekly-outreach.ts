@@ -2,7 +2,13 @@ import { addDays, startOfWeek, format } from "date-fns";
 import { sfErrorText, sfFetch } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
 import { getValidCredentials } from "./token-manager";
-import { accountWhereClause, parseAccountQuery, pickAccount } from "./account-match";
+import {
+  accountWhereClause,
+  exactNameWhereClause,
+  mergeAccountsById,
+  parseAccountQuery,
+  pickAccount,
+} from "./account-match";
 import type { RceThreadConfidence } from "./rce-thread-match";
 
 export type WeeklyOutreachType = "E1" | "RCE";
@@ -296,8 +302,12 @@ export async function resolveWeeklyAccountByName(
   // exact name > starts-with > whole word > contains; URLs match on the
   // Website domain. See lib/account-match.ts.
   const query = parseAccountQuery(name);
-  const rows = await queryAccounts(credentials, accountWhereClause(query), 200);
-  const { account, candidates } = pickAccount(query, rows);
+  const exactWhere = exactNameWhereClause(query);
+  const [exactRows, rows] = await Promise.all([
+    exactWhere ? queryAccounts(credentials, exactWhere, 20) : Promise.resolve([]),
+    queryAccounts(credentials, accountWhereClause(query), 200),
+  ]);
+  const { account, candidates } = pickAccount(query, mergeAccountsById(exactRows, rows));
   return {
     account,
     candidates: candidates.slice(0, 10).map(({ matchScore: _score, ...rest }) => rest),

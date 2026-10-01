@@ -127,3 +127,19 @@ describe("accountWhereClause", () => {
     );
   });
 });
+
+describe("exact match is never lost to the 200-row cap", () => {
+  it("exactNameWhereClause only applies to names", async () => {
+    const { exactNameWhereClause } = await import("../lib/account-match");
+    expect(exactNameWhereClause({ kind: "name", name: "ITS" })).toBe("Name = 'ITS'");
+    expect(exactNameWhereClause({ kind: "domain", domain: "acme.com", raw: "acme.com" })).toBeNull();
+  });
+
+  it("an exact row merged in front of 200 'contains' rows still wins", async () => {
+    const { mergeAccountsById } = await import("../lib/account-match");
+    const contains = Array.from({ length: 200 }, (_, i) => acct(`Bits ${i}`, null, `c${i}`));
+    const merged = mergeAccountsById([acct("ITS", null, "exact")], contains);
+    const { account } = pickAccount(parseAccountQuery("ITS"), merged);
+    expect(account?.accountId).toBe("exact");
+  });
+});

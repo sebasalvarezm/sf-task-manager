@@ -1,6 +1,12 @@
 import { getValidCredentials } from "./token-manager";
 import { assertSalesforceId, sfErrorText, sfFetch, sfQuery } from "./sf-query";
-import { accountWhereClause, parseAccountQuery, rankAccounts } from "./account-match";
+import {
+  accountWhereClause,
+  exactNameWhereClause,
+  mergeAccountsById,
+  parseAccountQuery,
+  rankAccounts,
+} from "./account-match";
 import { format, addDays } from "date-fns";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -102,20 +108,24 @@ export async function searchAccountsByName(
   // URL match on the Website domain. See lib/account-match.ts.
   const parsed = parseAccountQuery(searchQuery);
   const query = `SELECT Id, Name, Website FROM Account WHERE ${accountWhereClause(parsed)} ORDER BY Name ASC LIMIT 200`;
+  const exactWhere = exactNameWhereClause(parsed);
 
-  const records = await sfQuery<{ Id: string; Name: string; Website?: string }>(
-    query,
-    credentials
-  );
+  type Row = { Id: string; Name: string; Website?: string };
+  const [exactRecords, records] = await Promise.all([
+    exactWhere
+      ? sfQuery<Row>(`SELECT Id, Name, Website FROM Account WHERE ${exactWhere} LIMIT 20`, credentials)
+      : Promise.resolve([] as Row[]),
+    sfQuery<Row>(query, credentials),
+  ]);
 
-  const accounts: SalesforceAccountMatch[] = records.map((r) => ({
+  const accounts: SalesforceAccountMatch[] = [...exactRecords, ...records].map((r) => ({
     accountId: r.Id,
     accountName: r.Name,
     accountUrl: `${credentials.instance_url}/${r.Id}`,
     website: r.Website ?? null,
   }));
 
-  return rankAccounts(parsed, accounts)
+  return rankAccounts(parsed, mergeAccountsById(accounts))
     .slice(0, 10)
     .map(({ matchScore: _score, ...rest }) => rest);
 }
