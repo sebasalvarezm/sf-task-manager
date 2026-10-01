@@ -271,7 +271,9 @@ export const sourcingBulkJob = inngest.createFunction(
               sourcing_job_id: null,
               context_summary: `Batch stopped: ${msg}`,
             })
-            .in("id", input.weeklyOutreachIds!);
+            .in("id", input.weeklyOutreachIds!)
+            // Rows already written as draft_ready keep their draft.
+            .eq("status", "researching");
         });
       }
       await step.run("mark-failed", () => markFailed(jobId, msg));
