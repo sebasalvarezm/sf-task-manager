@@ -192,43 +192,50 @@ export const sourcingBulkJob = inngest.createFunction(
       }
 
       if (Array.isArray(input.weeklyOutreachIds)) {
-        const supabase = getSupabaseAdmin();
-        for (let i = 0; i < Math.min(input.weeklyOutreachIds.length, processed.length); i++) {
-          const item = processed[i];
-          if (!item.result || item.error) {
-            await supabase
+        // Inside a step so a retry or replay doesn't redo these writes, and
+        // a Supabase error fails the step instead of being ignored.
+        const weeklyIds = input.weeklyOutreachIds;
+        await step.run("write-weekly-outreach", async () => {
+          const supabase = getSupabaseAdmin();
+          for (let i = 0; i < Math.min(weeklyIds.length, processed.length); i++) {
+            const item = processed[i];
+            if (!item.result || item.error) {
+              const { error: rowError } = await supabase
+                .from("weekly_outreach")
+                .update({
+                  status: "needs_context",
+                  context_summary: item.error ?? "This company could not be sourced",
+                })
+                .eq("id", weeklyIds[i]);
+              if (rowError) throw new Error(rowError.message);
+              continue;
+            }
+            const packaged = item.result.prepackagedEmail;
+            const draft = packaged && !packaged.skipped
+              ? [packaged.subject, packaged.body].filter(Boolean).join("\n\n")
+              : null;
+            const classification = item.result.portfolioMatch.matched
+              ? {
+                  ...(item.result.portfolioMatch.mainGroup
+                    ? { industry: item.result.portfolioMatch.mainGroup }
+                    : {}),
+                  ...(item.result.portfolioMatch.group
+                    ? { group_name: item.result.portfolioMatch.group }
+                    : {}),
+                }
+              : {};
+            const { error: rowError } = await supabase
               .from("weekly_outreach")
               .update({
-                status: "needs_context",
-                context_summary: item.error ?? "This company could not be sourced",
+                ...classification,
+                status: draft ? "draft_ready" : "needs_context",
+                draft,
+                context_summary: item.result.emailHook ?? null,
               })
-              .eq("id", input.weeklyOutreachIds[i]);
-            continue;
+              .eq("id", weeklyIds[i]);
+            if (rowError) throw new Error(rowError.message);
           }
-          const packaged = item.result.prepackagedEmail;
-          const draft = packaged && !packaged.skipped
-            ? [packaged.subject, packaged.body].filter(Boolean).join("\n\n")
-            : null;
-          const classification = item.result.portfolioMatch.matched
-            ? {
-                ...(item.result.portfolioMatch.mainGroup
-                  ? { industry: item.result.portfolioMatch.mainGroup }
-                  : {}),
-                ...(item.result.portfolioMatch.group
-                  ? { group_name: item.result.portfolioMatch.group }
-                  : {}),
-              }
-            : {};
-          await supabase
-            .from("weekly_outreach")
-            .update({
-              ...classification,
-              status: draft ? "draft_ready" : "needs_context",
-              draft,
-              context_summary: item.result.emailHook ?? null,
-            })
-            .eq("id", input.weeklyOutreachIds[i]);
-        }
+        });
       }
 
       await step.run("mark-succeeded", () =>
