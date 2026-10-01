@@ -359,6 +359,7 @@ function OutreachPageContent() {
                 </span>
                 <button
                   onClick={async () => {
+                    if (!window.confirm("Disconnect Outreach? This signs the whole app out of Outreach until you reconnect.")) return;
                     await fetch("/api/outreach/status", { method: "DELETE" });
                     setOutreachConnected(false);
                   }}

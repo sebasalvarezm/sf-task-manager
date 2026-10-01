@@ -438,6 +438,7 @@ export default function StatsPage() {
   }
 
   async function handleSfDisconnect() {
+    if (!window.confirm("Disconnect Salesforce? This signs the whole app out of Salesforce until you reconnect.")) return;
     await fetch("/api/salesforce/status", { method: "DELETE" });
     setSfConnected(false);
     setData(null);
