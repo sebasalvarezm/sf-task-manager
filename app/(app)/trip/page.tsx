@@ -95,6 +95,10 @@ export default function TripPage() {
         if (res.ok) {
           const d = await res.json();
           setSfConnected(d.connected);
+        } else {
+          // A failed status check means "can't tell": show the connect
+          // prompt rather than "Checking connection…" forever.
+          setSfConnected(false);
         }
       } catch {
         setSfConnected(false);

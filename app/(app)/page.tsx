@@ -96,9 +96,9 @@ export default function HomePage() {
         fetch("/api/microsoft/status"),
         fetch("/api/outreach/status"),
       ]);
-      if (sfRes.ok) setSfConnected((await sfRes.json()).connected);
-      if (msRes.ok) setMsConnected((await msRes.json()).connected);
-      if (orRes.ok) setOutreachConnected((await orRes.json()).connected);
+      if (sfRes.ok) setSfConnected((await sfRes.json()).connected); else setSfConnected(false);
+      if (msRes.ok) setMsConnected((await msRes.json()).connected); else setMsConnected(false);
+      if (orRes.ok) setOutreachConnected((await orRes.json()).connected); else setOutreachConnected(false);
     } catch {
       setSfConnected(false);
       setMsConnected(false);

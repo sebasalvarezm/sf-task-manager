@@ -158,10 +158,18 @@ function OutreachPageContent() {
         if (sfRes.ok) {
           const d = await sfRes.json();
           setSfConnected(d.connected);
+        } else {
+          // A failed status check means "can't tell": show the connect
+          // prompt rather than "Checking connection…" forever.
+          setSfConnected(false);
         }
         if (orRes.ok) {
           const d = await orRes.json();
           setOutreachConnected(d.connected);
+        } else {
+          // A failed status check means "can't tell": show the connect
+          // prompt rather than "Checking connection…" forever.
+          setOutreachConnected(false);
         }
       } catch {
         setSfConnected(false);

@@ -76,6 +76,10 @@ export default function TriagePage() {
         if (res.ok) {
           const data = await res.json();
           setMsConnected(data.connected);
+        } else {
+          // A failed status check means "can't tell": show the connect
+          // prompt rather than "Checking connection…" forever.
+          setMsConnected(false);
         }
       } catch {
         setMsConnected(false);

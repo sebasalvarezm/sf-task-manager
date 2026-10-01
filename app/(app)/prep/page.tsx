@@ -316,10 +316,18 @@ function PrepPageContent() {
       if (sfRes.ok) {
         const sfData = await sfRes.json();
         setSfConnected(sfData.connected);
+      } else {
+        // A failed status check means "can't tell": show the connect
+        // prompt rather than "Checking connection…" forever.
+        setSfConnected(false);
       }
       if (msRes.ok) {
         const msData = await msRes.json();
         setMsConnected(msData.connected);
+      } else {
+        // A failed status check means "can't tell": show the connect
+        // prompt rather than "Checking connection…" forever.
+        setMsConnected(false);
       }
     } catch {
       setSfConnected(false);

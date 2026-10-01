@@ -131,6 +131,10 @@ function TasksPageContent() {
         const data = await res.json();
         setConnected(data.connected);
         if (data.connected) loadTasks();
+      } else {
+        // A failed status check means "can't tell": show the connect
+        // prompt rather than "Checking connection…" forever.
+        setConnected(false);
       }
     } catch {
       setConnected(false);
