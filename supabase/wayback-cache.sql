@@ -13,3 +13,6 @@ CREATE TABLE IF NOT EXISTS wayback_snapshots (
   failure_type TEXT,
   fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- RLS on, no policies: only the server-side service-role key can use this table.
+ALTER TABLE wayback_snapshots ENABLE ROW LEVEL SECURITY;

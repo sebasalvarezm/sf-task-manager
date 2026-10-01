@@ -29,3 +29,6 @@ DROP TRIGGER IF EXISTS trg_app_settings_updated_at ON app_settings;
 CREATE TRIGGER trg_app_settings_updated_at
   BEFORE UPDATE ON app_settings
   FOR EACH ROW EXECUTE FUNCTION jobs_set_updated_at();
+
+-- RLS on, no policies: only the server-side service-role key can use this table.
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;

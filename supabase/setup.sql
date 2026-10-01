@@ -286,3 +286,21 @@ DROP TRIGGER IF EXISTS trg_weekly_outreach_updated_at ON weekly_outreach;
 CREATE TRIGGER trg_weekly_outreach_updated_at
   BEFORE UPDATE ON weekly_outreach
   FOR EACH ROW EXECUTE FUNCTION jobs_set_updated_at();
+
+-- ============================================================
+-- Row Level Security (added Oct 2026)
+-- ============================================================
+-- The app only uses the service-role key (which ignores RLS). Enabling RLS
+-- with no policies means the public anon key can't read the OAuth tokens or
+-- anything else. supabase/2026-10-review-fixes.sql does the same for an
+-- existing project.
+ALTER TABLE sf_credentials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ms_credentials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE outreach_credentials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE task_actions_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE email_triage ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE weekly_outreach ENABLE ROW LEVEL SECURITY;
+ALTER TABLE account_geocache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE starred_opportunities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE deal_docs ENABLE ROW LEVEL SECURITY;
