@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
+import { redirectToOAuth } from "@/lib/oauth-state";
 
 // Redirects the user to the Salesforce OAuth login page.
 // After the user approves access, Salesforce sends them back to /api/salesforce/callback.
@@ -25,6 +26,5 @@ export async function GET() {
     scope: "api refresh_token offline_access",
   });
 
-  const authUrl = `https://login.salesforce.com/services/oauth2/authorize?${params.toString()}`;
-  return NextResponse.redirect(authUrl);
+  return redirectToOAuth("salesforce", "https://login.salesforce.com/services/oauth2/authorize", params);
 }

@@ -5,14 +5,14 @@ import { SESSION_COOKIE, internCanAccess, roleFromCookieValue } from "@/lib/role
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Always allow: login page, auth API, OAuth callbacks,
-  // and /api/inngest (Inngest validates requests via signing-key headers itself)
+  // Always allow: login page, auth API, /api/triage (each triage route checks
+  // the session or its API key itself), and /api/inngest (Inngest validates
+  // requests via signing-key headers itself). OAuth callbacks are NOT public:
+  // the browser returns from the provider with the session cookie, and each
+  // callback also checks the OAuth `state` value.
   const publicPaths = [
     "/login",
     "/api/auth/",
-    "/api/salesforce/callback",
-    "/api/microsoft/callback",
-    "/api/outreach/callback",
     "/api/triage",
     "/api/inngest",
   ];

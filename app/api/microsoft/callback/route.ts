@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { clearOAuthState, oauthStateMatches } from "@/lib/oauth-state";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
 // Microsoft sends the user here after they log in and approve access.
@@ -9,15 +10,23 @@ export async function GET(request: NextRequest) {
   const error = searchParams.get("error");
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  // Every exit clears the one-time OAuth state cookie.
+  const done = (url: string) =>
+    clearOAuthState(NextResponse.redirect(url), "microsoft");
 
   if (error) {
-    return NextResponse.redirect(
+    return done(
       `${appUrl}/calls?ms_error=${encodeURIComponent(error)}`
     );
   }
 
   if (!code) {
-    return NextResponse.redirect(`${appUrl}/calls?ms_error=missing_code`);
+    return done(`${appUrl}/calls?ms_error=missing_code`);
+  }
+
+  // Reject callbacks that did not start from our own Connect button.
+  if (!oauthStateMatches(request, "microsoft")) {
+    return done(`${appUrl}/calls?ms_error=invalid_state`);
   }
 
   const clientId = process.env.MS_CLIENT_ID;
@@ -25,7 +34,7 @@ export async function GET(request: NextRequest) {
   const callbackUrl = process.env.MS_CALLBACK_URL;
 
   if (!clientId || !clientSecret || !callbackUrl) {
-    return NextResponse.redirect(`${appUrl}/calls?ms_error=missing_env_vars`);
+    return done(`${appUrl}/calls?ms_error=missing_env_vars`);
   }
 
   // Exchange the authorization code for tokens
@@ -51,7 +60,7 @@ export async function GET(request: NextRequest) {
   if (!tokenResponse.ok) {
     const errText = await tokenResponse.text();
     console.error("Microsoft token exchange failed:", errText);
-    return NextResponse.redirect(
+    return done(
       `${appUrl}/calls?ms_error=token_exchange_failed`
     );
   }
@@ -70,8 +79,8 @@ export async function GET(request: NextRequest) {
 
   if (dbError) {
     console.error("Failed to save Microsoft tokens:", dbError);
-    return NextResponse.redirect(`${appUrl}/calls?ms_error=db_save_failed`);
+    return done(`${appUrl}/calls?ms_error=db_save_failed`);
   }
 
-  return NextResponse.redirect(`${appUrl}/calls?ms_connected=true`);
+  return done(`${appUrl}/calls?ms_connected=true`);
 }

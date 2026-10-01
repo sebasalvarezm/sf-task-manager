@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { MS_SCOPES } from "@/lib/microsoft";
 import { isAuthenticated } from "@/lib/auth";
+import { redirectToOAuth } from "@/lib/oauth-state";
 
 // Redirects the user to the Microsoft OAuth login page.
 // After the user approves access, Microsoft sends them back to /api/microsoft/callback.
@@ -29,6 +30,9 @@ export async function GET() {
   });
 
   const tenantId = process.env.MS_TENANT_ID ?? "common";
-  const authUrl = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?${params.toString()}`;
-  return NextResponse.redirect(authUrl);
+  return redirectToOAuth(
+    "microsoft",
+    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`,
+    params,
+  );
 }
