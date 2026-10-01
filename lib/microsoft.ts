@@ -1,3 +1,4 @@
+import { isDeadRefreshToken, transientRefreshError } from "./oauth-refresh";
 import { getSupabaseAdmin } from "./supabase";
 
 // How long (in minutes) before we proactively refresh the access token.
@@ -74,7 +75,11 @@ async function refreshMsAccessToken(
   );
 
   if (!response.ok) {
-    // Refresh token has expired or been revoked — user needs to reconnect
+    // Only a dead refresh token means "reconnect". Anything else (5xx, 429)
+    // is temporary, so keep the saved connection.
+    if (!(await isDeadRefreshToken(response))) {
+      throw transientRefreshError("Outlook", response.status);
+    }
     const supabase = getSupabaseAdmin();
     await supabase.from("ms_credentials").delete().eq("id", "default");
     return null;

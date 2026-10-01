@@ -1,3 +1,4 @@
+import { isDeadRefreshToken, transientRefreshError } from "./oauth-refresh";
 import { getSupabaseAdmin } from "./supabase";
 
 // Outreach.io access tokens last 2 hours; refresh after 90 minutes.
@@ -63,6 +64,11 @@ async function refreshOutreachToken(
   });
 
   if (!response.ok) {
+    // Only a dead refresh token means "reconnect". Anything else (5xx, 429)
+    // is temporary, so keep the saved connection.
+    if (!(await isDeadRefreshToken(response))) {
+      throw transientRefreshError("Outreach", response.status);
+    }
     const supabase = getSupabaseAdmin();
     await supabase.from("outreach_credentials").delete().eq("id", "default");
     return null;
