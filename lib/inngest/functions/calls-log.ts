@@ -1,4 +1,5 @@
 import { inngest } from "@/lib/inngest/client";
+import { markJobFailedFromInngest } from "@/lib/inngest/on-failure";
 import { isJobCancelled, markRunning, markSucceeded, markFailed, updateProgress } from "@/lib/jobs";
 import {
   runOneCallLog,
@@ -11,6 +12,7 @@ export const callsLogJob = inngest.createFunction(
     id: "calls-log-job",
     retries: 1,
     triggers: [{ event: "job/calls_log" }],
+    onFailure: (failure) => markJobFailedFromInngest(failure),
   },
   async ({ event, step }) => {
     const { jobId, input } = event.data as {

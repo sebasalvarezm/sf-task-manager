@@ -1,4 +1,5 @@
 import { inngest } from "@/lib/inngest/client";
+import { markJobFailedFromInngest } from "@/lib/inngest/on-failure";
 import {
   markRunning,
   markSucceeded,
@@ -12,6 +13,7 @@ export const sourcingJob = inngest.createFunction(
     id: "sourcing-job",
     retries: 1,
     triggers: [{ event: "job/sourcing" }],
+    onFailure: (failure) => markJobFailedFromInngest(failure),
   },
   async ({ event, step }) => {
     const { jobId, input } = event.data as {

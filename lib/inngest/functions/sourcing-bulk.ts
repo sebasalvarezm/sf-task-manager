@@ -1,4 +1,5 @@
 import { inngest } from "@/lib/inngest/client";
+import { markJobFailedFromInngest } from "@/lib/inngest/on-failure";
 import {
   markRunning,
   markSucceeded,
@@ -29,6 +30,21 @@ export const sourcingBulkJob = inngest.createFunction(
     id: "sourcing-bulk-job",
     retries: 1,
     triggers: [{ event: "job/sourcing_bulk" }],
+    onFailure: async (failure) => {
+      const jobId = await markJobFailedFromInngest(failure);
+      // Don't leave this batch's Weekly Outreach rows stuck on "researching".
+      if (jobId) {
+        await getSupabaseAdmin()
+          .from("weekly_outreach")
+          .update({
+            status: "needs_context",
+            sourcing_job_id: null,
+            context_summary: "Batch stopped before finishing. Prepare it again.",
+          })
+          .eq("sourcing_job_id", jobId)
+          .eq("status", "researching");
+      }
+    },
   },
   async ({ event, step }) => {
     const { jobId, input } = event.data as {
