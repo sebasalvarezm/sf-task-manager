@@ -286,8 +286,15 @@ function OutreachPageContent() {
           firstE1Description,
         }),
       });
-      const data = (await res.json()) as PushResult;
-      setPushResult({ ...pushResult, [item.accountId]: data });
+      const raw = (await res.json().catch(() => null)) as
+        | (PushResult & { error?: string })
+        | null;
+      // An error answer ({ error }) has no step results; turn it into the
+      // same shape so the result pill shows the message instead of crashing.
+      if (!res.ok || !raw || !raw.outreach_prospect) {
+        throw new Error(raw?.error ?? `Outreach push failed (HTTP ${res.status})`);
+      }
+      setPushResult({ ...pushResult, [item.accountId]: raw });
     } catch (e: unknown) {
       setPushResult({
         ...pushResult,

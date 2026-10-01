@@ -4,14 +4,16 @@ import { getAnthropicClient } from "@/lib/anthropic";
 
 export async function POST(request: Request) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const body = (await request.json()) as { notes?: string; meetingTitle?: string; accountName?: string };
+  const body = ((await request.json().catch(() => ({}))) ?? {}) as { notes?: string; meetingTitle?: string; accountName?: string };
   if (!body.notes?.trim()) return NextResponse.json({ error: "Paste Granola notes first" }, { status: 400 });
   const client = getAnthropicClient();
   if (!client) return NextResponse.json({ error: "AI service not configured" }, { status: 503 });
-  const message = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 700,
-    messages: [{ role: "user", content: `Turn these Granola meeting notes into a proposed Salesforce call log. Preserve concrete facts and the user's straightforward language; avoid AI jargon, hype, and invented conclusions.
+  let message;
+  try {
+    message = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 700,
+      messages: [{ role: "user", content: `Turn these Granola meeting notes into a proposed Salesforce call log. Preserve concrete facts and the user's straightforward language; avoid AI jargon, hype, and invented conclusions.
 
 Meeting: ${body.meetingTitle ?? "Unknown"}
 Salesforce account: ${body.accountName ?? "Unknown"}
@@ -30,7 +32,15 @@ Use null for followUpDays when no follow-up was agreed. C1 means first call; RCC
 
 GRANOLA NOTES:
 ${body.notes.slice(0, 18000)}` }],
-  });
+    });
+  } catch (err) {
+    // Rate limit / outage: answer with JSON the page can show, not a crash.
+    console.error("calls/suggest AI error:", err instanceof Error ? err.message : err);
+    return NextResponse.json(
+      { error: "The AI suggestion service is busy or unavailable. Try again in a minute, or fill the fields in yourself." },
+      { status: 503 },
+    );
+  }
   const text = message.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n");
   try {
     const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? text);
