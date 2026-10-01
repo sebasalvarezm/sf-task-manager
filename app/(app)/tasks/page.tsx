@@ -57,6 +57,8 @@ type ApplyResult = {
     error?: string;
   }>;
   queueWarnings?: string[];
+  /** Set when the batch did not come back cleanly (timeout, server error). */
+  message?: string;
 };
 
 export default function TasksPage() {
@@ -210,24 +212,29 @@ function TasksPageContent() {
         body: JSON.stringify({ actions: actionsToExecute }),
       });
 
-      const data = await res.json();
-      setApplyResult(data);
-
-      setActions(new Map());
-      await loadTasks();
-    } catch {
+      const data = (await res.json().catch(() => null)) as
+        | (ApplyResult & { error?: string })
+        | null;
+      if (res.ok && data && Array.isArray(data.results)) {
+        setApplyResult(data);
+      } else {
+        throw new Error(data?.error ?? `The server answered ${res.status}`);
+      }
+    } catch (err) {
+      // A timeout or server error does NOT mean nothing happened: the route
+      // runs actions one by one, so some may already be done in Salesforce.
+      // Reload from Salesforce instead of marking every row failed, so
+      // pressing Apply again can't create duplicate follow-up tasks.
+      const reason = err instanceof Error ? err.message : "Network error";
       setApplyResult({
         successCount: 0,
-        failCount: actionsToExecute.length,
-        results: actionsToExecute.map((a) => ({
-          taskId: a.taskId,
-          accountName: a.accountName,
-          actionType: a.actionType,
-          success: false,
-          error: "Network error",
-        })),
+        failCount: 0,
+        results: [],
+        message: `The batch didn't finish cleanly (${reason}). Some actions may already have run in Salesforce, so the list below was reloaded from Salesforce. Check it before applying again.`,
       });
     } finally {
+      setActions(new Map());
+      await loadTasks();
       setApplying(false);
     }
   }
@@ -322,9 +329,10 @@ function TasksPageContent() {
 
             {applyResult && (
               <Alert
-                variant={applyResult.failCount === 0 ? "ok" : "warn"}
+                variant={applyResult.failCount === 0 && !applyResult.message ? "ok" : "warn"}
                 onDismiss={() => setApplyResult(null)}
               >
+                {applyResult.message && <span>{applyResult.message} </span>}
                 {applyResult.successCount > 0 && (
                   <span>
                     {applyResult.successCount} action

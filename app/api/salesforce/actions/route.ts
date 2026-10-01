@@ -8,6 +8,9 @@ import {
 } from "@/lib/salesforce";
 import { addAccountToWeeklyOutreach } from "@/lib/weekly-outreach";
 
+// Actions run one at a time against Salesforce; allow a big batch to finish.
+export const maxDuration = 300;
+
 type ActionItem = {
   taskId: string;
   accountId: string | null;
