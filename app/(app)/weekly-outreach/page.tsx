@@ -180,6 +180,16 @@ export default function WeeklyOutreachPage() {
   const [reviewingRceId, setReviewingRceId] = useState<string | null>(null);
   const [reviewDraft, setReviewDraft] = useState("");
   const [reviewSaving, setReviewSaving] = useState(false);
+  // The review queue is fixed when the sheet opens, so the counter keeps
+  // reading "14 of 25" after a send instead of shrinking as rows turn "sent".
+  const [reviewQueueIds, setReviewQueueIds] = useState<string[]>([]);
+  // "Approve & Send" turns into "Confirm send" in place for a few seconds.
+  const [confirmingSend, setConfirmingSend] = useState(false);
+  const confirmSendTimer = useRef<number | null>(null);
+  // One-line error shown next to the sheet's buttons (not at the top of the page).
+  const [sheetError, setSheetError] = useState<string | null>(null);
+  // Blocks a second send while the first is still in flight, even within one click burst.
+  const sendInFlight = useRef(false);
   // Short follow-up after a sent reconnect (see /api/weekly-outreach/followup-rce).
   const [followUpItemId, setFollowUpItemId] = useState<string | null>(null);
   const [followUpBody, setFollowUpBody] = useState("");
@@ -353,16 +363,26 @@ export default function WeeklyOutreachPage() {
       ),
     [items],
   );
+  // Next draft after the current one in the queue order, skipping rows already
+  // sent. If nothing is left below, wrap to anything skipped above.
   const nextPendingRceReview = useMemo(() => {
     if (!reviewingRce) return null;
-    const index = pendingRceReviews.findIndex((item) => item.id === reviewingRce.id);
-    if (index >= 0 && index + 1 < pendingRceReviews.length) {
-      return pendingRceReviews[index + 1];
-    }
-    // Last in the queue (or opened from somewhere unexpected): wrap to the top so
-    // nothing above the current row gets skipped.
-    return pendingRceReviews.find((item) => item.id !== reviewingRce.id) ?? null;
-  }, [pendingRceReviews, reviewingRce]);
+    const pendingById = new Map(pendingRceReviews.map((item) => [item.id, item]));
+    const queue = reviewQueueIds.includes(reviewingRce.id)
+      ? reviewQueueIds
+      : pendingRceReviews.map((item) => item.id);
+    const index = queue.indexOf(reviewingRce.id);
+    const after = queue.slice(index + 1).find((id) => pendingById.has(id));
+    const before = queue.slice(0, Math.max(0, index)).find((id) => pendingById.has(id));
+    const nextId = after ?? before;
+    return nextId ? pendingById.get(nextId) ?? null : null;
+  }, [pendingRceReviews, reviewQueueIds, reviewingRce]);
+  const reviewPosition = useMemo(() => {
+    if (!reviewingRce) return null;
+    const index = reviewQueueIds.indexOf(reviewingRce.id);
+    if (index < 0 || reviewQueueIds.length < 2) return null;
+    return { current: index + 1, total: reviewQueueIds.length };
+  }, [reviewQueueIds, reviewingRce]);
 
   function registerGridCell(rowIndex: number, columnIndex: number) {
     return (element: GridCellElement | null) => {
@@ -1137,11 +1157,63 @@ export default function WeeklyOutreachPage() {
     }
   }
 
-  function openRceReview(item: WeeklyOutreachItem) {
+  function clearConfirmSend() {
+    if (confirmSendTimer.current !== null) window.clearTimeout(confirmSendTimer.current);
+    confirmSendTimer.current = null;
+    setConfirmingSend(false);
+  }
+
+  /**
+   * `fromQueue` = moving within an open sheet (next draft), which keeps the
+   * queue fixed. Opening from the sheet rows starts a fresh queue.
+   */
+  function openRceReview(item: WeeklyOutreachItem, options?: { fromQueue?: boolean }) {
+    if (!options?.fromQueue) {
+      const ids = pendingRceReviews.map((row) => row.id);
+      setReviewQueueIds(ids.includes(item.id) ? ids : [...ids, item.id]);
+    }
     setReviewingRceId(item.id);
     setReviewDraft(item.draft ?? "");
+    clearConfirmSend();
+    setSheetError(null);
     setError(null);
   }
+
+  function closeReviewSheet() {
+    clearConfirmSend();
+    setSheetError(null);
+    setReviewingRceId(null);
+    setReviewDraft("");
+    setReviewQueueIds([]);
+  }
+
+  /** After a send or "mark sent": open the next draft, or finish. */
+  function advanceRceReview(next: WeeklyOutreachItem | null) {
+    if (next) {
+      openRceReview(next, { fromQueue: true });
+      return;
+    }
+    closeReviewSheet();
+    setMessage("All RCEs reviewed.");
+  }
+
+  function startConfirmSend() {
+    clearConfirmSend();
+    setSheetError(null);
+    setConfirmingSend(true);
+    // Back to "Approve & Send" if not confirmed within a few seconds.
+    confirmSendTimer.current = window.setTimeout(() => {
+      confirmSendTimer.current = null;
+      setConfirmingSend(false);
+    }, 5000);
+  }
+
+  useEffect(
+    () => () => {
+      if (confirmSendTimer.current !== null) window.clearTimeout(confirmSendTimer.current);
+    },
+    [],
+  );
 
   async function copyReviewDraft() {
     if (!reviewDraft.trim()) return;
@@ -1154,12 +1226,14 @@ export default function WeeklyOutreachPage() {
     options?: { closeAfter?: boolean; silent?: boolean },
   ) {
     if (!reviewingRce || reviewSaving) return false;
-    if (
-      action === "send" &&
-      !window.confirm(`Approve and send this reply to ${reviewingRce.account_name} through Outlook now?`)
-    ) {
-      return false;
+    if (action === "send") {
+      // Confirmed in place by the "Confirm send" button; never twice at once.
+      if (sendInFlight.current) return false;
+      sendInFlight.current = true;
+      clearConfirmSend();
     }
+    // Worked out before the send, because the row leaves the queue once it turns "sent".
+    const next = nextPendingRceReview;
     if (
       action === "dismiss" &&
       !window.confirm("Dismiss this reconnect draft and remove the matching Outlook draft?")
@@ -1168,6 +1242,7 @@ export default function WeeklyOutreachPage() {
     }
     setReviewSaving(true);
     setError(null);
+    setSheetError(null);
     try {
       const res = await fetch("/api/weekly-outreach/review-rce", {
         method: "POST",
@@ -1178,36 +1253,41 @@ export default function WeeklyOutreachPage() {
           draft: reviewDraft,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (data.code === "OUTLOOK_RECONNECT_REQUIRED") {
           setOutlookReconnectRequired(true);
         }
-        throw new Error(data.error ?? "Could not review reconnect");
+        throw new Error(
+          data.error ??
+            (action === "send" ? "The email was not sent. Try again." : "Could not review reconnect"),
+        );
       }
       setItems((previous) =>
         previous.map((item) => (item.id === reviewingRce.id ? data.item : item)),
       );
       if (action === "save") {
-        if (options?.closeAfter) {
-          setReviewingRceId(null);
-          setReviewDraft("");
-        }
+        if (options?.closeAfter) closeReviewSheet();
         if (!options?.silent) setMessage("Draft saved in Weekly Outreach and Outlook.");
+      } else if (action === "send") {
+        advanceRceReview(next);
       } else {
-        setReviewingRceId(null);
-        setReviewDraft("");
-        setMessage(
-          action === "send"
-            ? `Reconnect reply sent through Outlook to ${reviewingRce.account_name}.`
-            : `Reconnect draft for ${reviewingRce.account_name} dismissed.`,
-        );
+        closeReviewSheet();
+        setMessage(`Reconnect draft for ${reviewingRce.account_name} dismissed.`);
       }
       return true;
     } catch (reviewError) {
-      setError(reviewError instanceof Error ? reviewError.message : "Could not review reconnect");
+      // Stay on this email: the error sits next to the buttons, nothing advances.
+      const text =
+        reviewError instanceof TypeError
+          ? "Couldn't reach the server. Check your connection and try again."
+          : reviewError instanceof Error
+            ? reviewError.message
+            : "Could not review reconnect";
+      setSheetError(text);
       return false;
     } finally {
+      if (action === "send") sendInFlight.current = false;
       setReviewSaving(false);
     }
   }
@@ -1219,27 +1299,20 @@ export default function WeeklyOutreachPage() {
     const sentItem = reviewingRce;
     // Worked out before the update, because the row leaves the queue once it turns "sent".
     const next = nextPendingRceReview;
-    const remaining = next ? Math.max(0, pendingRceReviews.length - 1) : 0;
+    clearConfirmSend();
     setReviewSaving(true);
     setError(null);
+    setSheetError(null);
     try {
       const saved = await updateRow(sentItem, {
         status: "sent",
         draft: reviewDraft,
       });
-      if (!saved) return;
-      if (next) {
-        openRceReview(next);
-        setMessage(
-          `${sentItem.account_name} marked sent. ${remaining} reconnect draft${remaining === 1 ? "" : "s"} left to review.`,
-        );
-      } else {
-        setReviewingRceId(null);
-        setReviewDraft("");
-        setMessage(
-          `${sentItem.account_name} marked sent. No reconnect drafts left to review this week.`,
-        );
+      if (!saved) {
+        setSheetError(`Couldn't mark ${sentItem.account_name} sent. Try again.`);
+        return;
       }
+      advanceRceReview(next);
     } finally {
       setReviewSaving(false);
     }
@@ -1251,8 +1324,7 @@ export default function WeeklyOutreachPage() {
     const hasUnsavedEdits =
       reviewDraft.trim().length > 0 && reviewDraft !== (reviewingRce.draft ?? "");
     if (!hasUnsavedEdits) {
-      setReviewingRceId(null);
-      setReviewDraft("");
+      closeReviewSheet();
       return;
     }
     // Save silently on the way out. If it fails the box stays open with the error showing,
@@ -2227,9 +2299,9 @@ export default function WeeklyOutreachPage() {
                     <h2 id="rce-review-title" className="truncate text-lg font-semibold text-ink sm:mt-1 sm:text-xl">
                       {reviewingRce.account_name}
                     </h2>
-                    {pendingRceReviews.length > 1 ? (
+                    {reviewPosition ? (
                       <span className="shrink-0 rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
-                        {Math.max(1, pendingRceReviews.findIndex((item) => item.id === reviewingRce.id) + 1)} of {pendingRceReviews.length}
+                        {reviewPosition.current} of {reviewPosition.total}
                       </span>
                     ) : null}
                   </div>
@@ -2275,7 +2347,7 @@ export default function WeeklyOutreachPage() {
                   {nextPendingRceReview ? (
                     <button
                       type="button"
-                      onClick={() => openRceReview(nextPendingRceReview)}
+                      onClick={() => openRceReview(nextPendingRceReview, { fromQueue: true })}
                       className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-3 text-lg text-ink-muted sm:hidden"
                       aria-label="Skip to next draft"
                       title="Skip to the next draft without marking this one"
@@ -2343,13 +2415,22 @@ export default function WeeklyOutreachPage() {
                         ? `Save keeps Outlook synchronized. Approve and Send sends this exact text as a new email to ${reviewingRce.takeover.contactEmail ?? "the contact"}.`
                         : "Save keeps Outlook synchronized. Approve and Send sends this exact text as a reply in the existing chain."
                       : reviewingRce.takeover
-                        ? "Edit if needed, copy and paste it into a new email to the contact, then use Sent & Next to mark this row sent and open the next draft."
-                        : "Edit if needed, copy and paste it into the correct Outlook chain, then use Sent & Next to mark this row sent and open the next draft. Nothing can send from this tool until Outlook approval is available."}
+                        ? "Edit if needed, copy and paste it into a new email to the contact, then use Mark sent & next to mark this row sent and open the next draft."
+                        : "Edit if needed, copy and paste it into the correct Outlook chain, then use Mark sent & next to mark this row sent and open the next draft. Nothing can send from this tool until Outlook approval is available."}
                   </p>
                 </section>
               </div>
 
               {/* Phone action bar: "..." menu, Done (keyboard), one primary button. */}
+              {sheetError ? (
+                <p
+                  role="alert"
+                  title={sheetError}
+                  className="truncate border-t border-line bg-danger/5 px-3 py-2 text-xs text-danger sm:hidden"
+                >
+                  {sheetError}
+                </p>
+              ) : null}
               <div className="relative flex items-center gap-2 border-t border-line bg-surface-2 p-3 sm:hidden">
                 <button
                   type="button"
@@ -2398,7 +2479,7 @@ export default function WeeklyOutreachPage() {
                           void markRceSentAndOpenNext();
                         }}
                       >
-                        {nextPendingRceReview ? "Mark sent & next (no send)" : "Mark sent (no send)"}
+                        {nextPendingRceReview ? "Mark sent & next" : "Mark sent"}
                       </button>
                     ) : null}
                     <button
@@ -2415,14 +2496,30 @@ export default function WeeklyOutreachPage() {
                   </div>
                 ) : null}
                 {reviewingRce.outlook_draft_ready ? (
-                  <Button
-                    className="flex-1"
-                    loading={reviewSaving}
-                    disabled={!reviewDraft.trim()}
-                    onClick={() => void reviewRce("send")}
-                  >
-                    Approve &amp; Send
-                  </Button>
+                  confirmingSend ? (
+                    <>
+                      <Button variant="secondary" disabled={reviewSaving} onClick={clearConfirmSend}>
+                        Cancel
+                      </Button>
+                      <Button
+                        className="flex-1"
+                        loading={reviewSaving}
+                        disabled={!reviewDraft.trim()}
+                        onClick={() => void reviewRce("send")}
+                      >
+                        Confirm send
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      className="flex-1"
+                      loading={reviewSaving}
+                      disabled={!reviewDraft.trim()}
+                      onClick={startConfirmSend}
+                    >
+                      Approve &amp; Send
+                    </Button>
+                  )
                 ) : (
                   <Button
                     className="flex-1"
@@ -2430,22 +2527,33 @@ export default function WeeklyOutreachPage() {
                     disabled={!reviewDraft.trim()}
                     onClick={() => void markRceSentAndOpenNext()}
                   >
-                    {nextPendingRceReview ? "Sent & Next" : "Mark sent"}
+                    {nextPendingRceReview ? "Mark sent & next" : "Mark sent"}
                   </Button>
                 )}
               </div>
 
-              {/* Laptop action bar: unchanged. */}
-              <div className="hidden border-t border-line bg-surface-2 p-4 sm:flex sm:justify-between sm:px-6">
+              {/* Laptop action bar: one row. Approve & Send is the primary action;
+                  without an Outlook draft there is nothing to send, so Mark sent is. */}
+              <div className="hidden border-t border-line bg-surface-2 p-4 sm:block sm:px-6">
+                {sheetError ? (
+                  <p
+                    role="alert"
+                    title={sheetError}
+                    className="mb-2 truncate text-right text-xs text-danger"
+                  >
+                    {sheetError}
+                  </p>
+                ) : null}
+                <div className="flex items-center justify-between gap-2">
                 <Button
                   variant="ghost"
-                  className="text-danger"
+                  className="shrink-0 text-danger"
                   disabled={reviewSaving}
                   onClick={() => void reviewRce("dismiss")}
                 >
                   Dismiss draft
                 </Button>
-                <div className="flex gap-2">
+                <div className="flex shrink-0 gap-2">
                   <Button
                     variant="secondary"
                     loading={reviewSaving}
@@ -2462,25 +2570,46 @@ export default function WeeklyOutreachPage() {
                     Copy draft
                   </Button>
                   <Button
-                    variant="secondary"
-                    loading={reviewSaving}
-                    disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim()}
-                    onClick={() => void reviewRce("send")}
-                  >
-                    Approve &amp; Send
-                  </Button>
-                  <Button
-                    loading={reviewSaving}
-                    disabled={!reviewDraft.trim()}
+                    variant={reviewingRce.outlook_draft_ready ? "secondary" : "primary"}
+                    loading={reviewSaving && !confirmingSend}
+                    disabled={!reviewDraft.trim() || reviewSaving}
                     title={
                       nextPendingRceReview
-                        ? `Mark sent, then open ${nextPendingRceReview.account_name} (${pendingRceReviews.length - 1} left after this one)`
-                        : "Mark sent. This is the last reconnect draft to review."
+                        ? `For an email you sent yourself: mark it sent, then open ${nextPendingRceReview.account_name}`
+                        : "For an email you sent yourself: mark it sent. This is the last reconnect draft to review."
                     }
                     onClick={() => void markRceSentAndOpenNext()}
                   >
-                    {nextPendingRceReview ? "Sent & Next" : "Mark sent"}
+                    {nextPendingRceReview ? "Mark sent & next" : "Mark sent"}
                   </Button>
+                  {reviewingRce.outlook_draft_ready && confirmingSend ? (
+                    <>
+                      <Button variant="ghost" disabled={reviewSaving} onClick={clearConfirmSend}>
+                        Cancel
+                      </Button>
+                      <Button
+                        loading={reviewSaving}
+                        disabled={!reviewDraft.trim()}
+                        onClick={() => void reviewRce("send")}
+                      >
+                        Confirm send
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant={reviewingRce.outlook_draft_ready ? "primary" : "secondary"}
+                      disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim() || reviewSaving}
+                      title={
+                        reviewingRce.outlook_draft_ready
+                          ? undefined
+                          : "No Outlook draft is attached to this row, so it can't send from here."
+                      }
+                      onClick={startConfirmSend}
+                    >
+                      Approve &amp; Send
+                    </Button>
+                  )}
+                </div>
                 </div>
               </div>
             </div>
