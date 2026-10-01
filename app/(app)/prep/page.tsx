@@ -920,12 +920,12 @@ function PrepPageContent() {
                     </p>
                   </div>
                 ) : (
-                  <div className="md:overflow-hidden md:rounded-xl md:border md:border-gray-200 md:bg-white md:shadow-sm">
+                  <div className="md:overflow-x-auto md:rounded-xl md:border md:border-gray-200 md:bg-white md:shadow-sm">
                     <table className="block w-full text-sm md:table">
                       <thead className="hidden md:table-header-group">
                         <tr className="bg-navy text-white text-xs font-semibold uppercase tracking-wider">
                           <th className="px-4 py-3 text-left w-10">#</th>
-                          <th className="px-4 py-3 text-left">Meeting</th>
+                          <th className="px-4 py-3 text-left min-w-[180px]">Meeting</th>
                           <th className="px-4 py-3 text-left w-28">Date</th>
                           <th className="px-4 py-3 text-left">Account</th>
                           <th className="px-4 py-3 text-left w-20">SF</th>

@@ -1132,8 +1132,8 @@ function SourcingResultDisplay({
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-xl font-semibold text-ink">{domain}</h2>
+        <div className="min-w-0 max-w-full">
+          <h2 className="text-xl font-semibold text-ink break-all">{domain}</h2>
           <div className="flex flex-wrap items-center gap-2 mt-1">
             {result.foundingYear && (
               <Badge variant="neutral">Founded {result.foundingYear}</Badge>
