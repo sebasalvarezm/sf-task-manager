@@ -746,8 +746,29 @@ export default function WeeklyOutreachPage() {
 
   async function updateRow(
     item: WeeklyOutreachItem,
-    changes: WeeklyRowChanges,
+    requested: WeeklyRowChanges,
   ) {
+    // Leaving a text cell without editing it must not write anything. That
+    // used to PATCH the cell's stale value back over a value a background
+    // job had just filled in (e.g. Industry from the E1 sourcing batch).
+    const changes: WeeklyRowChanges = { ...requested };
+    const textFields = {
+      notes: "notes",
+      industry: "industry",
+      country: "country",
+      city: "city",
+      tier: "tier",
+      groupName: "group_name",
+    } as const;
+    for (const [field, column] of Object.entries(textFields) as Array<
+      [keyof typeof textFields, (typeof textFields)[keyof typeof textFields]]
+    >) {
+      if (changes[field] !== undefined && (changes[field] ?? null) === (item[column] ?? null)) {
+        delete changes[field];
+      }
+    }
+    if (Object.values(changes).every((value) => value === undefined)) return true;
+
     const optimisticChanges: Partial<WeeklyOutreachItem> = {};
     if (changes.status !== undefined) optimisticChanges.status = changes.status;
     if (changes.notes !== undefined) optimisticChanges.notes = changes.notes;
@@ -1491,6 +1512,7 @@ export default function WeeklyOutreachPage() {
                     <label key={field} className={field === "industry" || field === "groupName" ? "col-span-2" : ""}>
                       <span className="mb-1 block text-[11px] font-medium text-ink-muted">{label}</span>
                       <input
+                        key={`${field}-${value ?? ""}`}
                         defaultValue={value ?? ""}
                         onBlur={(event) => updateRow(item, { [field]: event.target.value || null })}
                         className="h-10 w-full rounded-md border border-line px-2 text-sm"
@@ -1663,19 +1685,19 @@ export default function WeeklyOutreachPage() {
                       </div>
                     </td>
                     <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(index, 2)} defaultValue={item.industry ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 2)} onBlur={(event) => void updateRow(item, { industry: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                      <input key={`industry-${item.industry ?? ""}`} ref={registerGridCell(index, 2)} defaultValue={item.industry ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 2)} onBlur={(event) => void updateRow(item, { industry: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
                     </td>
                     <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(index, 3)} defaultValue={item.country ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 3)} onBlur={(event) => void updateRow(item, { country: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                      <input key={`country-${item.country ?? ""}`} ref={registerGridCell(index, 3)} defaultValue={item.country ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 3)} onBlur={(event) => void updateRow(item, { country: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
                     </td>
                     <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(index, 4)} defaultValue={item.city ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 4)} onBlur={(event) => void updateRow(item, { city: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                      <input key={`city-${item.city ?? ""}`} ref={registerGridCell(index, 4)} defaultValue={item.city ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 4)} onBlur={(event) => void updateRow(item, { city: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
                     </td>
                     <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(index, 5)} defaultValue={item.tier ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 5)} onBlur={(event) => void updateRow(item, { tier: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                      <input key={`tier-${item.tier ?? ""}`} ref={registerGridCell(index, 5)} defaultValue={item.tier ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 5)} onBlur={(event) => void updateRow(item, { tier: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
                     </td>
                     <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(index, 6)} defaultValue={item.group_name ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 6)} onBlur={(event) => void updateRow(item, { groupName: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                      <input key={`group_name-${item.group_name ?? ""}`} ref={registerGridCell(index, 6)} defaultValue={item.group_name ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 6)} onBlur={(event) => void updateRow(item, { groupName: event.target.value || null })} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
                     </td>
                     <td className="border-b border-r border-line p-0">
                       <input ref={registerGridCell(index, 7)} readOnly value={item.source} onKeyDown={(event) => handleGridNavigation(event, index, 7)} className="h-10 w-full border-0 bg-surface-2 px-2 capitalize text-ink-muted focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
