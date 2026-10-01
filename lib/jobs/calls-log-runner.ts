@@ -1,8 +1,10 @@
 import {
+  findExistingCallTasks,
   createCompletedCallTask,
   upsertFollowUpTask,
   createAccountNote,
 } from "@/lib/salesforce-calls";
+import { assertSalesforceId } from "@/lib/sf-query";
 
 export type CallLogEntry = {
   eventId: string;
@@ -26,6 +28,8 @@ export type CallLogResult = {
   followUpAction?: "created" | "moved" | null;
   followUpDate?: string | null;
   noteCreated: boolean;
+  /** True when Salesforce already had this call, so nothing was written. */
+  alreadyLogged?: boolean;
 };
 
 export type CallsLogRunResult = {
@@ -36,6 +40,31 @@ export type CallsLogRunResult = {
 
 export async function runOneCallLog(entry: CallLogEntry): Promise<CallLogResult> {
   try {
+    // Duplicate guard. A double submit, a cancelled-then-resubmitted batch or
+    // a retry after a timeout must not create a second C1/RCC task, follow-up
+    // or note. If Salesforce already has a completed C1/RCC task on this
+    // account for the meeting date, skip the whole entry.
+    assertSalesforceId(entry.accountId, "account id");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.meetingDate)) {
+      throw new Error("Invalid meeting date");
+    }
+    const existing = await findExistingCallTasks(
+      [entry.accountId],
+      entry.meetingDate,
+      entry.meetingDate,
+    );
+    if (existing.has(entry.accountId)) {
+      return {
+        eventId: entry.eventId,
+        accountName: entry.accountName,
+        callType: entry.callType,
+        success: true,
+        alreadyLogged: true,
+        followUpCreated: false,
+        noteCreated: false,
+      };
+    }
+
     const subject = entry.commentary ? `${entry.callType} - ${entry.commentary}` : entry.callType;
     await createCompletedCallTask({
       accountId: entry.accountId,

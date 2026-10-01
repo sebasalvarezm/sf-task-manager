@@ -35,7 +35,7 @@ export const callsLogJob = inngest.createFunction(
       }
       const result = {
         results,
-        successCount: results.filter((r) => r.success).length,
+        successCount: results.filter((r) => r.success && !r.alreadyLogged).length,
         failCount: results.filter((r) => !r.success).length,
       };
       await step.run("mark-succeeded", () =>

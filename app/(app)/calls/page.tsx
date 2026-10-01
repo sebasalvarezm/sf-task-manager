@@ -33,7 +33,10 @@ type SubmitResult = {
     followUpAction?: "created" | "moved" | null;
     followUpDate?: string | null;
     noteCreated: boolean;
+    alreadyLogged?: boolean;
   }>;
+  /** Shown when the background job failed or was cancelled. */
+  message?: string;
 };
 
 export default function CallsPage() {
@@ -253,10 +256,17 @@ function CallsPageContent() {
         }
       });
     } else if (latest.status === "failed" || latest.status === "cancelled") {
+      // Never show an empty banner here: say what happened. Calls logged
+      // before the stop are already in Salesforce; logging again is safe
+      // because the job skips calls Salesforce already has.
       setSubmitResult({
         successCount: 0,
-        failCount: 0,
+        failCount: 1,
         results: [],
+        message:
+          latest.status === "cancelled"
+            ? "Logging was cancelled. Any calls logged before you cancelled are already in Salesforce. Logging again skips those."
+            : `Logging failed${latest.error ? `: ${latest.error}` : "."} Any calls logged before the failure are already in Salesforce. Logging again skips those.`,
       });
       setSubmitting(false);
       setActiveCallsJobId(null);
@@ -597,9 +607,17 @@ function CallsPageContent() {
                     )}
                   </span>
                 )}
-                {submitResult.failCount > 0 && (
+                {submitResult.message && <span>{submitResult.message}</span>}
+                {submitResult.results.some((r) => r.alreadyLogged) && (
                   <span>
-                    {submitResult.failCount} failed —{" "}
+                    {" "}
+                    {submitResult.results.filter((r) => r.alreadyLogged).length} already in
+                    Salesforce, skipped.{" "}
+                  </span>
+                )}
+                {submitResult.failCount > 0 && submitResult.results.some((r) => !r.success) && (
+                  <span>
+                    {submitResult.results.filter((r) => !r.success).length} failed —{" "}
                     {submitResult.results
                       .filter((r) => !r.success)
                       .map((r) => `${r.accountName}: ${r.error}`)
