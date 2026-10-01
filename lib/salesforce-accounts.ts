@@ -1,4 +1,5 @@
 import { getValidCredentials } from "./token-manager";
+import { assertSalesforceId } from "./sf-query";
 
 // Fields sent to Salesforce when creating an Account
 export type AccountCreatePayload = {
@@ -70,6 +71,7 @@ export async function updateAccount(
   accountId: string,
   fields: AccountFieldUpdate
 ): Promise<void> {
+  assertSalesforceId(accountId, "account id");
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 

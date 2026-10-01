@@ -1,6 +1,6 @@
 import { getValidCredentials } from "./token-manager";
 import { getSupabaseAdmin } from "./supabase";
-import { sfQuery } from "./sf-query";
+import { assertSalesforceId, sfQuery } from "./sf-query";
 import { addDays, format } from "date-fns";
 
 export type SalesforceTask = {
@@ -58,6 +58,7 @@ export async function fetchOpenTasks(): Promise<SalesforceTask[]> {
 // ── Hard delete a task ───────────────────────────────────────────────────────
 
 export async function hardDeleteTask(taskId: string): Promise<void> {
+  assertSalesforceId(taskId, "task id");
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
@@ -83,6 +84,8 @@ export async function completeAndReschedule(
   subject: string,
   daysFromNow: number
 ): Promise<void> {
+  assertSalesforceId(taskId, "task id");
+  assertSalesforceId(accountId, "account id");
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
@@ -144,6 +147,7 @@ export async function delayTask(
   currentDate: string,
   days: number
 ): Promise<string> {
+  assertSalesforceId(taskId, "task id");
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 

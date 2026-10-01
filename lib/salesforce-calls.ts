@@ -1,5 +1,5 @@
 import { getValidCredentials } from "./token-manager";
-import { sfQuery } from "./sf-query";
+import { assertSalesforceId, sfQuery } from "./sf-query";
 import { accountWhereClause, parseAccountQuery, rankAccounts } from "./account-match";
 import { format, addDays } from "date-fns";
 
@@ -128,6 +128,7 @@ export async function createCompletedCallTask(params: {
   subjectType: string; // "C1" or "RCC"
   meetingDate: string; // ISO date: "2026-03-05"
 }): Promise<string> {
+  assertSalesforceId(params.accountId, "account id");
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
@@ -183,6 +184,7 @@ export async function upsertFollowUpTask(params: {
   meetingDate: string; // ISO date of the original meeting
   daysFromMeeting: number; // e.g. 14 for RCE14
 }): Promise<FollowUpOutcome> {
+  assertSalesforceId(params.accountId, "account id");
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
@@ -196,7 +198,7 @@ export async function upsertFollowUpTask(params: {
   // only ever be one next step per account.
   const openTasks = await sfQuery<{ Id: string; ActivityDate: string | null; Subject: string }>(
     `SELECT Id, ActivityDate, Subject FROM Task ` +
-      `WHERE WhatId = '${params.accountId.replace(/'/g, "\\'")}' ` +
+      `WHERE WhatId = '${params.accountId}' ` +
       `AND IsClosed = false ` +
       `AND OwnerId = '${credentials.salesforce_user_id}' ` +
       `ORDER BY ActivityDate ASC NULLS LAST LIMIT 5`,
@@ -274,6 +276,7 @@ export async function createAccountNote(params: {
   title: string; // e.g. "C1 Notes" or "RCC Notes"
   content: string; // plain text content (Granola meeting notes)
 }): Promise<string> {
+  assertSalesforceId(params.accountId, "account id");
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 

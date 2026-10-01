@@ -49,3 +49,21 @@ export async function sfQuery<T>(
 
   return records;
 }
+
+/** Salesforce record ids are 15 or 18 letters and digits. */
+export function isSalesforceId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$/.test(value);
+}
+
+/**
+ * Throws unless `value` is a well-formed Salesforce id. Every write path calls
+ * this before putting an id into a REST URL or a WhatId: an unchecked id such
+ * as "../Account/001..." would otherwise turn "delete this task" into
+ * "delete that account".
+ */
+export function assertSalesforceId(value: unknown, label = "record id"): string {
+  if (!isSalesforceId(value)) {
+    throw new Error(`Invalid Salesforce ${label}`);
+  }
+  return value;
+}
