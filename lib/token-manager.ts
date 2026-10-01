@@ -29,6 +29,23 @@ export async function getValidCredentials(): Promise<SfCredentials | null> {
   return credentials;
 }
 
+/**
+ * Refresh now, whatever the token's age. Used when Salesforce rejects a token
+ * early with 401 INVALID_SESSION_ID (org session timeout shorter than our
+ * 100-minute schedule, or a revoked session). Returns null when the
+ * connection is gone and the user has to reconnect.
+ */
+export async function forceRefreshCredentials(): Promise<SfCredentials | null> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("sf_credentials")
+    .select("*")
+    .eq("id", "default")
+    .single();
+  if (error || !data) return null;
+  return await refreshAccessToken(data as SfCredentials);
+}
+
 async function refreshAccessToken(
   credentials: SfCredentials
 ): Promise<SfCredentials | null> {

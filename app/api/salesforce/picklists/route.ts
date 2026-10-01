@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sfErrorText, sfFetch } from "@/lib/sf-query";
 import { isAuthenticated } from "@/lib/auth";
 import { getValidCredentials } from "@/lib/token-manager";
 
@@ -13,13 +14,14 @@ export async function GET() {
   }
 
   try {
-    const response = await fetch(
-      `${credentials.instance_url}/services/data/v62.0/sobjects/Account/describe/`,
-      { headers: { Authorization: `Bearer ${credentials.access_token}` } }
+    const response = await sfFetch(
+      `/services/data/v62.0/sobjects/Account/describe/`,
+      {},
+      credentials,
     );
 
     if (!response.ok) {
-      const err = await response.text();
+      const err = await sfErrorText(response);
       return NextResponse.json({ error: `Describe failed: ${err}` }, { status: 500 });
     }
 

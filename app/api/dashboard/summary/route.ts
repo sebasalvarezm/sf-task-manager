@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sfFetch } from "@/lib/sf-query";
 import { isAuthenticated } from "@/lib/auth";
 import { getValidCredentials } from "@/lib/token-manager";
 import { sfQuery } from "@/lib/sf-query";
@@ -29,15 +30,7 @@ export async function GET() {
           `AND OwnerId = '${creds.salesforce_user_id}' ` +
           `AND ActivityDate < ${today}`
       );
-      const res = await fetch(
-        `${creds.instance_url}/services/data/v62.0/query/?q=${query}`,
-        {
-          headers: {
-            Authorization: `Bearer ${creds.access_token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      const res = await sfFetch(`/services/data/v62.0/query/?q=${query}`, {}, creds);
       if (res.ok) {
         const data = await res.json();
         summary.overdueTasks = data.totalSize ?? 0;

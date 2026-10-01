@@ -1,5 +1,5 @@
 import { getValidCredentials } from "./token-manager";
-import { assertSalesforceId, sfQuery } from "./sf-query";
+import { assertSalesforceId, sfErrorText, sfFetch, sfQuery } from "./sf-query";
 import { accountWhereClause, parseAccountQuery, rankAccounts } from "./account-match";
 import { format, addDays } from "date-fns";
 
@@ -132,12 +132,11 @@ export async function createCompletedCallTask(params: {
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Task`,
+  const response = await sfFetch(
+    `/services/data/v62.0/sobjects/Task`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -149,11 +148,12 @@ export async function createCompletedCallTask(params: {
         WhatId: params.accountId,
         OwnerId: credentials.salesforce_user_id,
       }),
-    }
+    },
+    credentials,
   );
 
   if (!response.ok) {
-    const err = await response.text();
+    const err = await sfErrorText(response);
     throw new Error(`Failed to create call task: ${err}`);
   }
 
@@ -207,19 +207,19 @@ export async function upsertFollowUpTask(params: {
 
   if (openTasks.length > 0) {
     const existing = openTasks[0];
-    const response = await fetch(
-      `${credentials.instance_url}/services/data/v62.0/sobjects/Task/${existing.Id}`,
+    const response = await sfFetch(
+      `/services/data/v62.0/sobjects/Task/${existing.Id}`,
       {
         method: "PATCH",
         headers: {
-          Authorization: `Bearer ${credentials.access_token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ ActivityDate: followUpDate }),
-      }
+      },
+      credentials,
     );
     if (!response.ok && response.status !== 204) {
-      throw new Error(`Failed to move follow-up task: ${await response.text()}`);
+      throw new Error(`Failed to move follow-up task: ${await sfErrorText(response)}`);
     }
     return {
       action: "moved",
@@ -229,12 +229,11 @@ export async function upsertFollowUpTask(params: {
     };
   }
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Task`,
+  const response = await sfFetch(
+    `/services/data/v62.0/sobjects/Task`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -246,11 +245,12 @@ export async function upsertFollowUpTask(params: {
         WhatId: params.accountId,
         OwnerId: credentials.salesforce_user_id,
       }),
-    }
+    },
+    credentials,
   );
 
   if (!response.ok) {
-    const err = await response.text();
+    const err = await sfErrorText(response);
     throw new Error(`Failed to create follow-up task: ${err}`);
   }
 
@@ -288,23 +288,23 @@ export async function createAccountNote(params: {
     .join("");
   const base64Content = Buffer.from(htmlContent).toString("base64");
 
-  const noteResponse = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/ContentNote`,
+  const noteResponse = await sfFetch(
+    `/services/data/v62.0/sobjects/ContentNote`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         Title: params.title,
         Content: base64Content,
       }),
-    }
+    },
+    credentials,
   );
 
   if (!noteResponse.ok) {
-    const err = await noteResponse.text();
+    const err = await sfErrorText(noteResponse);
     throw new Error(`Failed to create note: ${err}`);
   }
 
@@ -312,12 +312,11 @@ export async function createAccountNote(params: {
   const contentDocumentId = noteResult.id;
 
   // Step 2: Link the note to the Account via ContentDocumentLink
-  const linkResponse = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/ContentDocumentLink`,
+  const linkResponse = await sfFetch(
+    `/services/data/v62.0/sobjects/ContentDocumentLink`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -326,11 +325,12 @@ export async function createAccountNote(params: {
         ShareType: "V", // Viewer access
         Visibility: "AllUsers",
       }),
-    }
+    },
+    credentials,
   );
 
   if (!linkResponse.ok) {
-    const err = await linkResponse.text();
+    const err = await sfErrorText(linkResponse);
     throw new Error(`Failed to link note to account: ${err}`);
   }
 

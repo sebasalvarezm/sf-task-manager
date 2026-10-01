@@ -1,4 +1,5 @@
 import { addDays, startOfWeek, format } from "date-fns";
+import { sfErrorText, sfFetch } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
 import { getValidCredentials } from "./token-manager";
 import { accountWhereClause, parseAccountQuery, pickAccount } from "./account-match";
@@ -224,9 +225,10 @@ export function followingWeekStart(weekStart: string): string {
 
 async function accountFields(credentials: SfCredentials): Promise<Set<string>> {
   if (cachedAccountFields) return cachedAccountFields;
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Account/describe`,
-    { headers: { Authorization: `Bearer ${credentials.access_token}` } },
+  const response = await sfFetch(
+    `/services/data/v62.0/sobjects/Account/describe`,
+    {},
+    credentials,
   );
   if (!response.ok) return new Set();
   const data = (await response.json()) as { fields?: Array<{ name: string }> };
@@ -253,17 +255,17 @@ async function queryAccounts(
     ...optional,
   ];
   const soql = `SELECT ${fields.join(", ")} FROM Account WHERE ${where} ORDER BY Name ASC LIMIT ${limit}`;
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`,
+  const response = await sfFetch(
+    `/services/data/v62.0/query/?q=${encodeURIComponent(soql)}`,
     {
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
     },
+    credentials,
   );
   if (!response.ok) {
-    throw new Error(`Salesforce account lookup failed: ${await response.text()}`);
+    throw new Error(`Salesforce account lookup failed: ${await sfErrorText(response)}`);
   }
   const data = (await response.json()) as { records?: Array<Record<string, unknown>> };
   return (data.records ?? []).map((r) => ({

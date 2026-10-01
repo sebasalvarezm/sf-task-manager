@@ -1,6 +1,6 @@
 import { getValidCredentials } from "./token-manager";
 import { getSupabaseAdmin } from "./supabase";
-import { assertSalesforceId, sfQuery } from "./sf-query";
+import { assertSalesforceId, sfErrorText, sfFetch, sfQuery } from "./sf-query";
 import { addDays, format } from "date-fns";
 
 export type SalesforceTask = {
@@ -62,16 +62,16 @@ export async function hardDeleteTask(taskId: string): Promise<void> {
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Task/${taskId}`,
+  const response = await sfFetch(
+    `/services/data/v62.0/sobjects/Task/${taskId}`,
     {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${credentials.access_token}` },
-    }
+    },
+    credentials,
   );
 
   if (!response.ok && response.status !== 204) {
-    const err = await response.text();
+    const err = await sfErrorText(response);
     throw new Error(`Delete failed: ${err}`);
   }
 }
@@ -90,12 +90,11 @@ export async function completeAndReschedule(
   if (!credentials) throw new Error("NOT_CONNECTED");
 
   // Step 1: Mark the existing task as Completed
-  const completeRes = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Task/${taskId}`,
+  const completeRes = await sfFetch(
+    `/services/data/v62.0/sobjects/Task/${taskId}`,
     {
       method: "PATCH",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -103,23 +102,23 @@ export async function completeAndReschedule(
         ActivityDate: format(new Date(), "yyyy-MM-dd"),
         Subject_Type__c: "RCE1",
       }),
-    }
+    },
+    credentials,
   );
 
   if (!completeRes.ok) {
-    const err = await completeRes.text();
+    const err = await sfErrorText(completeRes);
     throw new Error(`Could not mark task as completed: ${err}`);
   }
 
   // Step 2: Create a new open task on the same account
   const newDate = format(addDays(new Date(), daysFromNow), "yyyy-MM-dd");
 
-  const createRes = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Task`,
+  const createRes = await sfFetch(
+    `/services/data/v62.0/sobjects/Task`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -131,11 +130,12 @@ export async function completeAndReschedule(
         OwnerId: credentials.salesforce_user_id,
         Subject_Type__c: "RCE1",
       }),
-    }
+    },
+    credentials,
   );
 
   if (!createRes.ok) {
-    const err = await createRes.text();
+    const err = await sfErrorText(createRes);
     throw new Error(`Could not create new task: ${err}`);
   }
 }
@@ -153,20 +153,20 @@ export async function delayTask(
 
   const newDate = format(addDays(new Date(currentDate), days), "yyyy-MM-dd");
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Task/${taskId}`,
+  const response = await sfFetch(
+    `/services/data/v62.0/sobjects/Task/${taskId}`,
     {
       method: "PATCH",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ ActivityDate: newDate }),
-    }
+    },
+    credentials,
   );
 
   if (!response.ok) {
-    const err = await response.text();
+    const err = await sfErrorText(response);
     throw new Error(`Delay failed: ${err}`);
   }
 

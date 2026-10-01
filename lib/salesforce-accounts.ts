@@ -1,5 +1,5 @@
 import { getValidCredentials } from "./token-manager";
-import { assertSalesforceId } from "./sf-query";
+import { assertSalesforceId, sfErrorText, sfFetch } from "./sf-query";
 
 // Fields sent to Salesforce when creating an Account
 export type AccountCreatePayload = {
@@ -26,20 +26,20 @@ export async function createAccount(
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Account`,
+  const response = await sfFetch(
+    `/services/data/v62.0/sobjects/Account`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
-    }
+    },
+    credentials,
   );
 
   if (!response.ok) {
-    const err = await response.text();
+    const err = await sfErrorText(response);
     throw new Error(`Failed to create account: ${err}`);
   }
 
@@ -75,20 +75,20 @@ export async function updateAccount(
   const credentials = await getValidCredentials();
   if (!credentials) throw new Error("NOT_CONNECTED");
 
-  const response = await fetch(
-    `${credentials.instance_url}/services/data/v62.0/sobjects/Account/${accountId}`,
+  const response = await sfFetch(
+    `/services/data/v62.0/sobjects/Account/${accountId}`,
     {
       method: "PATCH",
       headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(fields),
-    }
+    },
+    credentials,
   );
 
   if (!response.ok) {
-    const err = await response.text();
+    const err = await sfErrorText(response);
     throw new Error(`Failed to update account: ${err}`);
   }
 }
