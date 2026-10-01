@@ -276,17 +276,6 @@ export async function upsertFollowUpTask(params: {
   return { action: "created", taskId: result.id, date: followUpDate, previousDate: null };
 }
 
-/** @deprecated use upsertFollowUpTask; kept for callers that only need an id. */
-export async function createFollowUpTask(params: {
-  accountId: string;
-  subject: string;
-  subjectType: string;
-  meetingDate: string;
-  daysFromMeeting: number;
-}): Promise<string> {
-  return (await upsertFollowUpTask(params)).taskId;
-}
-
 // ── Create a ContentNote linked to an Account ─────────────────────────────────
 
 export async function createAccountNote(params: {
