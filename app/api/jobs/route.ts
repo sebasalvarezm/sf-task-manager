@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
+import { getRole } from "@/lib/auth";
+import { INTERN_JOB_KINDS } from "@/lib/roles";
 import { listJobs, summarize, type JobListItem } from "@/lib/jobs";
 
 export const dynamic = "force-dynamic";
@@ -29,11 +30,15 @@ function fingerprint(
 }
 
 export async function GET(req: Request) {
-  if (!(await isAuthenticated())) {
+  const role = await getRole();
+  if (role === null) {
     return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
   }
   try {
-    const jobs = await listJobs(undefined, 20);
+    // Interns only see Sourcing jobs, not Call Logger / Prep / Accounts runs.
+    const jobs = (await listJobs(undefined, 20)).filter(
+      (j) => role === "admin" || INTERN_JOB_KINDS.includes(j.kind),
+    );
     const { inProgressCount, unreadCount } = summarize(jobs);
     const etag = fingerprint(jobs, inProgressCount, unreadCount);
 
