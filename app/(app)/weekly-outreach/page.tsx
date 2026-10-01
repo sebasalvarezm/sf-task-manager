@@ -190,6 +190,17 @@ export default function WeeklyOutreachPage() {
   const [sheetError, setSheetError] = useState<string | null>(null);
   // Blocks a second send while the first is still in flight, even within one click burst.
   const sendInFlight = useRef(false);
+  // Auto-save of the draft text to Outlook, 1.5s after typing stops.
+  const [autoSave, setAutoSave] = useState<
+    { state: "idle" | "saving" | "saved" } | { state: "error"; message: string }
+  >({ state: "idle" });
+  const autoSaveTimer = useRef<number | null>(null);
+  // Serialises saves so an older one can never land after a newer one.
+  const saveChain = useRef<Promise<boolean>>(Promise.resolve(true));
+  // What is known to be stored for the open row, and the live text (for timers).
+  const savedDraftRef = useRef<{ id: string; text: string } | null>(null);
+  const reviewDraftRef = useRef("");
+  const reviewingIdRef = useRef<string | null>(null);
   // Short follow-up after a sent reconnect (see /api/weekly-outreach/followup-rce).
   const [followUpItemId, setFollowUpItemId] = useState<string | null>(null);
   const [followUpBody, setFollowUpBody] = useState("");
@@ -1172,14 +1183,23 @@ export default function WeeklyOutreachPage() {
       const ids = pendingRceReviews.map((row) => row.id);
       setReviewQueueIds(ids.includes(item.id) ? ids : [...ids, item.id]);
     }
+    cancelAutoSaveTimer();
     setReviewingRceId(item.id);
     setReviewDraft(item.draft ?? "");
+    reviewDraftRef.current = item.draft ?? "";
+    reviewingIdRef.current = item.id;
+    savedDraftRef.current = { id: item.id, text: item.draft ?? "" };
+    setAutoSave({ state: "idle" });
     clearConfirmSend();
     setSheetError(null);
     setError(null);
   }
 
   function closeReviewSheet() {
+    cancelAutoSaveTimer();
+    reviewingIdRef.current = null;
+    savedDraftRef.current = null;
+    setAutoSave({ state: "idle" });
     clearConfirmSend();
     setSheetError(null);
     setReviewingRceId(null);
@@ -1215,16 +1235,125 @@ export default function WeeklyOutreachPage() {
     [],
   );
 
+  // ── Auto-save ──────────────────────────────────────────────────────────
+  function cancelAutoSaveTimer() {
+    if (autoSaveTimer.current !== null) window.clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = null;
+  }
+
+  function hasUnsavedDraft(): boolean {
+    const id = reviewingIdRef.current;
+    const text = reviewDraftRef.current;
+    if (!id || !text.trim()) return false;
+    return savedDraftRef.current?.id !== id || savedDraftRef.current.text !== text;
+  }
+
+  /** Saves the current text if it differs from what's stored. Queued behind any save in flight. */
+  function saveDraftNow(): Promise<boolean> {
+    const run = saveChain.current.then(async () => {
+      const id = reviewingIdRef.current;
+      const text = reviewDraftRef.current;
+      if (!id || !hasUnsavedDraft()) return true;
+      setAutoSave({ state: "saving" });
+      try {
+        const res = await fetch("/api/weekly-outreach/review-rce", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, action: "save", draft: text }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (data.code === "OUTLOOK_RECONNECT_REQUIRED") setOutlookReconnectRequired(true);
+          throw new Error(data.error ?? "Couldn't save to Outlook.");
+        }
+        if (data.item) {
+          setItems((previous) => previous.map((row) => (row.id === id ? data.item : row)));
+        }
+        // Only counts for the row it was saved on (the sheet may have moved on).
+        if (reviewingIdRef.current === id) {
+          savedDraftRef.current = { id, text };
+          setAutoSave(
+            reviewDraftRef.current === text ? { state: "saved" } : { state: "saving" },
+          );
+        }
+        return true;
+      } catch (saveError) {
+        if (reviewingIdRef.current === id) {
+          setAutoSave({
+            state: "error",
+            message:
+              saveError instanceof TypeError
+                ? "Couldn't save. Check your connection."
+                : saveError instanceof Error
+                  ? saveError.message
+                  : "Couldn't save to Outlook.",
+          });
+        }
+        return false;
+      }
+    });
+    saveChain.current = run.catch(() => false);
+    return run;
+  }
+
+  function handleReviewDraftChange(text: string) {
+    setReviewDraft(text);
+    reviewDraftRef.current = text;
+    cancelAutoSaveTimer();
+    if (!hasUnsavedDraft()) return;
+    autoSaveTimer.current = window.setTimeout(() => {
+      autoSaveTimer.current = null;
+      void saveDraftNow();
+    }, 1500);
+  }
+
+  /**
+   * Finish any pending save before sending, closing or moving on, so the
+   * stored text is exactly what's in the box. False if that last save failed.
+   */
+  async function flushDraftSave(): Promise<boolean> {
+    cancelAutoSaveTimer();
+    await saveChain.current;
+    if (!hasUnsavedDraft()) return true;
+    return saveDraftNow();
+  }
+
+  useEffect(() => {
+    if (!reviewingRceId) return;
+    // Closing the tab inside the 1.5s window would drop the last edit: warn.
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      if (!hasUnsavedDraft()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewingRceId]);
+
+  useEffect(() => () => cancelAutoSaveTimer(), []);
+
+  async function goToNextRceReview(next: WeeklyOutreachItem) {
+    if (reviewSaving) return;
+    setReviewSaving(true);
+    try {
+      if (!(await flushDraftSave())) {
+        setSheetError("Your last edit didn't save, so this email stays open. Retry the save first.");
+        return;
+      }
+      openRceReview(next, { fromQueue: true });
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
   async function copyReviewDraft() {
     if (!reviewDraft.trim()) return;
     await navigator.clipboard.writeText(reviewDraft);
     setMessage("Reconnect draft copied. Paste it into the existing Outlook chain.");
   }
 
-  async function reviewRce(
-    action: "save" | "send" | "dismiss",
-    options?: { closeAfter?: boolean; silent?: boolean },
-  ) {
+  async function reviewRce(action: "send" | "dismiss") {
     if (!reviewingRce || reviewSaving) return false;
     if (action === "send") {
       // Confirmed in place by the "Confirm send" button; never twice at once.
@@ -1244,13 +1373,23 @@ export default function WeeklyOutreachPage() {
     setError(null);
     setSheetError(null);
     try {
+      if (action === "send") {
+        // The sent email must be exactly the text in the box: finish the
+        // pending save first, and don't send if it fails.
+        if (!(await flushDraftSave())) {
+          throw new Error("Your latest edit didn't save to Outlook, so nothing was sent. Retry the save, then send.");
+        }
+      } else {
+        cancelAutoSaveTimer();
+        await saveChain.current;
+      }
       const res = await fetch("/api/weekly-outreach/review-rce", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: reviewingRce.id,
           action,
-          draft: reviewDraft,
+          draft: reviewDraftRef.current,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1266,10 +1405,7 @@ export default function WeeklyOutreachPage() {
       setItems((previous) =>
         previous.map((item) => (item.id === reviewingRce.id ? data.item : item)),
       );
-      if (action === "save") {
-        if (options?.closeAfter) closeReviewSheet();
-        if (!options?.silent) setMessage("Draft saved in Weekly Outreach and Outlook.");
-      } else if (action === "send") {
+      if (action === "send") {
         advanceRceReview(next);
       } else {
         closeReviewSheet();
@@ -1304,6 +1440,10 @@ export default function WeeklyOutreachPage() {
     setError(null);
     setSheetError(null);
     try {
+      if (!(await flushDraftSave())) {
+        setSheetError("Your last edit didn't save, so this email stays open. Retry the save first.");
+        return;
+      }
       const saved = await updateRow(sentItem, {
         status: "sent",
         draft: reviewDraft,
@@ -1321,15 +1461,18 @@ export default function WeeklyOutreachPage() {
   // Used by the X button, a click on the dimmed backdrop, and the Escape key.
   async function closeRceReview() {
     if (!reviewingRce || reviewSaving) return;
-    const hasUnsavedEdits =
-      reviewDraft.trim().length > 0 && reviewDraft !== (reviewingRce.draft ?? "");
-    if (!hasUnsavedEdits) {
+    // Finish the pending save on the way out. If it fails the sheet stays open
+    // with the error showing, so an edit is never lost without warning.
+    setReviewSaving(true);
+    try {
+      if (!(await flushDraftSave())) {
+        setSheetError("Your last edit didn't save, so the email stays open. Retry, or copy your text first.");
+        return;
+      }
       closeReviewSheet();
-      return;
+    } finally {
+      setReviewSaving(false);
     }
-    // Save silently on the way out. If it fails the box stays open with the error showing,
-    // so edits are never lost without warning.
-    await reviewRce("save", { closeAfter: true, silent: true });
   }
 
   async function copyCsv() {
@@ -2347,7 +2490,7 @@ export default function WeeklyOutreachPage() {
                   {nextPendingRceReview ? (
                     <button
                       type="button"
-                      onClick={() => openRceReview(nextPendingRceReview, { fromQueue: true })}
+                      onClick={() => void goToNextRceReview(nextPendingRceReview)}
                       className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-3 text-lg text-ink-muted sm:hidden"
                       aria-label="Skip to next draft"
                       title="Skip to the next draft without marking this one"
@@ -2406,14 +2549,36 @@ export default function WeeklyOutreachPage() {
                     id="rce-review-draft"
                     aria-label="Reconnect email"
                     value={reviewDraft}
-                    onChange={(event) => setReviewDraft(event.target.value)}
+                    onChange={(event) => handleReviewDraftChange(event.target.value)}
                     className="min-h-48 w-full flex-1 resize-none rounded-xl border border-line p-4 text-base leading-7 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 sm:min-h-64 sm:flex-none sm:resize-y sm:text-[15px] sm:leading-6"
                   />
-                  <p className="mt-2 hidden text-xs text-ink-muted sm:block">
+                  <p className="mt-2 flex min-h-5 items-center gap-2 text-xs" aria-live="polite">
+                    {autoSave.state === "saving" ? (
+                      <span className="text-ink-muted">Saving…</span>
+                    ) : autoSave.state === "saved" ? (
+                      <span className="text-ok">
+                        {reviewingRce.outlook_draft_ready ? "Saved to Outlook" : "Saved"}
+                      </span>
+                    ) : autoSave.state === "error" ? (
+                      <>
+                        <span className="min-w-0 truncate text-danger" title={autoSave.message}>
+                          Not saved: {autoSave.message}
+                        </span>
+                        <button
+                          type="button"
+                          className="shrink-0 font-semibold text-brand underline underline-offset-2"
+                          onClick={() => void saveDraftNow()}
+                        >
+                          Retry
+                        </button>
+                      </>
+                    ) : null}
+                  </p>
+                  <p className="mt-1 hidden text-xs text-ink-muted sm:block">
                     {reviewingRce.outlook_draft_ready
                       ? reviewingRce.takeover
-                        ? `Save keeps Outlook synchronized. Approve and Send sends this exact text as a new email to ${reviewingRce.takeover.contactEmail ?? "the contact"}.`
-                        : "Save keeps Outlook synchronized. Approve and Send sends this exact text as a reply in the existing chain."
+                        ? `Edits save to Outlook automatically. Approve and Send sends this exact text as a new email to ${reviewingRce.takeover.contactEmail ?? "the contact"}.`
+                        : "Edits save to Outlook automatically. Approve and Send sends this exact text as a reply in the existing chain."
                       : reviewingRce.takeover
                         ? "Edit if needed, copy and paste it into a new email to the contact, then use Mark sent & next to mark this row sent and open the next draft."
                         : "Edit if needed, copy and paste it into the correct Outlook chain, then use Mark sent & next to mark this row sent and open the next draft. Nothing can send from this tool until Outlook approval is available."}
@@ -2447,17 +2612,6 @@ export default function WeeklyOutreachPage() {
                 ) : null}
                 {reviewMenuOpen ? (
                   <div className="absolute bottom-full left-3 z-10 mb-2 w-60 overflow-hidden rounded-xl border border-line bg-white shadow-xl">
-                    <button
-                      type="button"
-                      className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
-                      disabled={!reviewDraft.trim() || reviewSaving}
-                      onClick={() => {
-                        setReviewMenuOpen(false);
-                        void reviewRce("save");
-                      }}
-                    >
-                      {reviewingRce.outlook_draft_ready ? "Save to Outlook" : "Save draft"}
-                    </button>
                     <button
                       type="button"
                       className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
@@ -2545,71 +2699,63 @@ export default function WeeklyOutreachPage() {
                   </p>
                 ) : null}
                 <div className="flex items-center justify-between gap-2">
-                <Button
-                  variant="ghost"
-                  className="shrink-0 text-danger"
-                  disabled={reviewSaving}
-                  onClick={() => void reviewRce("dismiss")}
-                >
-                  Dismiss draft
-                </Button>
-                <div className="flex shrink-0 gap-2">
                   <Button
-                    variant="secondary"
-                    loading={reviewSaving}
-                    disabled={!reviewDraft.trim()}
-                    onClick={() => void reviewRce("save")}
+                    variant="ghost"
+                    className="shrink-0 text-danger"
+                    disabled={reviewSaving}
+                    onClick={() => void reviewRce("dismiss")}
                   >
-                    {reviewingRce.outlook_draft_ready ? "Save to Outlook" : "Save draft"}
+                    Dismiss draft
                   </Button>
-                  <Button
-                    variant="secondary"
-                    disabled={!reviewDraft.trim()}
-                    onClick={() => void copyReviewDraft()}
-                  >
-                    Copy draft
-                  </Button>
-                  <Button
-                    variant={reviewingRce.outlook_draft_ready ? "secondary" : "primary"}
-                    loading={reviewSaving && !confirmingSend}
-                    disabled={!reviewDraft.trim() || reviewSaving}
-                    title={
-                      nextPendingRceReview
-                        ? `For an email you sent yourself: mark it sent, then open ${nextPendingRceReview.account_name}`
-                        : "For an email you sent yourself: mark it sent. This is the last reconnect draft to review."
-                    }
-                    onClick={() => void markRceSentAndOpenNext()}
-                  >
-                    {nextPendingRceReview ? "Mark sent & next" : "Mark sent"}
-                  </Button>
-                  {reviewingRce.outlook_draft_ready && confirmingSend ? (
-                    <>
-                      <Button variant="ghost" disabled={reviewSaving} onClick={clearConfirmSend}>
-                        Cancel
-                      </Button>
-                      <Button
-                        loading={reviewSaving}
-                        disabled={!reviewDraft.trim()}
-                        onClick={() => void reviewRce("send")}
-                      >
-                        Confirm send
-                      </Button>
-                    </>
-                  ) : (
+                  <div className="flex shrink-0 gap-2">
                     <Button
-                      variant={reviewingRce.outlook_draft_ready ? "primary" : "secondary"}
-                      disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim() || reviewSaving}
-                      title={
-                        reviewingRce.outlook_draft_ready
-                          ? undefined
-                          : "No Outlook draft is attached to this row, so it can't send from here."
-                      }
-                      onClick={startConfirmSend}
+                      variant="secondary"
+                      disabled={!reviewDraft.trim()}
+                      onClick={() => void copyReviewDraft()}
                     >
-                      Approve &amp; Send
+                      Copy draft
                     </Button>
-                  )}
-                </div>
+                    <Button
+                      variant={reviewingRce.outlook_draft_ready ? "secondary" : "primary"}
+                      loading={reviewSaving && !confirmingSend}
+                      disabled={!reviewDraft.trim() || reviewSaving}
+                      title={
+                        nextPendingRceReview
+                          ? `For an email you sent yourself: mark it sent, then open ${nextPendingRceReview.account_name}`
+                          : "For an email you sent yourself: mark it sent. This is the last reconnect draft to review."
+                      }
+                      onClick={() => void markRceSentAndOpenNext()}
+                    >
+                      {nextPendingRceReview ? "Mark sent & next" : "Mark sent"}
+                    </Button>
+                    {reviewingRce.outlook_draft_ready && confirmingSend ? (
+                      <>
+                        <Button variant="ghost" disabled={reviewSaving} onClick={clearConfirmSend}>
+                          Cancel
+                        </Button>
+                        <Button
+                          loading={reviewSaving}
+                          disabled={!reviewDraft.trim()}
+                          onClick={() => void reviewRce("send")}
+                        >
+                          Confirm send
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant={reviewingRce.outlook_draft_ready ? "primary" : "secondary"}
+                        disabled={!reviewingRce.outlook_draft_ready || !reviewDraft.trim() || reviewSaving}
+                        title={
+                          reviewingRce.outlook_draft_ready
+                            ? undefined
+                            : "No Outlook draft is attached to this row, so it can't send from here."
+                        }
+                        onClick={startConfirmSend}
+                      >
+                        Approve &amp; Send
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
