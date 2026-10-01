@@ -10,18 +10,75 @@ export type Role = "admin" | "intern";
 
 export const SESSION_COOKIE = "sf_task_mgr_session";
 
-// Admin keeps the original literal value so existing sessions stay signed in.
-export const ADMIN_COOKIE_VALUE = "authenticated";
-export const INTERN_COOKIE_VALUE = "intern";
+/** How long a login lasts. Matches the cookie maxAge set at login. */
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
-export function cookieValueForRole(role: Role): string {
-  return role === "admin" ? ADMIN_COOKIE_VALUE : INTERN_COOKIE_VALUE;
+// ---------------------------------------------------------------------------
+// Signed session cookie
+// ---------------------------------------------------------------------------
+//
+// The cookie used to be a fixed word ("authenticated" / "intern"). The repo is
+// public, so anyone could set that cookie by hand and skip the password. It is
+// now `<role>.<expiresAtSeconds>.<signature>`, where the signature is an
+// HMAC-SHA256 keyed on APP_PASSWORD. Without the password nobody can mint a
+// valid cookie, and changing APP_PASSWORD signs everyone out.
+//
+// Uses Web Crypto (globalThis.crypto.subtle), available in both the Edge
+// runtime (middleware) and Node 18+ (API routes).
+
+function signingSecret(): string | null {
+  const secret = process.env.APP_PASSWORD;
+  return secret ? `sf-task-manager-session-v1|${secret}` : null;
 }
 
-export function roleFromCookieValue(value?: string): Role | null {
-  if (value === ADMIN_COOKIE_VALUE) return "admin";
-  if (value === INTERN_COOKIE_VALUE) return "intern";
-  return null;
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(message)));
+  return Array.from(sig, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Cookie value for a fresh login. Throws if APP_PASSWORD is not set. */
+export async function cookieValueForRole(
+  role: Role,
+  nowMs: number = Date.now(),
+): Promise<string> {
+  const secret = signingSecret();
+  if (!secret) throw new Error("APP_PASSWORD not configured");
+  const expires = Math.floor(nowMs / 1000) + SESSION_MAX_AGE_SECONDS;
+  const payload = `${role}.${expires}`;
+  return `${payload}.${await hmacHex(secret, payload)}`;
+}
+
+/** The role a cookie proves, or null if it is missing, forged or expired. */
+export async function roleFromCookieValue(
+  value?: string,
+  nowMs: number = Date.now(),
+): Promise<Role | null> {
+  if (!value) return null;
+  const secret = signingSecret();
+  if (!secret) return null;
+  const parts = value.split(".");
+  if (parts.length !== 3) return null;
+  const [role, expiresRaw, signature] = parts;
+  if (role !== "admin" && role !== "intern") return null;
+  const expires = Number(expiresRaw);
+  if (!Number.isFinite(expires) || expires * 1000 <= nowMs) return null;
+  const expected = await hmacHex(secret, `${role}.${expiresRaw}`);
+  return constantTimeEqual(signature, expected) ? role : null;
 }
 
 // ---------------------------------------------------------------------------

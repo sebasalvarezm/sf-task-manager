@@ -11,7 +11,7 @@ export type { Role };
 /** The signed-in role, or null when there is no valid session. */
 export async function getRole(): Promise<Role | null> {
   const cookieStore = await cookies();
-  return roleFromCookieValue(cookieStore.get(SESSION_COOKIE)?.value);
+  return await roleFromCookieValue(cookieStore.get(SESSION_COOKIE)?.value);
 }
 
 /**
@@ -33,6 +33,6 @@ export function getSessionCookieName(): string {
   return SESSION_COOKIE;
 }
 
-export function getSessionCookieValue(role: Role = "admin"): string {
-  return cookieValueForRole(role);
+export async function getSessionCookieValue(role: Role = "admin"): Promise<string> {
+  return await cookieValueForRole(role);
 }

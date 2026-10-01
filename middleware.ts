@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE, internCanAccess, roleFromCookieValue } from "@/lib/roles";
 
 // Protect every page except the login page and auth API routes.
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Always allow: login page, auth API, OAuth callbacks,
@@ -20,7 +20,7 @@ export function middleware(request: NextRequest) {
   const isPublic = publicPaths.some((p) => pathname.startsWith(p));
   if (isPublic) return NextResponse.next();
 
-  const role = roleFromCookieValue(request.cookies.get(SESSION_COOKIE)?.value);
+  const role = await roleFromCookieValue(request.cookies.get(SESSION_COOKIE)?.value);
 
   if (role === null) {
     return NextResponse.redirect(new URL("/login", request.url));

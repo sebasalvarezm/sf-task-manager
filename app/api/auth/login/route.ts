@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionCookieName, getSessionCookieValue } from "@/lib/auth";
-import type { Role } from "@/lib/roles";
+import { SESSION_MAX_AGE_SECONDS, type Role } from "@/lib/roles";
 
 export async function POST(request: NextRequest) {
   const { password } = await request.json();
@@ -27,11 +27,11 @@ export async function POST(request: NextRequest) {
   }
 
   const response = NextResponse.json({ success: true, role });
-  response.cookies.set(getSessionCookieName(), getSessionCookieValue(role), {
+  response.cookies.set(getSessionCookieName(), await getSessionCookieValue(role), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
+    maxAge: SESSION_MAX_AGE_SECONDS,
     path: "/",
   });
 
