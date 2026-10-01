@@ -35,6 +35,8 @@ export async function getValidCredentials(): Promise<SfCredentials | null> {
  * 100-minute schedule, or a revoked session). Returns null when the
  * connection is gone and the user has to reconnect.
  */
+let refreshInFlight: Promise<SfCredentials | null> | null = null;
+
 export async function forceRefreshCredentials(): Promise<SfCredentials | null> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -43,7 +45,19 @@ export async function forceRefreshCredentials(): Promise<SfCredentials | null> {
     .eq("id", "default")
     .single();
   if (error || !data) return null;
-  return await refreshAccessToken(data as SfCredentials);
+  const credentials = data as SfCredentials;
+
+  // Several calls often hit the same expired token at once (parallel queries,
+  // query pages). If another call refreshed in the last minute, use its token
+  // instead of refreshing again; and share one refresh within this instance.
+  const ageSeconds = (Date.now() - new Date(credentials.token_issued_at).getTime()) / 1000;
+  if (ageSeconds < 60) return credentials;
+  if (!refreshInFlight) {
+    refreshInFlight = refreshAccessToken(credentials).finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return await refreshInFlight;
 }
 
 async function refreshAccessToken(
