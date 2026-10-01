@@ -69,6 +69,10 @@ export default function TripPage() {
     final: number;
   } | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  // Drive times are from Google; when it can't answer, straight-line miles show.
+  const [drivingError, setDrivingError] = useState<string | null>(null);
+  // Accounts the last scan couldn't place, with the reason.
+  const [scanFailures, setScanFailures] = useState<{ count: number; samples: Array<{ name: string; reason: string }> } | null>(null);
 
   // Scan
   const [scanning, setScanning] = useState(false);
@@ -140,6 +144,7 @@ export default function TripPage() {
           discovered?: DiscoveredCompany[] | null;
           discoveryStats?: typeof discoveryStats;
           discoveryError?: string | null;
+          drivingError?: string | null;
         };
         setResults(r.results ?? []);
         setUserLoc(r.userLocation ?? null);
@@ -147,6 +152,7 @@ export default function TripPage() {
         setDiscovered(r.discovered ?? null);
         setDiscoveryStats(r.discoveryStats ?? null);
         setDiscoveryError(r.discoveryError ?? null);
+        setDrivingError(r.drivingError ?? null);
         setSearching(false);
         setDiscovering(false);
         setSearchError(null);
@@ -185,12 +191,18 @@ export default function TripPage() {
 
     if (latest.status === "succeeded") {
       void fetchJobResult(latest.id).then((raw) => {
-        const r = raw as { total?: number };
+        const r = raw as {
+          total?: number;
+          cached?: number;
+          failed?: number;
+          failedSamples?: Array<{ name: string; reason: string }>;
+        };
         setScanProgress({
           total: r.total ?? 0,
-          cached: r.total ?? 0,
+          cached: r.cached ?? r.total ?? 0,
           remaining: 0,
         });
+        setScanFailures(r.failed ? { count: r.failed, samples: r.failedSamples ?? [] } : null);
         setScanDone(true);
         setScanning(false);
         setUncachedCount(0);
@@ -216,6 +228,7 @@ export default function TripPage() {
     setDiscovered(null);
     setDiscoveryStats(null);
     setDiscoveryError(null);
+    setDrivingError(null);
 
     try {
       const res = await fetch("/api/jobs/start", {
@@ -303,6 +316,7 @@ export default function TripPage() {
     setScanning(true);
     setScanDone(false);
     setScanProgress(null);
+    setScanFailures(null);
 
     try {
       const res = await fetch("/api/jobs/start", {
@@ -469,6 +483,17 @@ export default function TripPage() {
               <div className="mt-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
                 Scan complete: {scanProgress.cached} of {scanProgress.total} accounts geocoded.
                 You can now search.
+                {scanFailures && scanFailures.count > 0 && (
+                  <div className="mt-1 text-amber-700">
+                    {scanFailures.count} account{scanFailures.count === 1 ? "" : "s"} couldn&apos;t be placed
+                    {scanFailures.samples.length > 0 && (
+                      <>
+                        {" "}(e.g. {scanFailures.samples.slice(0, 3).map((f) => `${f.name}: ${f.reason}`).join("; ")})
+                      </>
+                    )}
+                    . Adding a billing city in Salesforce fixes most of these.
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -477,6 +502,13 @@ export default function TripPage() {
           {searchError && (
             <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-4 text-sm text-red-700">
               {searchError}
+            </div>
+          )}
+
+          {/* Drive times unavailable: distances are straight-line */}
+          {drivingError && results !== null && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4 text-sm text-amber-700">
+              {drivingError}
             </div>
           )}
 

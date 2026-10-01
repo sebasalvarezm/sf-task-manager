@@ -1,10 +1,7 @@
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { fetchCDMAccounts } from "@/lib/salesforce-trip";
-import {
-  geocodeAddress,
-  haversineDistance,
-  getDrivingDistances,
-} from "@/lib/geocoding";
+import { haversineDistance, getDrivingDistancesWithStatus } from "@/lib/geocoding";
+import { geocodeLocation } from "@/lib/geocoder";
 import { discoverCompanies } from "@/lib/trip-discovery";
 
 export type TripSearchInput = {
@@ -13,7 +10,7 @@ export type TripSearchInput = {
 };
 
 export type TripSearchResult = {
-  userLocation: { lat: number; lng: number; formatted_address?: string } | null;
+  userLocation: { lat: number; lng: number; formattedAddress: string } | null;
   radiusMiles: number;
   location: string;
   results: Array<{
@@ -35,6 +32,8 @@ export type TripSearchResult = {
   discovered: Awaited<ReturnType<typeof discoverCompanies>>["companies"] | null;
   discoveryStats: Awaited<ReturnType<typeof discoverCompanies>>["stats"] | null;
   discoveryError: string | null;
+  /** Set when drive times couldn't be fetched (straight-line miles shown instead). */
+  drivingError?: string | null;
 };
 
 export async function runTripSearch(
@@ -42,13 +41,11 @@ export async function runTripSearch(
 ): Promise<TripSearchResult> {
   const radiusMiles = input.radiusMiles ?? 150;
 
-  // 1. Geocode user's location
-  const userGeo = await geocodeAddress(input.location);
-  if (!userGeo) {
-    throw new Error(
-      `Could not geocode "${input.location}". Try a more specific address.`,
-    );
-  }
+  // 1. Geocode user's location. The message says whether the place wasn't
+  //    found or no geocoding service could answer (and what each one said).
+  const outcome = await geocodeLocation(input.location);
+  if (!outcome.ok) throw new Error(outcome.message);
+  const userGeo = outcome.point;
 
   // 2. Fetch all CDM accounts (used by both search and discover)
   const accounts = await fetchCDMAccounts();
@@ -106,7 +103,7 @@ export async function runTripSearch(
       }
     }
 
-    const distResults = await getDrivingDistances(
+    const { results: distResults, error: drivingError } = await getDrivingDistancesWithStatus(
       { lat: userGeo.lat, lng: userGeo.lng },
       nearby.map((n) => ({ id: n.account.Id, lat: n.lat, lng: n.lng })),
     );
@@ -139,6 +136,7 @@ export async function runTripSearch(
 
     return {
       results,
+      drivingError,
       geocodeStats: {
         total: accounts.length,
         cached: accounts.length - uncachedCount,
@@ -176,5 +174,6 @@ export async function runTripSearch(
     discovered: discoverOut.ok ? discoverOut.companies : null,
     discoveryStats: discoverOut.ok ? discoverOut.stats : null,
     discoveryError: discoverOut.ok ? null : discoverOut.message,
+    drivingError: searchOut.drivingError,
   };
 }
