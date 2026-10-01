@@ -189,18 +189,45 @@ ${emailSummaries.join("\n==========\n")}`,
       };
     });
 
-    const validRows = rows.filter(Boolean);
-
-    // Delete existing triage for today before inserting (handles re-scans)
-    await supabase
+    // Re-scans keep anything you already reviewed or edited (and anything
+    // already sent). Only untouched "pending" rows are replaced. Before, a
+    // re-scan deleted the whole day, edited drafts included.
+    const { data: existing } = await supabase
       .from("email_triage")
-      .delete()
+      .select("id, email_id, review_status, edited_draft")
       .eq("triage_date", today);
+    const keep = (existing ?? []).filter(
+      (row) => (row.review_status && row.review_status !== "pending") || row.edited_draft,
+    );
+    const keptEmailIds = new Set(keep.map((row) => row.email_id).filter(Boolean));
+    const replaceIds = (existing ?? [])
+      .filter((row) => !keep.includes(row))
+      .map((row) => row.id);
 
-    const { data, error } = await supabase
-      .from("email_triage")
-      .insert(validRows)
-      .select();
+    // One row per Outlook message (the table has a unique index on it).
+    const seenEmailIds = new Set<string>();
+    const validRows = rows.filter((row): row is NonNullable<typeof row> => {
+      if (!row) return false;
+      if (row.email_id) {
+        if (keptEmailIds.has(row.email_id) || seenEmailIds.has(row.email_id)) return false;
+        seenEmailIds.add(row.email_id);
+      }
+      return true;
+    });
+
+    if (replaceIds.length > 0) {
+      const { error: deleteError } = await supabase
+        .from("email_triage")
+        .delete()
+        .in("id", replaceIds);
+      if (deleteError) {
+        return NextResponse.json({ error: deleteError.message }, { status: 500 });
+      }
+    }
+
+    const { data, error } = validRows.length
+      ? await supabase.from("email_triage").insert(validRows).select()
+      : { data: [], error: null };
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
