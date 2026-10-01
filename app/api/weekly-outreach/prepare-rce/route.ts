@@ -267,13 +267,11 @@ export async function POST(request: Request) {
     };
 
     const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
-    // Preparing again replaces the Outlook draft. Remove the previous one
-    // (only if it is still an unsent draft) so Outlook doesn't collect
-    // duplicate drafts for the same company.
-    if (metadata.outlookDraftId && !metadata.rceFirstSentAt) {
-      await deleteOutlookDraftIfUnsent(metadata.outlookDraftId).catch(() => {});
-      metadata.outlookDraftId = null;
-    }
+    // Preparing again replaces the Outlook draft. The previous one is removed
+    // further down, only once the new draft exists (and only if Outlook still
+    // has it as an unsent draft), so a failed attempt never loses the old one.
+    const previousDraftId =
+      metadata.outlookDraftId && !metadata.rceFirstSentAt ? metadata.outlookDraftId : null;
     metadata.replyConfidence = threadMatch.confidence;
     metadata.replyReason = threadMatch.reason || null;
     metadata.contextSource = contextSource;
@@ -343,6 +341,10 @@ export async function POST(request: Request) {
       } else {
         outlookWarning = `Salesforce has no email address for ${takeover.contactName ?? "the contact"}, so this draft is copy and paste only. Add the contact's email in Salesforce and re-prepare to get a sendable draft.`;
       }
+    }
+
+    if (previousDraftId && metadata.outlookDraftId !== previousDraftId) {
+      await deleteOutlookDraftIfUnsent(previousDraftId).catch(() => {});
     }
 
     const { data: updated, error: updateError } = await supabase
