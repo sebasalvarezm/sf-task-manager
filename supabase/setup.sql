@@ -4,6 +4,15 @@
 -- Run this entire script in the Supabase SQL Editor.
 -- How to get there: Supabase Dashboard → SQL Editor → New Query
 -- Paste everything below, then click "Run".
+--
+-- A fresh project needs these files, in this order:
+--   1. setup.sql              (this file: the main tables)
+--   2. app-settings.sql       (Stats page outreach-quality rules)
+--   3. wayback-cache.sql      (Archive.org cache used by Sourcing)
+--   4. 2026-10-review-fixes.sql (triage sent_at column; RLS on everything)
+-- weekly-outreach.sql repeats the weekly_outreach table from this file and
+-- is only needed for projects created before that table existed.
+-- Then create the private Storage bucket "deal-docs" (see the end of this file).
 -- ============================================================
 
 -- Table 1: Salesforce OAuth Tokens

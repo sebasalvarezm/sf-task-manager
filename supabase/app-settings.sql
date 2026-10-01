@@ -8,7 +8,8 @@
 --
 -- Until this table exists the feature still works: getQualityThresholds()
 -- falls back to the defaults in lib/outreach-quality.ts, so the charts render
--- normally and only *saving* new rules fails. Same DDL is in setup.sql.
+-- normally and only *saving* new rules fails. Run after setup.sql (see the
+-- run order at the top of setup.sql).
 
 CREATE TABLE IF NOT EXISTS app_settings (
   key        TEXT        PRIMARY KEY,
