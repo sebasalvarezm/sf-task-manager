@@ -4,6 +4,7 @@
 // call below. It is not stored or logged.
 
 import { getAnthropicClient } from "./anthropic";
+import { fetchCorrectionExamples } from "./call-corrections";
 import { fetchCallHistory, type PastCall } from "./call-history";
 import { buildSuggestionPrompt, parseSuggestion, selectExamples, type SuggestionInput } from "./call-suggest";
 import { getSuggestionForEvent, saveSuggestion, type StoredCallSuggestion } from "./call-suggestion-store";
@@ -12,12 +13,6 @@ import { getStoredGranolaNoteForEvent } from "./granola-store";
 
 export const SUGGESTION_MODEL = "claude-sonnet-4-6";
 
-/** Corrections you made to earlier suggestions (item 5). Empty until then. */
-export type CorrectionSource = () => Promise<PastCall[]>;
-let correctionSource: CorrectionSource = async () => [];
-export function setCorrectionSource(source: CorrectionSource) {
-  correctionSource = source;
-}
 
 export type SuggestRequest = {
   eventId: string;
@@ -56,7 +51,8 @@ export async function suggestForRow(req: SuggestRequest): Promise<StoredCallSugg
 
   const [history, corrections] = await Promise.all([
     fetchCallHistory(),
-    correctionSource().catch(() => [] as PastCall[]),
+    // Your edits to earlier suggestions come first among the examples.
+    fetchCorrectionExamples().catch(() => [] as PastCall[]),
   ]);
   const summary = granola ? granola.summary : req.pastedNotes!.trim();
   const input: SuggestionInput = {

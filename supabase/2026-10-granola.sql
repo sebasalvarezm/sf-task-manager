@@ -43,3 +43,23 @@ CREATE TABLE IF NOT EXISTS call_suggestions (
 );
 CREATE INDEX IF NOT EXISTS call_suggestions_meeting_date_idx ON call_suggestions (meeting_date);
 ALTER TABLE call_suggestions ENABLE ROW LEVEL SECURITY;
+
+-- 3. Your edits to suggestions (item 5): what was suggested and what you
+--    logged instead, one row per logged meeting. Future suggestions use your
+--    corrected versions as their first examples.
+CREATE TABLE IF NOT EXISTS call_suggestion_corrections (
+  event_id                  TEXT        PRIMARY KEY,
+  granola_note_id           TEXT,
+  account_name              TEXT,
+  meeting_date              DATE,
+  suggested_commentary      TEXT,
+  final_commentary          TEXT,
+  suggested_call_type       TEXT,
+  final_call_type           TEXT,
+  suggested_follow_up_days  INTEGER,
+  final_follow_up_days      INTEGER,
+  changed_fields            TEXT[]      NOT NULL DEFAULT '{}',  -- commentary / callType / followUp
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS call_suggestion_corrections_created_idx ON call_suggestion_corrections (created_at DESC);
+ALTER TABLE call_suggestion_corrections ENABLE ROW LEVEL SECURITY;

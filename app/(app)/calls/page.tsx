@@ -470,6 +470,38 @@ function CallsPageContent() {
     setSubmitting(true);
     setSubmitResult(null);
 
+    // Item 5: remember where you changed a suggestion before logging, so
+    // future suggestions learn from your version. Only fields you actually
+    // touched count; a suggestion you never accepted isn't a "correction".
+    const corrections = toSubmit.flatMap((row) => {
+      const s = suggestions.get(row.eventId);
+      const entry = entries.get(row.eventId);
+      if (!s || !entry) return [];
+      const touched = entry.touched ?? {};
+      return [
+        {
+          eventId: row.eventId,
+          granolaNoteId: granolaNotes.get(row.eventId)?.noteId ?? null,
+          accountName: row.accountName,
+          meetingDate: row.meetingDate,
+          suggested: {
+            commentary: touched.commentary ? s.commentary : null,
+            callType: touched.callType ? s.callType : null,
+            followUpDays: touched.followUp ? s.followUpDays : null,
+          },
+          final: { commentary: row.commentary, callType: row.callType, followUpDays: row.followUpDays },
+        },
+      ];
+    });
+    if (corrections.length > 0) {
+      // Never blocks or delays logging.
+      void fetch("/api/calls/corrections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ corrections }),
+      }).catch(() => {});
+    }
+
     try {
       const res = await fetch("/api/jobs/start", {
         method: "POST",

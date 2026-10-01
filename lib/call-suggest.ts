@@ -157,7 +157,12 @@ export function followUpDaysFromTiming(timing: FollowUpTiming, meetingDate: stri
 function exampleLine(c: PastCall): string {
   const fu =
     c.followUpDays === undefined ? "" : c.followUpDays ? ` | follow-up RCE${c.followUpDays}` : " | no follow-up";
-  const corrected = c.source === "correction" ? " (your corrected version)" : "";
+  const corrected =
+    c.source === "correction"
+      ? c.suggestedCommentary
+        ? ` (you corrected the suggestion "${c.suggestedCommentary}" to this)`
+        : " (your corrected version)"
+      : "";
   return `- ${c.callType} - ${c.commentary}${fu}${corrected}`;
 }
 
