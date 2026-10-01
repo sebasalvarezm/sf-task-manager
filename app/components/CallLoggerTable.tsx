@@ -24,6 +24,14 @@ export type MeetingRow = {
   alreadyLogged: boolean;
 };
 
+/** A Granola note matched to this meeting (summary only; transcript on demand). */
+export type GranolaRowNote = {
+  noteId: string;
+  title: string | null;
+  summary: string;
+  webUrl: string | null;
+};
+
 export type ManualMatch = {
   accountId: string;
   accountName: string;
@@ -64,7 +72,11 @@ type Props = {
   onDismiss: (eventId: string) => void;
   manualMatches: Map<string, ManualMatch>;
   onManualMatch: (eventId: string, match: ManualMatch) => void;
+  /** Granola notes by meeting eventId. Rows without one stay as they are. */
+  granolaNotes?: Map<string, GranolaRowNote>;
 };
+
+type TranscriptState = { open: boolean; loading: boolean; text?: string; error?: string };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -76,6 +88,7 @@ export default function CallLoggerTable({
   onDismiss,
   manualMatches,
   onManualMatch,
+  granolaNotes,
 }: Props) {
   const [activeCell, setActiveCell] = useState<{
     row: number;
@@ -94,6 +107,7 @@ export default function CallLoggerTable({
   const [notesOpen, setNotesOpen] = useState<Set<string>>(new Set());
   const [suggesting, setSuggesting] = useState<Set<string>>(new Set());
   const [suggestErrors, setSuggestErrors] = useState<Map<string, string>>(new Map());
+  const [transcripts, setTranscripts] = useState<Map<string, TranscriptState>>(new Map());
 
   // Account search state
   const [searchInputs, setSearchInputs] = useState<Map<string, string>>(new Map());
@@ -236,6 +250,33 @@ export default function CallLoggerTable({
   function handleNotesChange(eventId: string, value: string) {
     const prev = getEntry(eventId);
     onEntryChange(eventId, { ...prev, eventId, notes: value });
+  }
+
+  async function toggleTranscript(eventId: string, noteId: string) {
+    const current = transcripts.get(eventId);
+    if (current?.open) {
+      setTranscripts((prev) => new Map(prev).set(eventId, { ...current, open: false }));
+      return;
+    }
+    if (current?.text !== undefined) {
+      setTranscripts((prev) => new Map(prev).set(eventId, { ...current, open: true }));
+      return;
+    }
+    setTranscripts((prev) => new Map(prev).set(eventId, { open: true, loading: true }));
+    try {
+      const res = await fetch(`/api/granola/notes/${encodeURIComponent(noteId)}/transcript`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Couldn't load the transcript");
+      setTranscripts((prev) => new Map(prev).set(eventId, { open: true, loading: false, text: data.transcript ?? "" }));
+    } catch (err) {
+      setTranscripts((prev) =>
+        new Map(prev).set(eventId, {
+          open: true,
+          loading: false,
+          error: err instanceof Error ? err.message : "Couldn't load the transcript",
+        }),
+      );
+    }
   }
 
   function toggleNotes(eventId: string) {
@@ -479,10 +520,18 @@ export default function CallLoggerTable({
                               ? "bg-orange-100 text-brand-orange border border-orange-300"
                               : "bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
                         }`}
-                        title={notesOpen.has(meeting.eventId) ? "Hide notes" : entry.notes ? "Edit notes" : "Add Granola notes"}
+                        title={
+                          notesOpen.has(meeting.eventId)
+                            ? "Hide notes"
+                            : granolaNotes?.has(meeting.eventId)
+                              ? "Granola notes attached"
+                              : entry.notes
+                                ? "Edit notes"
+                                : "Add Granola notes"
+                        }
                         tabIndex={-1}
                       >
-                        {entry.notes ? "✎ Notes" : "+ Notes"}
+                        {granolaNotes?.has(meeting.eventId) ? "✎ Granola" : entry.notes ? "✎ Notes" : "+ Notes"}
                       </button>
                     )}
                   </div>
@@ -743,6 +792,49 @@ export default function CallLoggerTable({
                   <td />
                   <td colSpan={7} className="pb-3 pt-0 px-2">
                     <div className="border border-orange-200 rounded-lg bg-orange-50/50 p-3">
+                      {(() => {
+                        const granola = granolaNotes?.get(meeting.eventId);
+                        if (!granola) return null;
+                        const t = transcripts.get(meeting.eventId);
+                        return (
+                          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                            <span className="rounded bg-white px-1.5 py-0.5 font-semibold text-navy border border-orange-200">
+                              From Granola
+                            </span>
+                            {granola.webUrl ? (
+                              <a
+                                href={granola.webUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-brand-orange underline underline-offset-2"
+                              >
+                                Open in Granola ↗
+                              </a>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => void toggleTranscript(meeting.eventId, granola.noteId)}
+                              className="font-medium text-navy underline underline-offset-2"
+                              aria-expanded={Boolean(t?.open)}
+                            >
+                              {t?.open ? "Hide transcript" : "Show transcript"}
+                            </button>
+                          </div>
+                        );
+                      })()}
+                      {(() => {
+                        const t = transcripts.get(meeting.eventId);
+                        if (!t?.open) return null;
+                        return (
+                          <div className="mb-3 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-white px-3 py-2 text-xs leading-5 text-gray-700">
+                            {t.loading
+                              ? "Loading transcript from Granola…"
+                              : t.error
+                                ? <span className="text-red-600">{t.error}</span>
+                                : t.text || "Granola has no transcript for this call."}
+                          </div>
+                        );
+                      })()}
                       <label className="text-xs font-medium text-gray-500 mb-1.5 block">
                         Granola Meeting Notes — will be saved as &quot;{entry.callType || "C1/RCC"} Notes&quot; in Salesforce
                       </label>

@@ -13,6 +13,7 @@ import CallLoggerTable, {
   MeetingRow,
   CallEntry,
   ManualMatch,
+  GranolaRowNote,
 } from "../../components/CallLoggerTable";
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
@@ -71,6 +72,9 @@ function CallsPageContent() {
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
   const [activeCallsJobId, setActiveCallsJobId] = useState<string | null>(null);
+
+  // Granola summaries matched to this week's rows (by Outlook eventId).
+  const [granolaNotes, setGranolaNotes] = useState<Map<string, GranolaRowNote>>(new Map());
 
   const [completedWeeks, setCompletedWeeks] = useState<Set<string>>(
     () => getCompletedWeeks()
@@ -138,6 +142,7 @@ function CallsPageContent() {
     setAnalyzing(true);
     setAnalyzeError(null);
     setMeetings([]);
+    setGranolaNotes(new Map());
     setEntries(new Map());
     setDismissedIds(new Set());
     setManualMatches(new Map());
@@ -161,12 +166,50 @@ function CallsPageContent() {
       const data = await res.json();
       setMeetings(data.meetings ?? []);
       setHasAnalyzed(true);
+      void loadGranolaNotes(selectedWeek);
     } catch (err) {
       setAnalyzeError(
         err instanceof Error ? err.message : "Unexpected error"
       );
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  // ── Granola notes ──────────────────────────────────────────────────────────
+  // Attach each matched summary to its row's Notes (only when the row has no
+  // notes yet, so nothing typed by hand is replaced). Rows without a Granola
+  // note stay as they are. A failure here never blocks the Call Logger.
+  async function loadGranolaNotes(week: WeekRange) {
+    try {
+      const res = await fetch(`/api/granola/notes?start=${week.start}&end=${week.end}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        notes?: Array<{ eventId: string; noteId: string; title: string | null; summary: string; webUrl: string | null }>;
+      };
+      const byEvent = new Map<string, GranolaRowNote>();
+      for (const n of data.notes ?? []) {
+        byEvent.set(n.eventId, { noteId: n.noteId, title: n.title, summary: n.summary, webUrl: n.webUrl });
+      }
+      setGranolaNotes(byEvent);
+      setEntries((prev) => {
+        const next = new Map(prev);
+        for (const [eventId, note] of byEvent) {
+          const existing = next.get(eventId);
+          if (existing?.notes?.trim()) continue;
+          next.set(eventId, {
+            eventId,
+            callType: existing?.callType ?? "",
+            commentary: existing?.commentary ?? "",
+            followUpDays: existing?.followUpDays ?? null,
+            selectedAccountIdx: existing?.selectedAccountIdx ?? 0,
+            notes: note.summary,
+          });
+        }
+        return next;
+      });
+    } catch {
+      // Non-critical: the rows just show no Granola note.
     }
   }
 
@@ -506,6 +549,7 @@ function CallsPageContent() {
                   onChange={(week) => {
                     setSelectedWeek(week);
                     setMeetings([]);
+                    setGranolaNotes(new Map());
                     setEntries(new Map());
                     setHasAnalyzed(false);
                     setSubmitResult(null);
@@ -558,6 +602,7 @@ function CallsPageContent() {
                   onDismiss={handleDismiss}
                   manualMatches={manualMatches}
                   onManualMatch={handleManualMatch}
+                  granolaNotes={granolaNotes}
                 />
               </>
             )}
