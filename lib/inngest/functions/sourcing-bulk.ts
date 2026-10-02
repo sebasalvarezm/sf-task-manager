@@ -8,6 +8,7 @@ import {
   findRecentSourcingByUrl,
   normalizeSourcingUrl,
   recordResolvedUrls,
+  sourcingArchiveLookupFailed,
 } from "@/lib/jobs";
 import {
   runFullSourcing,
@@ -205,6 +206,51 @@ export const sourcingBulkJob = inngest.createFunction(
             pct,
           }),
         );
+      }
+
+      // Second pass: companies whose archive history was throttled by
+      // Archive.org (429 / 503) get one more attempt after a cooldown, one at
+      // a time. Pages already downloaded are reused from the wayback cache, so
+      // this is mostly the handful of snapshots the throttle refused.
+      const throttled = processed
+        .map((item, i) => ({ item, i }))
+        .filter(({ item }) => item.result && !item.error && sourcingArchiveLookupFailed(item.result));
+      if (throttled.length > 0) {
+        await step.run("archive-retry-progress", () =>
+          updateProgress(jobId, {
+            step: `Archive.org throttled ${throttled.length} compan${throttled.length === 1 ? "y" : "ies"}; retrying after a 3 minute cooldown`,
+            pct: 97,
+          }),
+        );
+        await step.sleep("archive-cooldown", "3m");
+        for (const { item, i } of throttled) {
+          const url = item.url!;
+          const retried = await step.run(`archive-retry-${i}`, async () => {
+            try {
+              const result = await runFullSourcing({
+                url,
+                portfolioMatchOverride: quickMatches[i] ?? undefined,
+              });
+              return {
+                result: {
+                  ...result,
+                  currentText:
+                    typeof result.currentText === "string" ? result.currentText.slice(0, 500) : "",
+                } as SourcingResult,
+                error: null as string | null,
+              };
+            } catch (retryError) {
+              return {
+                result: null as SourcingResult | null,
+                error: retryError instanceof Error ? retryError.message : "retry failed",
+              };
+            }
+          });
+          // Only replace the first result when the retry actually got further.
+          if (retried.result && !sourcingArchiveLookupFailed(retried.result)) {
+            processed[i] = { ...item, cached: false, result: retried.result };
+          }
+        }
       }
 
       if (Array.isArray(input.weeklyOutreachIds)) {

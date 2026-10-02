@@ -7,6 +7,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { readSharedWaybackCooldown, writeSharedWaybackCooldown } from "./wayback-cooldown";
 import { guardAddress, guardTown } from "./location-guard";
 import fs from "fs";
 import path from "path";
@@ -172,6 +173,11 @@ async function fetchWaybackText(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (lane === "playback") {
+      // Another bulk worker may already have been told to back off.
+      waybackPlaybackCooldownUntil = Math.max(
+        waybackPlaybackCooldownUntil,
+        await readSharedWaybackCooldown(),
+      );
       // Archive.org asked for quiet. Wait it out rather than spending this
       // attempt on a request that is certain to come back 429.
       const cooldownRemaining = waybackPlaybackCooldownUntil - Date.now();
@@ -206,6 +212,7 @@ async function fetchWaybackText(
             waybackPlaybackCooldownUntil,
             Date.now() + cooldown,
           );
+          writeSharedWaybackCooldown(waybackPlaybackCooldownUntil);
         }
         return {
           ok: false,
@@ -233,6 +240,7 @@ async function fetchWaybackText(
             waybackPlaybackCooldownUntil,
             Date.now() + WAYBACK_CONNECTION_FAILURE_COOLDOWN_MS,
           );
+          writeSharedWaybackCooldown(waybackPlaybackCooldownUntil);
         }
       }
     }
