@@ -183,3 +183,19 @@ describe("orderOutreachParagraph", () => {
     expect(orderOutreachParagraph(`${a} ${simple} ${b} ${company}`)).toBe(`${a} ${b} ${simple} ${company}`);
   });
 });
+
+import { rawPlaybackUrl } from "../lib/scout";
+
+describe("rawPlaybackUrl", () => {
+  it("adds the id_ flag after the timestamp", () => {
+    expect(rawPlaybackUrl("https://web.archive.org/web/20190101000000/https://acme.com/")).toBe(
+      "https://web.archive.org/web/20190101000000id_/https://acme.com/",
+    );
+  });
+  it("leaves other urls alone and never doubles the flag", () => {
+    expect(rawPlaybackUrl("https://acme.com/")).toBe("https://acme.com/");
+    expect(rawPlaybackUrl("https://web.archive.org/web/20190101000000id_/https://acme.com/")).toBe(
+      "https://web.archive.org/web/20190101000000id_/https://acme.com/",
+    );
+  });
+});

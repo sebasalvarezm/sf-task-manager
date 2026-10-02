@@ -958,6 +958,11 @@ const CACHEABLE_FAILURES = new Set<WaybackSnapshotFailure>([
   "prior_owner",
 ]);
 
+/** "/web/20190101000000/https://x" -> "/web/20190101000000id_/https://x" */
+export function rawPlaybackUrl(archiveUrl: string): string {
+  return archiveUrl.replace(/\/web\/(\d{4,14})\//, "/web/$1id_/");
+}
+
 export async function fetchWaybackSnapshot(
   archiveUrl: string,
   domainStem: string,
@@ -980,7 +985,10 @@ export async function fetchWaybackSnapshot(
 
   // Archive.org playback has been observed succeeding at ~30s when their
   // service is loaded, so a 20s cut-off discarded pages that were on their way.
-  const fetched = await fetchRawText(secureArchiveUrl, 30000, 8000, deadlineAt);
+  // The id_ flag asks for the raw archived HTML without the Wayback toolbar
+  // wrapper: a lighter response with fewer redirects. The cache key and the
+  // link shown in the tool keep the plain URL.
+  const fetched = await fetchRawText(rawPlaybackUrl(secureArchiveUrl), 30000, 8000, deadlineAt);
   if (fetched.failure) {
     const statusDetail = fetched.status ? ` HTTP ${fetched.status}` : "";
     const attemptDetail = fetched.attempts > 1

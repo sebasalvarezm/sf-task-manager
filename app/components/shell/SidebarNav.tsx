@@ -14,6 +14,7 @@ import {
   BarChart3,
   MapPin,
   CalendarRange,
+  MessageSquare,
 } from "lucide-react";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { useJobs, type Job } from "@/app/hooks/useJobs";
@@ -30,6 +31,7 @@ const NAV = [
   { href: "/sourcing", label: "Sourcing",     icon: Search },
   { href: "/calls",    label: "Call Logger",  icon: Phone },
   { href: "/outreach", label: "Outreach",     icon: Send },
+  { href: "/inmail",   label: "InMail Queue", icon: MessageSquare },
   { href: "/recheck",  label: "Re-Contact",   icon: History },
   { href: "/accounts", label: "Accounts",     icon: Building2 },
   { href: "/stats",    label: "Stats",        icon: BarChart3 },
