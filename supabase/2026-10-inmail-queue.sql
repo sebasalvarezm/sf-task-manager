@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS inmail_queue (
   e1_task_id         TEXT,
   e1_body            TEXT,
   linkedin_url       TEXT,                             -- from Salesforce when a LinkedIn field exists
-  navigator_url      TEXT,                             -- Sales Navigator people search for name + company
+  navigator_url      TEXT,                             -- LinkedIn Recruiter people search for name + company
   status             TEXT        NOT NULL DEFAULT 'pending',
                      -- pending | generated | needs_review | sent | followup_sent | dismissed
   subject            TEXT,                             -- InMail subject, ready to paste

@@ -363,7 +363,7 @@ export default function InMailQueuePage() {
                             className="inline-flex items-center gap-1 text-brand hover:underline"
                           >
                             <MessageSquare className="h-4 w-4" />
-                            {row.linkedin_url ? "Profile" : "Find in Navigator"}
+                            {row.linkedin_url ? "Profile" : "Find in Recruiter"}
                             <ExternalLink className="h-3 w-3" />
                           </a>
                         ) : (
@@ -389,7 +389,7 @@ export default function InMailQueuePage() {
                             </Button>
                           ) : null}
                           {row.status === "generated" || row.status === "needs_review" ? (
-                            <Button size="sm" variant="ghost" title="InMail sent and follow-up scheduled in Navigator" onClick={() => void setStatus(row, "followup_sent")}>
+                            <Button size="sm" variant="ghost" title="InMail sent and follow-up scheduled in Recruiter" onClick={() => void setStatus(row, "followup_sent")}>
                               Both sent
                             </Button>
                           ) : null}
@@ -432,7 +432,7 @@ export default function InMailQueuePage() {
                     {open.contact_name} · {open.account_name}
                   </h2>
                   <p className="mt-0.5 text-xs text-ink-muted">
-                    E5 sent {open.e5_sent_at ?? "—"}. Copy subject and both messages into Navigator, schedule the follow-up there, then mark both sent.
+                    E5 sent {open.e5_sent_at ?? "—"}. Copy subject and both messages into Recruiter, schedule the follow-up there, then mark both sent.
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -442,8 +442,22 @@ export default function InMailQueuePage() {
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex h-9 items-center gap-1 rounded-lg border border-line px-3 text-sm font-medium text-ink hover:bg-surface-2"
+                      title={open.linkedin_url ? "LinkedIn profile from Salesforce" : "Search in LinkedIn Recruiter"}
                     >
-                      <MessageSquare className="h-4 w-4" /> Open LinkedIn
+                      <MessageSquare className="h-4 w-4" /> {open.linkedin_url ? "Open profile" : "Open in Recruiter"}
+                    </a>
+                  ) : null}
+                  {open.contact_name ? (
+                    <a
+                      href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(
+                        [open.contact_name, open.account_name].filter(Boolean).join(" "),
+                      )}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hidden h-9 items-center rounded-lg px-2 text-xs text-ink-muted hover:underline sm:inline-flex"
+                      title="Plain LinkedIn search, if Recruiter search misses"
+                    >
+                      LinkedIn search
                     </a>
                   ) : null}
                   <button
@@ -507,7 +521,7 @@ export default function InMailQueuePage() {
 
                 <section>
                   <label className="mb-1.5 block text-sm font-semibold text-ink">
-                    Follow-up InMail <span className="font-normal text-ink-muted">(paste into Navigator's scheduled follow-up, about a week out)</span>
+                    Follow-up InMail <span className="font-normal text-ink-muted">(paste into Recruiter's scheduled follow-up, about a week out)</span>
                   </label>
                   <textarea
                     value={draftFollowup}
@@ -548,7 +562,7 @@ export default function InMailQueuePage() {
                         </Button>
                       ) : null}
                       <Button
-                        title="InMail sent and follow-up scheduled in Navigator"
+                        title="InMail sent and follow-up scheduled in Recruiter"
                         onClick={() => void setStatus(open, "followup_sent")}
                       >
                         Both sent

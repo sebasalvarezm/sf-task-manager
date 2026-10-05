@@ -137,11 +137,24 @@ export function firstNameOf(fullName: string | null | undefined): string | null 
   return first.charAt(0).toUpperCase() + first.slice(1);
 }
 
-/** Sales Navigator people search for a name at a company (no API needed). */
-export function navigatorSearchUrl(fullName: string, company: string | null): string {
+/**
+ * LinkedIn Recruiter people search for a name at a company (no API needed).
+ * Lands on the Recruiter search results, where the profile opens with the
+ * Recruiter InMail compose (and its scheduled follow-up).
+ */
+export function recruiterSearchUrl(fullName: string, company: string | null): string {
   const keywords = [fullName, company].filter(Boolean).join(" ");
-  return `https://www.linkedin.com/sales/search/people?keywords=${encodeURIComponent(keywords)}`;
+  return `https://www.linkedin.com/talent/search?keywords=${encodeURIComponent(keywords)}`;
 }
+
+/** Plain LinkedIn people search, as a fallback when Recruiter search misses. */
+export function linkedInPeopleSearchUrl(fullName: string, company: string | null): string {
+  const keywords = [fullName, company].filter(Boolean).join(" ");
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`;
+}
+
+/** @deprecated kept for older imports; Recruiter is the tool in use. */
+export const navigatorSearchUrl = recruiterSearchUrl;
 
 export function googleLinkedInUrl(fullName: string, company: string | null): string {
   const q = `"${fullName}" ${company ? `"${company}" ` : ""}site:linkedin.com/in`;

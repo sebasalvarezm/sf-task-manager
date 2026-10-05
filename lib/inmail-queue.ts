@@ -10,7 +10,7 @@ import {
   googleLinkedInUrl,
   inmailSubject,
   inmailUserPrompt,
-  navigatorSearchUrl,
+  recruiterSearchUrl,
   normalizeInMail,
   parseInMailJson,
   validateInitialInMail,
@@ -42,6 +42,7 @@ export type InMailQueueRow = {
   e1_task_id: string | null;
   e1_body: string | null;
   linkedin_url: string | null;
+  /** LinkedIn Recruiter search link (column name predates the switch from Navigator). */
   navigator_url: string | null;
   status: InMailStatus;
   subject: string | null;
@@ -239,7 +240,7 @@ export async function refreshInMailQueue(days = 7): Promise<RefreshSummary> {
       e1_task_id: e1?.Id ?? null,
       e1_body: e1Body,
       linkedin_url: linkedInByWho.get(whoId) ?? null,
-      navigator_url: contactName ? navigatorSearchUrl(contactName, e5.Account?.Name ?? null) : null,
+      navigator_url: contactName ? recruiterSearchUrl(contactName, e5.Account?.Name ?? null) : null,
       status: "pending",
       subject: inmailSubject(e5.Account?.Name ?? null),
       flags,

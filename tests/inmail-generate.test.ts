@@ -3,7 +3,8 @@ import {
   extractHookSentence,
   firstNameOf,
   followUpTemplate,
-  navigatorSearchUrl,
+  recruiterSearchUrl,
+  linkedInPeopleSearchUrl,
   normalizeInMail,
   parseInMailJson,
   validateInitialInMail,
@@ -69,8 +70,11 @@ describe("inmail generation guards", () => {
     expect(followUpTemplate("Charles")).toContain("Charles, just following up on my earlier message.");
     expect(firstNameOf("Charles de Smet")).toBe("Charles");
     expect(firstNameOf(null)).toBeNull();
-    expect(navigatorSearchUrl("Charles de Smet", "Cargosnap")).toBe(
-      "https://www.linkedin.com/sales/search/people?keywords=Charles%20de%20Smet%20Cargosnap",
+    expect(recruiterSearchUrl("Charles de Smet", "Cargosnap")).toBe(
+      "https://www.linkedin.com/talent/search?keywords=Charles%20de%20Smet%20Cargosnap",
+    );
+    expect(linkedInPeopleSearchUrl("Charles de Smet", "Cargosnap")).toBe(
+      "https://www.linkedin.com/search/results/people/?keywords=Charles%20de%20Smet%20Cargosnap",
     );
   });
 });
