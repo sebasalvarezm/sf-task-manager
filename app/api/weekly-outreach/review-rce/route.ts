@@ -3,8 +3,9 @@ import { isAdmin } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   deleteOutlookDraft,
-  getMailboxAddress,
+  getMailboxIdentities,
   getOutlookDraftThreadInfo,
+  isSelfAddress,
   sendOutlookDraft,
   updateOutlookDraft,
   OUTLOOK_DRAFT_PERMISSION_MESSAGE,
@@ -97,9 +98,9 @@ export async function POST(request: Request) {
       }));
       // Never send a reconnect to ourselves. This is what happened when the
       // chain's last message was ours and "reply" addressed it to the sender.
-      const me = (await getMailboxAddress().catch(() => "")).toLowerCase();
+      const identities = await getMailboxIdentities().catch(() => new Set<string>());
       const to = threadInfo.recipients.map((r) => r.email.toLowerCase());
-      if (to.length === 0 || (me && to.every((email) => email === me))) {
+      if (to.length === 0 || (identities.size > 0 && to.every((email) => isSelfAddress(email, identities)))) {
         return NextResponse.json(
           {
             error:

@@ -410,6 +410,48 @@ export async function getMailboxAddress(): Promise<string> {
 }
 
 /**
+ * Every address that means "the signed-in user": primary mail, sign-in name,
+ * and all proxy aliases (the *.onmicrosoft.com one in particular). Outlook
+ * addresses a reply to whichever alias the original message used, so "is
+ * this me?" must check all of them, not just the primary.
+ */
+export async function getMailboxIdentities(): Promise<Set<string>> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(
+    "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName,proxyAddresses",
+    { headers: { Authorization: `Bearer ${credentials.access_token}` } },
+  );
+  if (!response.ok) throw new Error(`Failed to read Outlook profile: ${await upstreamErrorText("Outlook", response)}`);
+  const data = (await response.json()) as {
+    mail?: string;
+    userPrincipalName?: string;
+    proxyAddresses?: string[];
+  };
+  const identities = new Set<string>();
+  for (const value of [data.mail, data.userPrincipalName, ...(data.proxyAddresses ?? [])]) {
+    if (!value) continue;
+    const address = value.replace(/^(smtp|sip|x500):/i, "").trim().toLowerCase();
+    if (address.includes("@")) identities.add(address);
+  }
+  return identities;
+}
+
+/** True when `email` is one of the user's own addresses (or looks like the
+ *  tenant alias of one: same local part, *.onmicrosoft.com domain). */
+export function isSelfAddress(email: string | null | undefined, identities: Set<string>): boolean {
+  if (!email) return false;
+  const address = email.trim().toLowerCase();
+  if (identities.has(address)) return true;
+  const [local, domain] = address.split("@");
+  if (!local || !domain || !domain.endsWith(".onmicrosoft.com")) return false;
+  for (const known of identities) {
+    if (known.split("@")[0] === local) return true;
+  }
+  return false;
+}
+
+/**
  * What to tell the user when Outlook refuses a draft action (HTTP 403) or is
  * not connected. Drafting needs the Mail.ReadWrite permission: a reconnect
  * fixes a token issued before it was granted; if IT ever withdraws it,
@@ -434,6 +476,8 @@ export async function createOutlookReplyDraft(
   options?: {
     /** The user's own address, to detect a reply addressed to themselves. */
     mailbox?: string | null;
+    /** All of the user's addresses and aliases (see getMailboxIdentities). */
+    selfAddresses?: Iterable<string>;
     /** Who the reply should go to when Outlook addressed it to the user. */
     fallbackRecipients?: Array<{ name: string | null; email: string }>;
   },
@@ -472,8 +516,9 @@ export async function createOutlookReplyDraft(
   let recipients = (created.toRecipients ?? [])
     .map((r) => ({ name: r.emailAddress?.name?.trim() || null, email: (r.emailAddress?.address ?? "").toLowerCase() }))
     .filter((r) => r.email);
-  const me = (options?.mailbox ?? "").toLowerCase();
-  const onlySelf = recipients.length === 0 || recipients.every((r) => r.email === me);
+  const identities = new Set(options?.selfAddresses ?? []);
+  if (options?.mailbox) identities.add(options.mailbox.toLowerCase());
+  const onlySelf = recipients.length === 0 || recipients.every((r) => isSelfAddress(r.email, identities));
   if (onlySelf && options?.fallbackRecipients && options.fallbackRecipients.length > 0) {
     const patch = await fetch(
       `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(created.id)}`,

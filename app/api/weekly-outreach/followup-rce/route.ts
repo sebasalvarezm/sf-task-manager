@@ -4,7 +4,8 @@ import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   createOutlookFollowUpDraft,
   fetchEmailThread,
-  getMailboxAddress,
+  getMailboxIdentities,
+  isSelfAddress,
   sendOutlookDraft,
 } from "@/lib/microsoft";
 import {
@@ -86,9 +87,9 @@ export async function POST(request: Request) {
         threadError = message;
         return [] as Awaited<ReturnType<typeof fetchEmailThread>>;
       }),
-      getMailboxAddress().catch(() => ""),
+      getMailboxIdentities().catch(() => new Set<string>()),
     ]);
-    const me = mailbox.toLowerCase();
+    const me = mailbox;
     const sentAt = new Date(metadata.rceFirstSentAt).getTime();
     const recipientEmails = new Set(metadata.recipients.map((r) => r.email));
 
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
     const replies = thread.filter(
       (m) =>
         m.from.email &&
-        m.from.email !== me &&
+        !isSelfAddress(m.from.email, me) &&
         new Date(m.receivedDateTime).getTime() > sentAt - 60_000,
     );
     const replyFromRecipient = replies.find((m) => recipientEmails.has(m.from.email)) ?? replies[0] ?? null;

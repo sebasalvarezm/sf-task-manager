@@ -6,6 +6,8 @@ import {
   createOutlookNewDraft,
   deleteOutlookDraftIfUnsent,
   createOutlookReplyDraft,
+  getMailboxIdentities,
+  isSelfAddress,
   getMailboxAddress,
   searchMailboxMessages,
   OUTLOOK_DRAFT_PERMISSION_MESSAGE,
@@ -293,18 +295,19 @@ export async function POST(request: Request) {
       replySubject = replyTarget.subject;
       // The people on the other side of the chain. If the matched message is
       // one we sent, that is who it went to; otherwise, who sent it.
-      const me = mailboxAddress.toLowerCase();
+      const identities = await getMailboxIdentities().catch(() => new Set<string>([mailboxAddress.toLowerCase()]));
       const externalEmails = (
-        replyTarget.fromEmail.toLowerCase() === me
+        isSelfAddress(replyTarget.fromEmail, identities)
           ? replyTarget.toEmails
           : [replyTarget.fromEmail]
       )
         .map((email) => email.toLowerCase())
-        .filter((email) => email && email !== me);
+        .filter((email) => email && !isSelfAddress(email, identities));
       const fallbackRecipients = [...new Set(externalEmails)].map((email) => ({ name: null, email }));
       try {
         const outlookDraft = await createOutlookReplyDraft(replyTarget.id, parsed.draft, {
           mailbox: mailboxAddress,
+          selfAddresses: identities,
           fallbackRecipients,
         });
         metadata.outlookDraftId = outlookDraft.id;

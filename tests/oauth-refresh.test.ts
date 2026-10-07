@@ -14,3 +14,16 @@ describe("isDeadRefreshToken", () => {
     expect(await isDeadRefreshToken(res(400, '{"error":"temporarily_unavailable"}'))).toBe(false);
   });
 });
+
+import { isSelfAddress } from "../lib/microsoft";
+
+describe("isSelfAddress", () => {
+  const ids = new Set(["sebastian@valstonecorp.com", "sebastian@valstonecorporation.onmicrosoft.com"]);
+  it("matches primary, alias, and tenant-alias by local part", () => {
+    expect(isSelfAddress("Sebastian@ValstoneCorp.com", ids)).toBe(true);
+    expect(isSelfAddress("sebastian@valstonecorporation.onmicrosoft.com", ids)).toBe(true);
+    expect(isSelfAddress("sebastian@other-tenant.onmicrosoft.com", ids)).toBe(true);
+    expect(isSelfAddress("johnhardwick@intouchmonitoring.com", ids)).toBe(false);
+    expect(isSelfAddress("", ids)).toBe(false);
+  });
+});
