@@ -262,7 +262,13 @@ export async function listInMailQueue(): Promise<InMailQueueRow[]> {
     .neq("status", "dismissed")
     .order("e5_sent_at", { ascending: false });
   if (error) throw new Error(error.message);
-  return (data ?? []).map((row: InMailQueueRow) => ({ ...row, flags: Array.isArray(row.flags) ? row.flags : [] }));
+  return (data ?? []).map((row: InMailQueueRow) => ({
+    ...row,
+    flags: Array.isArray(row.flags) ? row.flags : [],
+    // Always a Recruiter search, even for rows saved when the link pointed at
+    // Sales Navigator (which shows an upsell page on a Recruiter account).
+    navigator_url: row.contact_name ? recruiterSearchUrl(row.contact_name, row.account_name) : row.navigator_url,
+  }));
 }
 
 /** Build both InMails for one queued contact from its Salesforce E1. */
