@@ -53,6 +53,8 @@ export type WeeklyOutreachItem = {
   outlook_reply_subject?: string | null;
   outlook_reply_confidence?: RceThreadConfidence;
   outlook_reply_reason?: string | null;
+  /** Who the Outlook draft is addressed to (reply or takeover). */
+  outlook_reply_to?: Array<{ name: string | null; email: string }>;
   /** Where the reconnect context came from. See WeeklyOutreachContextSource. */
   context_source?: WeeklyOutreachContextSource;
   takeover?: WeeklyOutreachTakeover | null;
@@ -197,6 +199,7 @@ export function withWeeklyOutreachClientMetadata(
     outlook_reply_subject: metadata.replySubject,
     outlook_reply_confidence: metadata.replyConfidence,
     outlook_reply_reason: metadata.replyReason,
+    outlook_reply_to: metadata.recipients,
     context_source: metadata.contextSource,
     takeover: metadata.takeover,
   };

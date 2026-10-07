@@ -3,6 +3,7 @@ import { isAdmin } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
   deleteOutlookDraft,
+  getMailboxAddress,
   getOutlookDraftThreadInfo,
   sendOutlookDraft,
   updateOutlookDraft,
@@ -94,6 +95,20 @@ export async function POST(request: Request) {
         conversationId: null,
         recipients: [],
       }));
+      // Never send a reconnect to ourselves. This is what happened when the
+      // chain's last message was ours and "reply" addressed it to the sender.
+      const me = (await getMailboxAddress().catch(() => "")).toLowerCase();
+      const to = threadInfo.recipients.map((r) => r.email.toLowerCase());
+      if (to.length === 0 || (me && to.every((email) => email === me))) {
+        return NextResponse.json(
+          {
+            error:
+              "This draft is addressed to you, not the contact. Open it in Outlook, fix the To line, send from there, then mark it sent. Or dismiss and prepare again.",
+            code: "ADDRESSED_TO_SELF",
+          },
+          { status: 409 },
+        );
+      }
       await sendOutlookDraft(metadata.outlookDraftId!);
       metadata.rceFirstSentAt = new Date().toISOString();
       metadata.conversationId = threadInfo.conversationId;

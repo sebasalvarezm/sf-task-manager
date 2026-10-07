@@ -423,12 +423,20 @@ export const OUTLOOK_NOT_CONNECTED_MESSAGE =
 export type OutlookReplyDraft = {
   id: string;
   subject: string;
+  /** Who the draft is addressed to, when known. */
+  recipients?: Array<{ name: string | null; email: string }>;
 };
 
 /** Create a real Outlook reply draft attached to an existing message thread. */
 export async function createOutlookReplyDraft(
   replyToMessageId: string,
   body: string,
+  options?: {
+    /** The user's own address, to detect a reply addressed to themselves. */
+    mailbox?: string | null;
+    /** Who the reply should go to when Outlook addressed it to the user. */
+    fallbackRecipients?: Array<{ name: string | null; email: string }>;
+  },
 ): Promise<OutlookReplyDraft> {
   const credentials = await getMsValidCredentials();
   if (!credentials) throw new Error("MS_NOT_CONNECTED");
@@ -450,9 +458,45 @@ export async function createOutlookReplyDraft(
     }
     throw new Error(`Could not create Outlook reply draft: ${detail}`);
   }
-  const created = (await createResponse.json()) as { id: string; subject?: string };
+  const created = (await createResponse.json()) as {
+    id: string;
+    subject?: string;
+    toRecipients?: Array<{ emailAddress?: { name?: string; address?: string } }>;
+  };
   await updateOutlookDraft(created.id, body);
-  return { id: created.id, subject: created.subject ?? "Reply" };
+
+  // "Reply" addresses the sender of the message replied to. When that message
+  // is one the user sent (they wrote last and nobody answered, the usual
+  // reconnect case) the reply is addressed to the user. Swap in the other
+  // people on the chain instead.
+  let recipients = (created.toRecipients ?? [])
+    .map((r) => ({ name: r.emailAddress?.name?.trim() || null, email: (r.emailAddress?.address ?? "").toLowerCase() }))
+    .filter((r) => r.email);
+  const me = (options?.mailbox ?? "").toLowerCase();
+  const onlySelf = recipients.length === 0 || recipients.every((r) => r.email === me);
+  if (onlySelf && options?.fallbackRecipients && options.fallbackRecipients.length > 0) {
+    const patch = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(created.id)}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${credentials.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          toRecipients: options.fallbackRecipients.map((r) => ({
+            emailAddress: r.name ? { name: r.name, address: r.email } : { address: r.email },
+          })),
+          ccRecipients: [],
+        }),
+      },
+    );
+    if (!patch.ok) {
+      throw new Error(`Could not address the Outlook reply draft: ${await upstreamErrorText("Outlook", patch)}`);
+    }
+    recipients = options.fallbackRecipients;
+  }
+  return { id: created.id, subject: created.subject ?? "Reply", recipients };
 }
 
 /**

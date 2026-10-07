@@ -2453,6 +2453,16 @@ export default function WeeklyOutreachPage() {
                       ? `New email: ${reviewingRce.outlook_reply_subject || "(subject pending)"}`
                       : reviewingRce.outlook_reply_subject || "No Outlook chain attached"}
                   </p>
+                  {reviewingRce.outlook_draft_ready && reviewingRce.outlook_reply_to && reviewingRce.outlook_reply_to.length > 0 ? (
+                    <p className="mt-0.5 truncate text-xs text-ink">
+                      <span className="font-semibold">To:</span>{" "}
+                      {reviewingRce.outlook_reply_to.map((r) => (r.name ? `${r.name} <${r.email}>` : r.email)).join(", ")}
+                    </p>
+                  ) : reviewingRce.outlook_draft_ready && !reviewingRce.takeover ? (
+                    <p className="mt-0.5 text-xs text-warning">
+                      Recipient unknown (prepared before the To check existed). Check the To line in Outlook before sending, or dismiss and prepare again.
+                    </p>
+                  ) : null}
                   <p
                     className={`mt-1 hidden text-xs leading-5 sm:block ${
                       reviewingRce.outlook_reply_confidence === "domain" || reviewingRce.takeover

@@ -291,10 +291,25 @@ export async function POST(request: Request) {
       metadata.replyToMessageId = replyTarget.id;
       metadata.replySubject = replyTarget.subject;
       replySubject = replyTarget.subject;
+      // The people on the other side of the chain. If the matched message is
+      // one we sent, that is who it went to; otherwise, who sent it.
+      const me = mailboxAddress.toLowerCase();
+      const externalEmails = (
+        replyTarget.fromEmail.toLowerCase() === me
+          ? replyTarget.toEmails
+          : [replyTarget.fromEmail]
+      )
+        .map((email) => email.toLowerCase())
+        .filter((email) => email && email !== me);
+      const fallbackRecipients = [...new Set(externalEmails)].map((email) => ({ name: null, email }));
       try {
-        const outlookDraft = await createOutlookReplyDraft(replyTarget.id, parsed.draft);
+        const outlookDraft = await createOutlookReplyDraft(replyTarget.id, parsed.draft, {
+          mailbox: mailboxAddress,
+          fallbackRecipients,
+        });
         metadata.outlookDraftId = outlookDraft.id;
         metadata.replySubject = outlookDraft.subject;
+        metadata.recipients = outlookDraft.recipients ?? fallbackRecipients;
         replySubject = outlookDraft.subject;
       } catch (draftError) {
         if (draftError instanceof Error && draftError.message === "OUTLOOK_RECONNECT_REQUIRED") {
