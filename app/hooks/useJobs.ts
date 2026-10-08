@@ -19,7 +19,8 @@ export type JobKind =
   | "trip_geocode"
   | "trip_search"
   | "calls_log"
-  | "accounts_enrich";
+  | "accounts_enrich"
+  | "sourcing_rehook";
 
 export type JobStatus =
   | "queued"
