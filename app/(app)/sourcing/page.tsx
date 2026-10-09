@@ -1042,6 +1042,8 @@ function SourcingResultDisplay({
     hookAnchor: HookAnchor | null;
     hookSource: "wayback" | "web_research" | null;
     prepackagedEmail?: PrepackagedEmail | null;
+    /** The research step's own log line when it errored out (0 searches). */
+    failure?: string | null;
   } | null>(null);
 
   const emailHook = rehooked ? rehooked.emailHook : result.emailHook;
@@ -1089,6 +1091,9 @@ function SourcingResultDisplay({
         hookAnchor: data.hookAnchor ?? null,
         hookSource: data.hookSource ?? null,
         prepackagedEmail: data.prepackagedEmail ?? null,
+        failure:
+          (Array.isArray(data.logs) ? (data.logs as string[]) : [])
+            .find((line) => /research failed|unreadable answer|could not re-read/i.test(line)) ?? null,
       });
     } catch (err) {
       setRehookError(
@@ -1324,13 +1329,17 @@ function SourcingResultDisplay({
               </Button>
             )}
           </div>
-          {rehooked && !rehooked.changed && (
+          {rehooked && !rehooked.changed && rehooked.searchCount === 0 && rehooked.failure ? (
+            <p className="mt-2 text-xs text-danger">
+              The research step did not get to search: {rehooked.failure} Try again in a minute.
+            </p>
+          ) : rehooked && !rehooked.changed ? (
             <p className="mt-2 text-xs text-ink-muted">
               Searched {rehooked.searchCount} public source
               {rehooked.searchCount === 1 ? "" : "s"} and still found nothing
               verifiable. This one needs a human.
             </p>
-          )}
+          ) : null}
           {rehookError && (
             <p className="mt-2 text-xs text-danger">{rehookError}</p>
           )}
