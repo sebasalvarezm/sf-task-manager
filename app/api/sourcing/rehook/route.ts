@@ -1,17 +1,24 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
-import { createJob, getJob } from "@/lib/jobs";
-import { inngest } from "@/lib/inngest/client";
+import { getJob, markSucceeded, normalizeSourcingUrl } from "@/lib/jobs";
+import {
+  rerunHookResearch,
+  type SourcingResult,
+} from "@/lib/jobs/sourcing-runner";
 
 export const dynamic = "force-dynamic";
+// The research ladder makes up to two search calls plus one page read.
+export const maxDuration = 300;
 
 /**
- * Start "Deep research this hook" as a background job and return its id.
- * The research itself runs in lib/inngest/functions/sourcing-rehook.ts; the
- * page polls /api/jobs/<id> for the result. (Running it inline hit the
- * platform's request limit and the page received an empty reply.)
+ * Re-research the email hook for one already-sourced company, using public
+ * sources rather than the Wayback Machine.
  *
- * Body: { jobId, url? }. `url` picks the company inside a bulk run.
+ * Runs inline rather than as a background job: it is a handful of seconds, and
+ * the user is waiting on the result in front of them.
+ *
+ * Body: { jobId, url? }. `url` is only needed for a bulk job, where one row
+ * holds many companies and we have to know which one to patch.
  */
 export async function POST(req: Request) {
   if (!(await isAuthenticated())) {
@@ -29,19 +36,84 @@ export async function POST(req: Request) {
   }
 
   try {
-    const sourcingJob = await getJob(body.jobId);
-    if (!sourcingJob || !sourcingJob.result) {
-      return NextResponse.json({ error: "That sourcing run could not be found." }, { status: 404 });
+    const job = await getJob(body.jobId);
+    if (!job || !job.result) {
+      return NextResponse.json(
+        { error: "That sourcing run could not be found." },
+        { status: 404 },
+      );
     }
-    const label = body.url ? `Hook research: ${body.url}` : `Hook research: ${sourcingJob.label ?? body.jobId}`;
-    const job = await createJob({
-      kind: "sourcing_rehook",
-      input: { sourcingJobId: body.jobId, url: body.url ?? null },
-      label,
-      resultRoute: `/sourcing?jobId=${encodeURIComponent(body.jobId)}`,
+
+    const stored = job.result as Record<string, unknown>;
+    const wantedUrl = body.url ? normalizeSourcingUrl(body.url) : "";
+
+    // A single run stores one company at the top level; a bulk run stores many
+    // under `items`. Locate the right one either way.
+    const items = Array.isArray(stored.items)
+      ? (stored.items as Array<Record<string, unknown>>)
+      : null;
+
+    let target: SourcingResult | null = null;
+    let itemIndex = -1;
+
+    if (items) {
+      itemIndex = items.findIndex((item) => {
+        const itemUrl = typeof item.url === "string" ? item.url : "";
+        return (
+          !!item.result &&
+          (!wantedUrl || normalizeSourcingUrl(itemUrl) === wantedUrl)
+        );
+      });
+      if (itemIndex >= 0) {
+        target = items[itemIndex].result as SourcingResult;
+      }
+    } else if (typeof stored.url === "string") {
+      target = stored as unknown as SourcingResult;
+    }
+
+    if (!target) {
+      return NextResponse.json(
+        { error: "Could not find that company in the sourcing run." },
+        { status: 404 },
+      );
+    }
+
+    const patch = await rerunHookResearch(target);
+    const updated: SourcingResult = {
+      ...target,
+      ...patch,
+      // Keep the original run's log and append this pass, so the trail of what
+      // produced the current hook stays readable.
+      logs: [
+        ...(target.logs ?? []),
+        "--- Hook re-researched from public sources ---",
+        ...patch.logs,
+      ],
+    };
+
+    if (items && itemIndex >= 0) {
+      items[itemIndex] = { ...items[itemIndex], result: updated };
+      await markSucceeded(job.id, { ...stored, items }, false);
+    } else {
+      await markSucceeded(
+        job.id,
+        updated as unknown as Record<string, unknown>,
+        false,
+      );
+    }
+
+    return NextResponse.json({
+      // Whether this pass actually replaced the hook. The research declines to
+      // write one when nothing verifiable turned up, and the caller must be
+      // able to say so rather than reporting a save that did not happen.
+      changed: patch.emailHook !== undefined,
+      emailHook: updated.emailHook,
+      hookAnchor: updated.hookAnchor ?? null,
+      hookSource: updated.hookSource ?? null,
+      hookSearchCount: updated.hookSearchCount ?? 0,
+      prepackagedEmail: updated.prepackagedEmail ?? null,
+      logs: patch.logs,
     });
-    await inngest.send({ name: "job/sourcing_rehook", data: { jobId: job.id, input: { sourcingJobId: body.jobId, url: body.url } } });
-    return NextResponse.json({ jobId: job.id });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json({ error: message }, { status: 500 });

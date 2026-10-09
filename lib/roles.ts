@@ -96,7 +96,7 @@ export const INTERN_APIS: readonly string[] = [
 ];
 
 /** Background job kinds an intern may launch via /api/jobs/start. */
-export const INTERN_JOB_KINDS: readonly string[] = ["sourcing", "sourcing_bulk", "sourcing_rehook"];
+export const INTERN_JOB_KINDS: readonly string[] = ["sourcing", "sourcing_bulk"];
 
 export function internCanAccess(pathname: string): boolean {
   if (pathname === "/") return true;

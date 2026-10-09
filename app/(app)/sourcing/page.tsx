@@ -1060,30 +1060,20 @@ function SourcingResultDisplay({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId, url: companyUrl }),
       });
-      const started = await res.json().catch(() => ({}));
-      if (!res.ok || !started?.jobId) {
-        throw new Error(started?.error ?? "Research could not be started");
+      // The research runs inside this request (it can take a couple of minutes).
+      // If the reply comes back empty or unreadable, say so plainly instead of
+      // surfacing a JSON parse error.
+      const data = await res.json().catch(() => null);
+      if (!data) {
+        throw new Error(
+          res.ok
+            ? "The research took too long and the reply was cut off. Try again in a moment."
+            : `Research failed (${res.status}). Try again in a moment.`,
+        );
       }
-      // The research runs in the background (it can take a few minutes).
-      // Poll the job until it finishes.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let data: any = null;
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < 10 * 60_000) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        const pollRes = await fetch(`/api/jobs/${started.jobId}`, { cache: "no-store" });
-        const poll = await pollRes.json().catch(() => ({}));
-        const job = poll?.job;
-        if (!job) continue;
-        if (job.status === "succeeded") {
-          data = job.result ?? {};
-          break;
-        }
-        if (job.status === "failed" || job.status === "cancelled") {
-          throw new Error(job.error ?? "Research failed");
-        }
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Research failed");
       }
-      if (!data) throw new Error("Research is taking longer than 10 minutes. Reload the page in a bit; the result is saved when it finishes.");
       setRehooked({
         changed: data.changed === true,
         searchCount: data.hookSearchCount ?? 0,
