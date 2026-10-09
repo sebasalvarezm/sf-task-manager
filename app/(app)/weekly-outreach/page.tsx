@@ -1801,9 +1801,16 @@ export default function WeeklyOutreachPage() {
                     ) : (
                       <Button
                         className="col-span-2 w-full"
-                        onClick={() => void confirmSecondRceSent(item)}
+                        onClick={() => void openFollowUp(item)}
+                        title={
+                          item.rce_follow_up_trackable
+                            ? "Preview and send the short follow-up into the same Outlook thread"
+                            : "Mark the second email as sent"
+                        }
                       >
-                        Confirm second email sent
+                        {item.rce_follow_up_trackable
+                          ? `Send follow-up${item.rce_first_sent_at ? ` · ${Math.max(0, Math.floor((Date.now() - new Date(item.rce_first_sent_at).getTime()) / 86_400_000))}d` : ""}`
+                          : "Confirm second email sent"}
                       </Button>
                     )
                   ) : item.draft ? (
