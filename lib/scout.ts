@@ -2902,7 +2902,9 @@ export async function researchCompanyAnchors(
 
     const resp = await callClaudeWithWebSearch(client, 4, {
       model: "claude-sonnet-4-6",
-      max_tokens: 1200,
+      // Five anchors with URLs and evidence overflow 1200 tokens; a cut-off answer
+      // was being discarded as "unreadable" (same fix as the cold research round).
+      max_tokens: 2400,
       messages: [
         {
           role: "user",
