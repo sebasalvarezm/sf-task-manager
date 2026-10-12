@@ -88,3 +88,14 @@ body {
 .action-select.delay {
   @apply border-blue-200 text-blue-700 bg-blue-50;
 }
+
+/* iOS Safari zooms the page into any text field whose font is under 16px,
+   which makes editing drafts on a phone a fight with the viewport. Keep
+   fields at 16px on phones; desktop keeps the compact sizes. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
