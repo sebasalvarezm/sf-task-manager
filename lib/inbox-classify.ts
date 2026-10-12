@@ -104,6 +104,8 @@ export function addDays(fromIso: string, days: number): string {
 /** Date the module proposes for the RCE task, or null when none should be set. */
 export function suggestedNextTouch(c: Pick<Classification, "sentiment" | "timingDate">, receivedAt: string): string | null {
   if (c.sentiment === "negative") return addDays(receivedAt, DEFAULT_NEXT_TOUCH_DAYS.negative!);
+  // A date in a positive reply is usually the meeting itself, not a reconnect.
+  if (c.sentiment === "positive") return null;
   if (c.timingDate && /^\d{4}-\d{2}-\d{2}$/.test(c.timingDate)) {
     // Never schedule in the past; "next year" said in December is still ahead.
     return c.timingDate > receivedAt.slice(0, 10) ? c.timingDate : addDays(receivedAt, 30);
@@ -173,20 +175,53 @@ export function parseClassification(raw: string): Classification | null {
   };
 }
 
-/** Strip quoted history and signatures so the sheet shows just what they wrote. */
+/** Strip quoted history, signatures, tracking links and legal footers so the
+ * sheet shows just what they wrote. */
 export function trimReplyBody(text: string): string {
   const lines = (text ?? "").replace(/\r/g, "").split("\n");
   const out: string[] = [];
-  for (const line of lines) {
+  let afterSignOff = 0;
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/g, "");
     const t = line.trim();
     if (/^(from|de|von)\s*:\s*.+/i.test(t) && out.length > 0) break;
     if (/^on .+ wrote:$/i.test(t)) break;
     if (/^-{3,}\s*original message\s*-{3,}$/i.test(t)) break;
     if (/^_{5,}$/.test(t)) break;
+    if (/^(important|confidential|confidentiality|disclaimer|notice|caution|warning)\s*:/i.test(t)) break;
+    if (/^(this (e-?mail|message)|the (contents|information) (of|in|contained))/i.test(t) && /confiden|intended|recipient|privileged/i.test(t)) break;
     if (t.startsWith(">")) continue;
+    if (/^\[(icon|photo|image|cid|logo)[^\]]*\]/i.test(t)) continue;
+    if (/urldefense\.proofpoint\.com|safelinks\.protection\.outlook\.com/i.test(t)) continue;
+    if (/^<?(https?:\/\/|mailto:|tel:)/i.test(t)) continue;
+    if (afterSignOff > 0) {
+      // Sign-off seen: keep the name line, then stop at the signature block.
+      if (!t) continue;
+      if (afterSignOff === 1) { out.push(line); afterSignOff = 2; continue; }
+      break;
+    }
     out.push(line);
+    if (/^(regards|best|best regards|kind regards|warm regards|thank you|thanks|many thanks|cheers|sincerely|all the best|take care|talk soon|br)[,.!]?$/i.test(t)) {
+      afterSignOff = 1;
+    }
   }
-  // Drop trailing blank lines.
   while (out.length && !out[out.length - 1].trim()) out.pop();
-  return out.join("\n").trim();
+  // Collapse runs of blank lines.
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** "rce50", "RCE 50", "50" → 50. Blank or "none" → null. Anything else → undefined (invalid). */
+export function parseRceDays(input: string): number | null | undefined {
+  const t = (input ?? "").trim().toLowerCase();
+  if (!t || t === "none" || t === "no" || t === "-" || t === "0") return null;
+  const m = t.match(/^(?:rce\s*)?(\d{1,4})$/);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return n > 0 && n <= 1500 ? n : undefined;
+}
+
+export function daysBetweenDates(fromIso: string, toIso: string): number {
+  const a = new Date(`${fromIso.slice(0, 10)}T00:00:00Z`).getTime();
+  const b = new Date(`${toIso.slice(0, 10)}T00:00:00Z`).getTime();
+  return Math.round((b - a) / 86_400_000);
 }

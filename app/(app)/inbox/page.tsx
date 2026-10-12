@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Inbox as InboxIcon, ChevronDown, ChevronUp } from "lucide-react";
+import { RefreshCw, Inbox as InboxIcon, ChevronDown, ChevronUp, MoreHorizontal, Send, Sparkles } from "lucide-react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
@@ -35,6 +35,8 @@ type Row = {
   status: Status;
   draft_body: string | null;
   sent_at: string | null;
+  task_id: string | null;
+  task_date: string | null;
 };
 
 type Filter = "todo" | "done" | "all";
@@ -51,6 +53,25 @@ function daysAgo(iso: string): string {
   if (days <= 0) return "today";
   if (days === 1) return "1d";
   return `${days}d`;
+}
+
+function parseRce(input: string): number | null | undefined {
+  const t = input.trim().toLowerCase();
+  if (!t || t === "none" || t === "0" || t === "-") return null;
+  const m = t.match(/^(?:rce\s*)?(\d{1,4})$/);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return n > 0 && n <= 1500 ? n : undefined;
+}
+function addDaysIso(fromIso: string, days: number): string {
+  const d = new Date(fromIso);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function daysBetween(fromIso: string, toIso: string): number {
+  const a = new Date(`${fromIso.slice(0, 10)}T00:00:00Z`).getTime();
+  const b = new Date(`${toIso.slice(0, 10)}T00:00:00Z`).getTime();
+  return Math.max(0, Math.round((b - a) / 86_400_000));
 }
 
 function longDate(iso: string | null): string {
@@ -70,8 +91,14 @@ export default function InboxPage() {
   const [threadOpen, setThreadOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sheetError, setSheetError] = useState<string | null>(null);
-  const [dateDraft, setDateDraft] = useState<string>("");
   const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
+  const [draftBody, setDraftBody] = useState("");
+  const [drafting, setDrafting] = useState(false);
+  const [draftIssues, setDraftIssues] = useState<string[]>([]);
+  const [rceInput, setRceInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [sentNote, setSentNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -124,7 +151,13 @@ export default function InboxPage() {
   useEffect(() => {
     setThreadOpen(false);
     setSheetError(null);
-    setDateDraft(open?.suggested_date ?? "");
+    setMenuOpen(false);
+    setDraftIssues([]);
+    setSentNote(null);
+    if (!open) return;
+    setDraftBody(open.draft_body ?? "");
+    setRceInput(open.status === "sent" ? (open.task_date ? String(daysBetween(open.sent_at ?? open.received_at, open.task_date)) : "") : open.suggested_date ? String(daysBetween(open.received_at, open.suggested_date)) : "");
+    if (!open.draft_body && open.status !== "sent" && open.status !== "skipped") void draft(open.message_id);
   }, [open?.message_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // On phones the sheet is exactly the visible viewport (keyboard excluded).
@@ -192,7 +225,13 @@ export default function InboxPage() {
   }
 
   async function setSentiment(sentiment: Sentiment) {
-    await patch({ sentiment });
+    const row = await patch({ sentiment });
+    if (row) {
+      // Defaults follow the type: positive none, neutral their timing or 182, negative 365.
+      const fallback = sentiment === "negative" ? 365 : sentiment === "neutral" ? (row.timing_text && row.suggested_date ? daysBetween(row.received_at, row.suggested_date) : 182) : null;
+      setRceInput(fallback ? String(fallback) : "");
+      void draft(row.message_id, fallback);
+    }
   }
   async function skip() {
     const row = await patch({ status: "skipped" });
@@ -200,11 +239,77 @@ export default function InboxPage() {
   }
   async function reclassify() {
     const row = await patch({ reclassify: true });
-    if (row) setDateDraft(row.suggested_date ?? "");
+    if (row) {
+      setRceInput(row.suggested_date ? String(daysBetween(row.received_at, row.suggested_date)) : "");
+      void draft(row.message_id);
+    }
   }
-  async function saveDate() {
-    await patch({ suggestedDate: dateDraft || null });
+  async function draft(messageId: string, rceDaysOverride?: number | null) {
+    setDrafting(true);
+    setSheetError(null);
+    try {
+      const days = rceDaysOverride === undefined ? parseRce(rceInput) : rceDaysOverride;
+      const res = await fetch("/api/inbox/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId, nextTouchDate: typeof days === "number" ? addDaysIso(new Date().toISOString(), days) : null }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!data) throw new Error("The draft took too long. Tap Redraft.");
+      if (!res.ok) throw new Error(data.error ?? "Could not draft the reply");
+      replaceRow(data.item);
+      setDraftBody(data.draft.body ?? "");
+      setDraftIssues(data.draft.issues ?? []);
+    } catch (err) {
+      setSheetError(err instanceof Error ? err.message : "Could not draft the reply");
+    } finally {
+      setDrafting(false);
+    }
   }
+  async function send() {
+    if (!open || sending) return;
+    const days = parseRce(rceInput);
+    if (days === undefined) {
+      setSheetError("Next touch must be like rce50, 50, or blank for none.");
+      return;
+    }
+    const target = open.from_name ?? open.from_email ?? "them";
+    const sfPart = open.account_id && !open.is_broker_intro
+      ? ` and update ${open.account_name} in Salesforce${days ? ` (RCE in ${days} days)` : ""}`
+      : "";
+    if (!window.confirm(`Send this reply to ${target}${sfPart}?`)) return;
+    setSending(true);
+    setSheetError(null);
+    try {
+      const res = await fetch("/api/inbox/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId: open.message_id, body: draftBody, rceDays: days, sentiment: open.sentiment ?? undefined }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!data) throw new Error("No answer from the server. Check Sent Items before trying again.");
+      if (!res.ok) throw new Error(data.error ?? "Could not send");
+      replaceRow(data.item);
+      const to = (data.recipients ?? []).map((r: { name: string | null; email: string }) => r.name ?? r.email).join(", ");
+      const sf = data.salesforce;
+      const parts = [`Sent to ${to}${data.cc?.length ? ` (cc ${data.cc.join(", ")})` : ""}.`];
+      if (sf?.responded) parts.push(`Responded set${sf.responded.responseTypeValue ? `, type "${sf.responded.responseTypeValue}"` : ""}.`);
+      if (sf?.task) parts.push(`RCE task ${sf.task.action} for ${longDate(sf.task.date)}.`);
+      if (sf?.skipped) parts.push(`Salesforce: ${sf.skipped}.`);
+      setSentNote(parts.join(" "));
+      setMessage(parts.join(" "));
+      setOpenId(null);
+    } catch (err) {
+      setSheetError(err instanceof Error ? err.message : "Could not send");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const rceDays = parseRce(rceInput);
+  const rceDate = typeof rceDays === "number" ? addDaysIso(new Date().toISOString(), rceDays) : null;
+  const isSent = open?.status === "sent";
+  const canSend = Boolean(open) && !isSent && !sending && !drafting && draftBody.trim().length > 0 && rceDays !== undefined;
 
   return (
     <>
@@ -360,32 +465,83 @@ export default function InboxPage() {
                 </div>
 
                 <div className="mt-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{isSent ? "Reply sent" : "Your reply"}</p>
+                    {!isSent ? (
+                      <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-xs font-medium text-brand disabled:text-ink-muted">
+                        <Sparkles size={13} /> {drafting ? "Drafting…" : "Redraft"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <textarea
+                    value={draftBody}
+                    onChange={(e) => setDraftBody(e.target.value)}
+                    readOnly={isSent}
+                    placeholder={drafting ? "Writing your reply…" : "Tap Redraft, or type your reply."}
+                    className="mt-1.5 min-h-44 w-full rounded-lg border border-line p-3 text-base leading-6 text-ink read-only:bg-surface-3"
+                  />
+                  {draftIssues.length > 0 ? (
+                    <p className="mt-1 text-xs text-warn">{draftIssues.join(" ")}</p>
+                  ) : null}
+                  {open.sentiment === "positive" && !open.is_broker_intro && !isSent ? (
+                    <p className="mt-1 text-xs text-ink-muted">bot@blockit.com will be copied so it can send times and the Teams invite.</p>
+                  ) : null}
+                </div>
+
+                <div className="mt-4">
                   <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">Next touch (RCE task)</p>
                   <div className="mt-1.5 flex items-center gap-2">
                     <input
-                      type="date"
-                      value={dateDraft}
-                      onChange={(e) => setDateDraft(e.target.value)}
-                      onBlur={() => { if (dateDraft !== (open.suggested_date ?? "")) void saveDate(); }}
-                      className="h-11 flex-1 rounded-lg border border-line px-3 text-base"
+                      type="text"
+                      inputMode="numeric"
+                      value={rceInput}
+                      onChange={(e) => setRceInput(e.target.value)}
+                      readOnly={isSent}
+                      placeholder="rce50, or blank for none"
+                      className={`h-11 w-40 rounded-lg border px-3 text-base read-only:bg-surface-3 ${rceDays === undefined ? "border-danger" : "border-line"}`}
                     />
-                    {dateDraft ? (
-                      <Button variant="ghost" size="sm" disabled={busy} onClick={() => { setDateDraft(""); void patch({ suggestedDate: null }); }}>
-                        Clear
-                      </Button>
-                    ) : null}
+                    <span className="text-sm text-ink-secondary">
+                      {isSent && open.task_date ? `Task on ${longDate(open.task_date)}` : rceDate ? longDate(rceDate) : rceDays === undefined ? "Not a number" : "No task"}
+                    </span>
                   </div>
                   <p className="mt-1 text-xs text-ink-muted">
-                    {open.timing_text ? `They said “${open.timing_text}”.` : open.sentiment === "positive" ? "Positive replies get no task; the call is the next step." : "No timing in their reply; default used."}
-                    {" "}Nothing is written to Salesforce yet; replies and task updates come in the next step.
+                    {open.is_broker_intro || !open.account_id
+                      ? "No Salesforce account on this one, so nothing is written there."
+                      : open.timing_text
+                        ? `They said “${open.timing_text}”.`
+                        : open.sentiment === "positive"
+                          ? "Positive replies get no task by default; the call is the next step."
+                          : "No timing in their reply; the default for this type is used."}
+                    {open.account_id && !open.is_broker_intro && !isSent ? " On Send: Responded and response type are set on the account, and the open task is moved or created." : ""}
                   </p>
                 </div>
+                {sentNote ? <Alert variant="info" className="mt-3">{sentNote}</Alert> : null}
               </div>
 
-              <div className="flex items-center gap-2 border-t border-line bg-surface-2 p-3 sm:px-6">
-                <Button variant="ghost" disabled={busy} onClick={() => void reclassify()}>Reclassify</Button>
+              <div className="relative flex items-center gap-2 border-t border-line bg-surface-2 p-3 sm:px-6">
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-3 text-ink-muted"
+                  aria-label="More"
+                >
+                  <MoreHorizontal size={18} />
+                </button>
+                {menuOpen ? (
+                  <div className="absolute bottom-full left-3 z-10 mb-2 w-56 overflow-hidden rounded-xl border border-line bg-white shadow-xl">
+                    <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void reclassify(); }}>Reclassify</button>
+                    {!isSent ? <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void skip(); }}>Skip (mark done, no reply)</button> : null}
+                    <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); setOpenId(null); }}>Close</button>
+                  </div>
+                ) : null}
                 <div className="flex-1" />
-                <Button variant="secondary" disabled={busy} onClick={() => void skip()}>Skip</Button>
+                {isSent ? (
+                  <Button variant="secondary" onClick={() => setOpenId(null)}>Done</Button>
+                ) : (
+                  <Button leftIcon={<Send size={14} />} loading={sending} disabled={!canSend} onClick={() => void send()}>
+                    Send
+                  </Button>
+                )}
               </div>
             </div>
           </div>

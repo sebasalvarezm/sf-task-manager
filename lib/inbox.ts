@@ -1,4 +1,24 @@
-import { getMsValidCredentials, fetchEmailThread, getMailboxIdentities, isSelfAddress } from "./microsoft";
+import {
+  getMsValidCredentials,
+  fetchEmailThread,
+  getMailboxIdentities,
+  getMailboxAddress,
+  isSelfAddress,
+  createOutlookReplyDraft,
+  sendOutlookDraft,
+  deleteOutlookDraftIfUnsent,
+} from "./microsoft";
+import {
+  BLOCKIT_CC,
+  INBOX_DRAFT_SYSTEM,
+  fallbackDraft,
+  firstNameOfSender,
+  inboxDraftPrompt,
+  normalizeDraft,
+  validateDraft,
+} from "./inbox-draft";
+import { markAccountResponded, scheduleRceTask, type RespondedOutcome } from "./inbox-salesforce";
+import type { FollowUpOutcome } from "./salesforce-calls";
 import { sfQuery } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
 import { getAnthropicClient } from "./anthropic";
@@ -12,6 +32,7 @@ import {
   isFreeMailDomain,
   parseClassification,
   suggestedNextTouch,
+  addDays,
   trimReplyBody,
   type Classification,
   type Sentiment,
@@ -22,7 +43,8 @@ import {
  * Inbox: inbound replies to outreach, one row per thread (its latest inbound
  * message), classified and matched to a Salesforce account.
  *
- * Phase 1 is read-only: nothing here writes to Salesforce or sends mail.
+ * Reading and classifying never write anywhere. Sending (sendInboxReply) is
+ * the one place that sends mail and touches Salesforce.
  */
 
 export type InboxStatus = "new" | "drafted" | "sent" | "skipped";
@@ -352,4 +374,219 @@ export async function reclassifyInboxRow(messageId: string): Promise<InboxRow> {
       .eq("message_id", messageId);
     return { ...updated, timing_text: classification.timingText, summary: classification.summary, is_broker_intro: classification.isBrokerIntro };
   });
+}
+
+// ── Drafting ────────────────────────────────────────────────────────────────
+
+type SentExample = { to: string; subject: string; body: string };
+let sentExamplesCache: { at: number; items: SentExample[] } | null = null;
+
+/** Short replies Seb sent recently, as voice examples. Cached for an hour. */
+async function recentSentReplies(): Promise<SentExample[]> {
+  if (sentExamplesCache && Date.now() - sentExamplesCache.at < 3_600_000) return sentExamplesCache.items;
+  const credentials = await getMsValidCredentials();
+  if (!credentials) return [];
+  const params = new URLSearchParams({
+    $select: "subject,toRecipients,body,sentDateTime",
+    $orderby: "sentDateTime desc",
+    $top: "60",
+  });
+  try {
+    const response = await fetch(
+      `https://graph.microsoft.com/v1.0/me/mailFolders/sentitems/messages?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${credentials.access_token}`, Prefer: 'outlook.body-content-type="text"' } },
+    );
+    if (!response.ok) return [];
+    const data = (await response.json()) as {
+      value?: Array<{ subject?: string; toRecipients?: Array<{ emailAddress?: { name?: string; address?: string } }>; body?: { content?: string } }>;
+    };
+    const items: SentExample[] = [];
+    for (const m of data.value ?? []) {
+      const subject = m.subject ?? "";
+      if (!/^(re|aw|tr)\s*:/i.test(subject)) continue; // replies only
+      const body = trimReplyBody(m.body?.content ?? "");
+      if (body.length < 40 || body.length > 900) continue;
+      const to = m.toRecipients?.[0]?.emailAddress?.name || m.toRecipients?.[0]?.emailAddress?.address || "";
+      if (/blockit/i.test(to)) continue;
+      items.push({ to, subject, body });
+      if (items.length >= 8) break;
+    }
+    sentExamplesCache = { at: Date.now(), items };
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+export type InboxDraft = { body: string; issues: string[]; source: "model" | "fallback" };
+
+/** Write Seb's reply for one row and store it on the row. */
+export async function draftInboxReply(messageId: string, nextTouchDate: string | null | undefined): Promise<{ item: InboxRow; draft: InboxDraft }> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.from("inbox_replies").select("*").eq("message_id", messageId).single();
+  if (error) throw new Error(error.message);
+  const row = data as InboxRow;
+  const sentiment = row.sentiment ?? "unclear";
+  const firstName = firstNameOfSender(row.from_name, row.from_email);
+  const theirs = row.thread[row.thread.length - 1]?.text ?? row.preview ?? "";
+  const nextTouch = nextTouchDate === undefined ? row.suggested_date : nextTouchDate;
+
+  let body: string | null = null;
+  let source: InboxDraft["source"] = "model";
+  const client = getAnthropicClient();
+  if (client) {
+    const examples = await recentSentReplies();
+    try {
+      const response = await client.messages.create({
+        model: CLASSIFY_MODEL,
+        max_tokens: 500,
+        system: INBOX_DRAFT_SYSTEM,
+        messages: [{
+          role: "user",
+          content: inboxDraftPrompt({
+            thread: row.thread,
+            sentiment,
+            isBrokerIntro: row.is_broker_intro,
+            accountName: row.account_name,
+            senderName: row.from_name,
+            timingText: row.timing_text,
+            nextTouchDate: nextTouch,
+            examples,
+          }),
+        }],
+      });
+      const text = response.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
+      body = text ? normalizeDraft(text) : null;
+    } catch {
+      body = null;
+    }
+  }
+  if (!body) {
+    body = fallbackDraft(sentiment, firstName, row.timing_text);
+    source = "fallback";
+  }
+  const issues = validateDraft(body, theirs.length);
+  const item = await updateInboxRow(messageId, { draft_body: body, status: row.status === "new" ? "drafted" : row.status });
+  return { item, draft: { body, issues, source } };
+}
+
+// ── Sending ─────────────────────────────────────────────────────────────────
+
+export type SendOutcome = {
+  item: InboxRow;
+  recipients: Array<{ name: string | null; email: string }>;
+  cc: string[];
+  salesforce: { responded: RespondedOutcome | null; task: FollowUpOutcome | null; skipped: string | null };
+};
+
+async function addCcAndMarkRead(draftId: string, cc: string[]): Promise<void> {
+  if (cc.length === 0) return;
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ ccRecipients: cc.map((address) => ({ emailAddress: { address } })) }),
+  });
+  if (!response.ok) throw new Error(`Could not add the CC to the reply (${response.status}).`);
+}
+
+async function markMessageRead(messageId: string): Promise<void> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) return;
+  await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ isRead: true }),
+  }).catch(() => undefined);
+}
+
+/**
+ * Send the reply into the thread, then update Salesforce for account threads:
+ * Responded + response type, and the RCE task when `rceDays` is a number.
+ * Broker intros and unmatched senders only get the email.
+ */
+export async function sendInboxReply(params: {
+  messageId: string;
+  body: string;
+  rceDays: number | null;
+  sentiment?: Sentiment;
+}): Promise<SendOutcome> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.from("inbox_replies").select("*").eq("message_id", params.messageId).single();
+  if (error) throw new Error(error.message);
+  const row = data as InboxRow;
+  if (row.status === "sent") throw new Error("This reply was already sent.");
+  const body = params.body.trim();
+  if (!body) throw new Error("The reply is empty.");
+  const sentiment: Sentiment = params.sentiment ?? row.sentiment ?? "unclear";
+  if (!row.from_email) throw new Error("The sender has no email address.");
+
+  // 1. Outlook: reply in-thread, addressed to the sender, Blockit copied on a positive.
+  const identities = await getMailboxIdentities();
+  const mailbox = await getMailboxAddress().catch(() => null);
+  const draft = await createOutlookReplyDraft(row.message_id, body, {
+    mailbox,
+    selfAddresses: identities,
+    fallbackRecipients: [{ name: row.from_name, email: row.from_email }],
+  });
+  const recipients = draft.recipients ?? [];
+  if (recipients.length === 0 || recipients.every((r) => isSelfAddress(r.email, identities))) {
+    await deleteOutlookDraftIfUnsent(draft.id).catch(() => undefined);
+    throw new Error("The reply came out addressed to you, not the sender. Nothing was sent.");
+  }
+  const cc = sentiment === "positive" && !row.is_broker_intro ? [BLOCKIT_CC] : [];
+  try {
+    await addCcAndMarkRead(draft.id, cc);
+    await sendOutlookDraft(draft.id);
+  } catch (err) {
+    await deleteOutlookDraftIfUnsent(draft.id).catch(() => undefined);
+    throw err;
+  }
+  await markMessageRead(row.message_id);
+  const sentAt = new Date().toISOString();
+
+  // 2. Salesforce, account threads only.
+  const salesforce: SendOutcome["salesforce"] = { responded: null, task: null, skipped: null };
+  let taskId: string | null = null;
+  let taskDate: string | null = null;
+  let sfRespondedAt: string | null = null;
+  if (!row.account_id || row.is_broker_intro) {
+    salesforce.skipped = row.is_broker_intro ? "broker intro" : "no Salesforce account";
+  } else {
+    try {
+      salesforce.responded = await markAccountResponded(row.account_id, sentiment);
+      sfRespondedAt = sentAt;
+    } catch (err) {
+      salesforce.skipped = `account update failed: ${err instanceof Error ? err.message : "unknown error"}`;
+    }
+    if (params.rceDays && params.rceDays > 0) {
+      try {
+        salesforce.task = await scheduleRceTask(row.account_id, sentAt, params.rceDays);
+        taskId = salesforce.task.taskId;
+        taskDate = salesforce.task.date;
+      } catch (err) {
+        salesforce.skipped = `${salesforce.skipped ? salesforce.skipped + "; " : ""}task failed: ${err instanceof Error ? err.message : "unknown error"}`;
+      }
+    }
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from("inbox_replies")
+    .update({
+      status: "sent",
+      draft_body: body,
+      sentiment,
+      sent_at: sentAt,
+      sf_responded_at: sfRespondedAt,
+      task_id: taskId,
+      task_date: taskDate,
+      suggested_date: params.rceDays ? addDays(sentAt, params.rceDays) : null,
+      updated_at: sentAt,
+    })
+    .eq("message_id", params.messageId)
+    .select("*")
+    .single();
+  if (updateError) throw new Error(updateError.message);
+  return { item: updated as InboxRow, recipients, cc, salesforce };
 }

@@ -5,6 +5,7 @@ import {
   isAutomatedSender,
   isFreeMailDomain,
   parseClassification,
+  parseRceDays,
   suggestedNextTouch,
   trimReplyBody,
 } from "../lib/inbox-classify";
@@ -90,5 +91,46 @@ Sent: Monday
     expect(trimmed).toContain("six months or so");
     expect(trimmed).not.toContain("From: Sebastian");
     expect(trimmed).not.toContain("earlier text");
+  });
+});
+
+describe("inbox: signatures and tracking junk", () => {
+  it("drops the signature block, proofpoint links and the legal footer", () => {
+    const body = `Sebastian, Kahua has signed a deal with Bain Capital.
+
+Thank you.
+
+Scott Unger
+Chief Executive Officer, Kahua, Inc.
+
+[icon] 678.576.7285<tel:678.576.7285>  [icon]
+www.kahua.com<https://urldefense.proofpoint.com/v2/url?u=https-3A__www.kahua.com&d=abc>
+[icon]  sunger@kahua.com<mailto:sunger@kahua.com>
+
+IMPORTANT: The contents of this email and any attachments are confidential.`;
+    const trimmed = trimReplyBody(body);
+    expect(trimmed).toContain("signed a deal with Bain Capital");
+    expect(trimmed).not.toContain("urldefense");
+    expect(trimmed).not.toContain("[icon]");
+    expect(trimmed).not.toContain("IMPORTANT");
+    expect(trimmed).not.toContain("Chief Executive Officer");
+  });
+  it("keeps the name after a sign-off and nothing more", () => {
+    const trimmed = trimReplyBody("Hi Seb,\n\nStill not selling.\n\nRegards,\nNiko\n\nNiko Zorkin | CEO\nENKON Information Systems Inc.\nPh: +1-250-480-7103");
+    expect(trimmed.endsWith("Regards,\nNiko")).toBe(true);
+  });
+});
+
+describe("inbox: rce shorthand", () => {
+  it("reads rce50, 50 and blank", () => {
+    expect(parseRceDays("rce50")).toBe(50);
+    expect(parseRceDays("RCE 365")).toBe(365);
+    expect(parseRceDays("50")).toBe(50);
+    expect(parseRceDays("")).toBeNull();
+    expect(parseRceDays("none")).toBeNull();
+    expect(parseRceDays("next year")).toBeUndefined();
+  });
+  it("positive replies never get a date even when one is mentioned", () => {
+    expect(suggestedNextTouch({ sentiment: "positive", timingDate: "2026-10-22" }, "2026-10-11T00:00:00Z")).toBeNull();
   });
 });
