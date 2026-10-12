@@ -9,6 +9,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Stops iOS browsers (Chrome included) zooming the page when a text box is
+  // focused. iOS still allows pinch-zoom for accessibility.
+  maximumScale: 1,
 };
 
 export default function RootLayout({

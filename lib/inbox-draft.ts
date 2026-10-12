@@ -53,7 +53,7 @@ export function inboxDraftPrompt(params: {
     "",
     ...thread,
     "",
-    examples.length > 0 ? "Recent replies Seb wrote himself, for voice only (do not copy their facts):" : "",
+    examples.length > 0 ? "Recent replies Seb wrote himself. Use them ONLY for tone, length and phrasing. Never reuse a fact, plan, trip, deal or circumstance from them; they are about other people and other weeks." : "",
     ...examples,
     "",
     "Write Seb's reply now.",

@@ -1,3 +1,4 @@
+import { getStoredSignature, composeHtmlBody, extractSignatureHtml, extractSignatureText, htmlToText, textToHtml } from "./outlook-signature";
 import { upstreamErrorText } from "./upstream-error";
 import { isDeadRefreshToken, transientRefreshError } from "./oauth-refresh";
 import { getSupabaseAdmin } from "./supabase";
@@ -545,6 +546,105 @@ export async function createOutlookReplyDraft(
 }
 
 /**
+ * Like createOutlookReplyDraft but "reply all": everyone on the original To
+ * and CC lines stays on the reply, minus the user's own addresses. Used by the
+ * Inbox so a founder's colleagues who were copied keep getting the thread.
+ */
+export async function createOutlookReplyAllDraft(
+  replyToMessageId: string,
+  body: string,
+  options: {
+    selfAddresses: Iterable<string>;
+    /** Who the reply must reach even if Outlook addressed it oddly. */
+    sender: { name: string | null; email: string };
+    /** Extra CCs to add (deduplicated). */
+    extraCc?: string[];
+  },
+): Promise<OutlookReplyDraft & { cc: string[] }> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const createResponse = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(replyToMessageId)}/createReplyAll`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" },
+      body: "{}",
+    },
+  );
+  if (!createResponse.ok) {
+    const detail = await upstreamErrorText("Outlook", createResponse);
+    if (createResponse.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+    throw new Error(`Could not create Outlook reply draft: ${detail}`);
+  }
+  type Addr = { emailAddress?: { name?: string; address?: string } };
+  const created = (await createResponse.json()) as { id: string; subject?: string; toRecipients?: Addr[]; ccRecipients?: Addr[] };
+  const identities = new Set(Array.from(options.selfAddresses));
+  const clean = (list: Addr[] | undefined) =>
+    (list ?? [])
+      .map((r) => ({ name: r.emailAddress?.name?.trim() || null, email: (r.emailAddress?.address ?? "").toLowerCase() }))
+      .filter((r) => r.email && !isSelfAddress(r.email, identities));
+  let to = clean(created.toRecipients);
+  const seen = new Set(to.map((r) => r.email));
+  if (!seen.has(options.sender.email.toLowerCase())) {
+    to = [{ name: options.sender.name, email: options.sender.email.toLowerCase() }, ...to];
+    seen.add(options.sender.email.toLowerCase());
+  }
+  const cc = clean(created.ccRecipients).filter((r) => !seen.has(r.email));
+  for (const r of cc) seen.add(r.email);
+  for (const extra of options.extraCc ?? []) {
+    const email = extra.toLowerCase();
+    if (!seen.has(email)) { cc.push({ name: null, email }); seen.add(email); }
+  }
+  const toGraph = (list: Array<{ name: string | null; email: string }>) =>
+    list.map((r) => ({ emailAddress: r.name ? { name: r.name, address: r.email } : { address: r.email } }));
+
+  const signature = await getStoredSignature();
+  const patch = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(created.id)}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      toRecipients: toGraph(to),
+      ccRecipients: toGraph(cc),
+      body: signature
+        ? { contentType: "HTML", content: composeHtmlBody(body, signature.html) }
+        : { contentType: "Text", content: body },
+    }),
+  });
+  if (!patch.ok) {
+    throw new Error(`Could not address the Outlook reply draft: ${await upstreamErrorText("Outlook", patch)}`);
+  }
+  return { id: created.id, subject: created.subject ?? "Reply", recipients: to, cc: cc.map((r) => r.email) };
+}
+
+/**
+ * Read the user's signature off their most recent sent emails (Outlook wraps
+ * it in <div id="Signature">). Falls back to the text under the sign-off.
+ */
+export async function importSignatureFromSentItems(): Promise<{ html: string; text: string } | null> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const params = new URLSearchParams({ $select: "body,subject", $orderby: "sentDateTime desc", $top: "15" });
+  const response = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/sentitems/messages?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${credentials.access_token}` },
+  });
+  if (!response.ok) throw new Error(`Could not read Sent Items (${response.status}).`);
+  const data = (await response.json()) as { value?: Array<{ body?: { contentType?: string; content?: string } }> };
+  let textFallback: string | null = null;
+  for (const m of data.value ?? []) {
+    const content = m.body?.content ?? "";
+    if (!content) continue;
+    if ((m.body?.contentType ?? "").toLowerCase() === "html") {
+      const html = extractSignatureHtml(content);
+      if (html) return { html, text: htmlToText(html) };
+      if (!textFallback) textFallback = extractSignatureText(htmlToText(content));
+    } else if (!textFallback) {
+      textFallback = extractSignatureText(content);
+    }
+  }
+  return textFallback ? { html: textToHtml(textFallback), text: textFallback } : null;
+}
+
+/**
  * Create a brand-new Outlook draft (not a reply). Used when the user is taking
  * an account over from a colleague and has no chain of their own to reply into.
  * Save and Approve & Send work on it exactly like a reply draft.
@@ -661,6 +761,13 @@ export async function createOutlookFollowUpDraft(params: {
 export async function updateOutlookDraft(draftId: string, body: string): Promise<void> {
   const credentials = await getMsValidCredentials();
   if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  // Graph never adds the Outlook signature itself. When one is stored
+  // (see lib/outlook-signature.ts) the draft goes out as HTML with it appended;
+  // otherwise plain text, as before.
+  const signature = await getStoredSignature();
+  const payload = signature
+    ? { contentType: "HTML", content: composeHtmlBody(body, signature.html) }
+    : { contentType: "Text", content: body };
   const response = await fetch(
     `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}`,
     {
@@ -669,7 +776,7 @@ export async function updateOutlookDraft(draftId: string, body: string): Promise
         Authorization: `Bearer ${credentials.access_token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ body: { contentType: "Text", content: body } }),
+      body: JSON.stringify({ body: payload }),
     },
   );
   if (!response.ok) {

@@ -2,9 +2,8 @@ import {
   getMsValidCredentials,
   fetchEmailThread,
   getMailboxIdentities,
-  getMailboxAddress,
   isSelfAddress,
-  createOutlookReplyDraft,
+  createOutlookReplyAllDraft,
   sendOutlookDraft,
   deleteOutlookDraftIfUnsent,
 } from "./microsoft";
@@ -99,7 +98,13 @@ export async function listInbox(): Promise<InboxRow[]> {
     .order("received_at", { ascending: false })
     .limit(200);
   if (error) throw new Error(error.message);
-  return (data ?? []) as InboxRow[];
+  return ((data ?? []) as InboxRow[]).map((row) => {
+    // Re-run the cutter on read: rows stored before it learned a pattern
+    // (signature blocks, tracking links, legal footers) still come out clean.
+    const thread = (row.thread ?? []).map((m) => ({ ...m, text: trimReplyBody(m.text) }));
+    const latest = thread[thread.length - 1];
+    return { ...row, thread, preview: latest ? latest.text.slice(0, 400) : row.preview };
+  });
 }
 
 /** Unread inbound messages in the last `days` days, newest first. */
@@ -479,18 +484,6 @@ export type SendOutcome = {
   salesforce: { responded: RespondedOutcome | null; task: FollowUpOutcome | null; skipped: string | null };
 };
 
-async function addCcAndMarkRead(draftId: string, cc: string[]): Promise<void> {
-  if (cc.length === 0) return;
-  const credentials = await getMsValidCredentials();
-  if (!credentials) throw new Error("MS_NOT_CONNECTED");
-  const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}`, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ ccRecipients: cc.map((address) => ({ emailAddress: { address } })) }),
-  });
-  if (!response.ok) throw new Error(`Could not add the CC to the reply (${response.status}).`);
-}
-
 async function markMessageRead(messageId: string): Promise<void> {
   const credentials = await getMsValidCredentials();
   if (!credentials) return;
@@ -522,22 +515,20 @@ export async function sendInboxReply(params: {
   const sentiment: Sentiment = params.sentiment ?? row.sentiment ?? "unclear";
   if (!row.from_email) throw new Error("The sender has no email address.");
 
-  // 1. Outlook: reply in-thread, addressed to the sender, Blockit copied on a positive.
+  // 1. Outlook: reply all in-thread (their CCs stay on), Blockit copied on a positive.
   const identities = await getMailboxIdentities();
-  const mailbox = await getMailboxAddress().catch(() => null);
-  const draft = await createOutlookReplyDraft(row.message_id, body, {
-    mailbox,
+  const cc = sentiment === "positive" && !row.is_broker_intro ? [BLOCKIT_CC] : [];
+  const draft = await createOutlookReplyAllDraft(row.message_id, body, {
     selfAddresses: identities,
-    fallbackRecipients: [{ name: row.from_name, email: row.from_email }],
+    sender: { name: row.from_name, email: row.from_email },
+    extraCc: cc,
   });
   const recipients = draft.recipients ?? [];
   if (recipients.length === 0 || recipients.every((r) => isSelfAddress(r.email, identities))) {
     await deleteOutlookDraftIfUnsent(draft.id).catch(() => undefined);
     throw new Error("The reply came out addressed to you, not the sender. Nothing was sent.");
   }
-  const cc = sentiment === "positive" && !row.is_broker_intro ? [BLOCKIT_CC] : [];
   try {
-    await addCcAndMarkRead(draft.id, cc);
     await sendOutlookDraft(draft.id);
   } catch (err) {
     await deleteOutlookDraftIfUnsent(draft.id).catch(() => undefined);
@@ -588,5 +579,5 @@ export async function sendInboxReply(params: {
     .select("*")
     .single();
   if (updateError) throw new Error(updateError.message);
-  return { item: updated as InboxRow, recipients, cc, salesforce };
+  return { item: updated as InboxRow, recipients, cc: draft.cc, salesforce };
 }

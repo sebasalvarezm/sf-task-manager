@@ -99,6 +99,11 @@ export default function InboxPage() {
   const [sending, setSending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [sentNote, setSentNote] = useState<string | null>(null);
+  const [sigOpen, setSigOpen] = useState(false);
+  const [sig, setSig] = useState<{ text: string; source: string } | null | undefined>(undefined);
+  const [sigText, setSigText] = useState("");
+  const [sigBusy, setSigBusy] = useState(false);
+  const [sigError, setSigError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -116,7 +121,28 @@ export default function InboxPage() {
   }, []);
   useEffect(() => {
     void load();
+    void fetch("/api/inbox/signature", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setSig(d.signature ? { text: d.signature.text, source: d.signature.source } : null))
+      .catch(() => setSig(null));
   }, [load]);
+
+  async function signatureAction(body: Record<string, unknown>) {
+    setSigBusy(true);
+    setSigError(null);
+    try {
+      const res = await fetch("/api/inbox/signature", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => null);
+      if (!data) throw new Error("No answer from the server.");
+      if (!res.ok) throw new Error(data.error ?? "Could not save the signature");
+      setSig(data.signature ? { text: data.signature.text, source: data.signature.source } : null);
+      setSigText("");
+    } catch (err) {
+      setSigError(err instanceof Error ? err.message : "Could not save the signature");
+    } finally {
+      setSigBusy(false);
+    }
+  }
 
   async function refresh() {
     setRefreshing(true);
@@ -317,14 +343,47 @@ export default function InboxPage() {
         title="Inbox"
         subtitle="Replies to your outreach, classified. Tap one to see the thread and the proposed next touch."
         actions={
-          <Button variant="secondary" leftIcon={<RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />} loading={refreshing} onClick={() => void refresh()}>
-            Check Outlook
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setSigOpen((v) => !v)}>
+              {sig === undefined ? "Signature" : sig ? "Signature ✓" : "Signature: none"}
+            </Button>
+            <Button variant="secondary" leftIcon={<RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />} loading={refreshing} onClick={() => void refresh()}>
+              Check Outlook
+            </Button>
+          </>
         }
       />
       <PageContent>
         {error ? <Alert variant="danger" className="mb-4">{error}</Alert> : null}
         {message ? <Alert variant="info" className="mb-4">{message}</Alert> : null}
+
+        {sigOpen ? (
+          <div className="mb-4 rounded-xl border border-line bg-white p-4">
+            <p className="text-sm font-semibold text-ink">Email signature</p>
+            <p className="mt-1 text-xs text-ink-muted">
+              Outlook adds your signature only when you send from Outlook itself. Store it here once and every email this tool sends (Inbox replies, RCE reconnects and follow-ups) gets it appended under your sign-off.
+            </p>
+            {sigError ? <Alert variant="danger" className="mt-3">{sigError}</Alert> : null}
+            {sig ? (
+              <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-3 p-3 font-sans text-xs text-ink-secondary">{sig.text}</pre>
+            ) : (
+              <p className="mt-3 text-sm text-ink-secondary">No signature stored. Emails go out with just your sign-off.</p>
+            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" loading={sigBusy} onClick={() => void signatureAction({ action: "import" })}>
+                {sig ? "Re-import from last sent email" : "Import from last sent email"}
+              </Button>
+              {sig ? (
+                <Button size="sm" variant="ghost" disabled={sigBusy} onClick={() => void signatureAction({ action: "clear" })}>Remove</Button>
+              ) : null}
+            </div>
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs font-medium text-brand">Or paste it as text</summary>
+              <textarea value={sigText} onChange={(e) => setSigText(e.target.value)} placeholder={"Sebastian Alvarez\nDirector, M&A | Valstone\n..."} className="mt-2 min-h-28 w-full rounded-lg border border-line p-3 text-base" />
+              <Button size="sm" className="mt-2" disabled={sigBusy || !sigText.trim()} onClick={() => void signatureAction({ text: sigText })}>Save pasted signature</Button>
+            </details>
+          </div>
+        ) : null}
 
         <div className="mb-4 flex gap-2 overflow-x-auto">
           {(
@@ -424,11 +483,11 @@ export default function InboxPage() {
                 {sheetError ? <Alert variant="danger" className="mb-3">{sheetError}</Alert> : null}
 
                 <div className="rounded-xl border border-line bg-surface-3 p-3">
-                  <p className="whitespace-pre-wrap text-sm text-ink">{open.thread[open.thread.length - 1]?.text || open.preview}</p>
+                  <p className={`whitespace-pre-wrap text-sm text-ink ${threadOpen ? "" : "line-clamp-[12]"}`}>{open.thread[open.thread.length - 1]?.text || open.preview}</p>
                   {open.thread.length > 1 ? (
                     <button type="button" onClick={() => setThreadOpen((v) => !v)} className="mt-2 flex items-center gap-1 text-xs font-medium text-brand">
                       {threadOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                      {threadOpen ? "Hide earlier messages" : `Show ${open.thread.length - 1} earlier message${open.thread.length - 1 === 1 ? "" : "s"}`}
+                      {threadOpen ? "Show less" : `Show full thread (${open.thread.length - 1} earlier)`}
                     </button>
                   ) : null}
                   {threadOpen
@@ -484,7 +543,7 @@ export default function InboxPage() {
                     <p className="mt-1 text-xs text-warn">{draftIssues.join(" ")}</p>
                   ) : null}
                   {open.sentiment === "positive" && !open.is_broker_intro && !isSent ? (
-                    <p className="mt-1 text-xs text-ink-muted">bot@blockit.com will be copied so it can send times and the Teams invite.</p>
+                    <p className="mt-1 text-xs text-ink-muted">Reply goes to everyone on their email (reply all), with bot@blockit.com copied so it can send times and the Teams invite.</p>
                   ) : null}
                 </div>
 
