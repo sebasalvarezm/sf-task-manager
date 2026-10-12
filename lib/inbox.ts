@@ -10,6 +10,9 @@ import {
 import {
   BLOCKIT_CC,
   INBOX_DRAFT_SYSTEM,
+  POSITIVE_DETAIL_SYSTEM,
+  positiveDetailPrompt,
+  positiveDraft,
   fallbackDraft,
   firstNameOfSender,
   inboxDraftPrompt,
@@ -61,7 +64,7 @@ export type InboxRow = {
   has_mine: boolean;
   account_id: string | null;
   account_name: string | null;
-  account_matched_by: "domain" | "subject" | null;
+  account_matched_by: "contact" | "domain" | "subject" | null;
   sentiment: Sentiment | null;
   timing_text: string | null;
   suggested_date: string | null;
@@ -137,16 +140,39 @@ async function fetchUnreadInbound(days: number): Promise<GraphMessage[]> {
 
 type AccountHit = { accountId: string; accountName: string; website: string | null };
 
-/** Match sender domains and subject-named companies to Salesforce accounts in one pass. */
+/**
+ * Match senders to Salesforce accounts in one pass, in this order:
+ * the sender is a Contact on the account (their email, exactly), the sender's
+ * domain is the account's website, or the subject names the company.
+ */
 async function matchAccounts(
+  emails: string[],
   domains: string[],
   subjectNames: string[],
-): Promise<{ byDomain: Map<string, AccountHit>; byName: Map<string, AccountHit> }> {
+): Promise<{ byEmail: Map<string, AccountHit>; byDomain: Map<string, AccountHit>; byName: Map<string, AccountHit> }> {
+  const byEmail = new Map<string, AccountHit>();
   const byDomain = new Map<string, AccountHit>();
   const byName = new Map<string, AccountHit>();
+  const uniqueEmails = Array.from(new Set(emails.filter(Boolean).map((e) => e.toLowerCase())));
+  if (uniqueEmails.length > 0) {
+    try {
+      type ContactRec = { Email: string | null; AccountId: string | null; Account?: { Name?: string; Website?: string | null } | null };
+      const contacts = await sfQuery<ContactRec>(
+        `SELECT Email, AccountId, Account.Name, Account.Website FROM Contact WHERE AccountId != null AND Email IN (${uniqueEmails.map((e) => `'${escapeSoql(e)}'`).join(", ")}) LIMIT 200`,
+      );
+      for (const c of contacts) {
+        const email = (c.Email ?? "").toLowerCase();
+        if (email && c.AccountId && c.Account?.Name && !byEmail.has(email)) {
+          byEmail.set(email, { accountId: c.AccountId, accountName: c.Account.Name, website: c.Account.Website ?? null });
+        }
+      }
+    } catch (err) {
+      if (!(err instanceof Error && err.message === "NOT_CONNECTED")) throw err;
+    }
+  }
   const uniqueDomains = Array.from(new Set(domains.filter(Boolean)));
   const uniqueNames = Array.from(new Set(subjectNames.filter(Boolean)));
-  if (uniqueDomains.length === 0 && uniqueNames.length === 0) return { byDomain, byName };
+  if (uniqueDomains.length === 0 && uniqueNames.length === 0) return { byEmail, byDomain, byName };
 
   const clauses: string[] = [];
   for (const d of uniqueDomains) clauses.push(`Website LIKE '%${escapeSoql(d)}%'`);
@@ -158,7 +184,7 @@ async function matchAccounts(
       `SELECT Id, Name, Website FROM Account WHERE ${clauses.join(" OR ")} LIMIT 400`,
     );
   } catch (err) {
-    if (err instanceof Error && err.message === "NOT_CONNECTED") return { byDomain, byName };
+    if (err instanceof Error && err.message === "NOT_CONNECTED") return { byEmail, byDomain, byName };
     throw err;
   }
   const hits: AccountHit[] = records.map((r) => ({ accountId: r.Id, accountName: r.Name, website: r.Website }));
@@ -174,7 +200,7 @@ async function matchAccounts(
     const ranked = rankAccounts({ kind: "name", name: n }, hits);
     if (ranked[0] && ranked[0].matchScore <= 2) byName.set(n, ranked[0]);
   }
-  return { byDomain, byName };
+  return { byEmail, byDomain, byName };
 }
 
 async function classify(thread: ThreadMessage[], accountName: string | null): Promise<Classification | null> {
@@ -267,9 +293,10 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
   if (fresh.length === 0) return summary;
 
   // Account matching: by sender domain, then by company named in the subject.
+  const emails = fresh.map((c) => (c.from?.emailAddress?.address ?? "").toLowerCase()).filter(Boolean);
   const domains = fresh.map((c) => domainOf(c.from?.emailAddress?.address)).filter((d): d is string => Boolean(d) && !isFreeMailDomain(d));
   const subjectNames = fresh.map((c) => companyFromSubject(c.subject)).filter((n): n is string => Boolean(n));
-  const { byDomain, byName } = await matchAccounts(domains, subjectNames);
+  const { byEmail, byDomain, byName } = await matchAccounts(emails, domains, subjectNames);
 
   const rows = await mapLimit(fresh, 4, async (m) => {
     const email = (m.from?.emailAddress?.address ?? "").toLowerCase();
@@ -293,8 +320,9 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
     const hasMine = thread.some((t) => t.mine);
 
     let account: AccountHit | null = null;
-    let matchedBy: "domain" | "subject" | null = null;
-    if (domain && !isFreeMailDomain(domain) && byDomain.has(domain)) { account = byDomain.get(domain)!; matchedBy = "domain"; }
+    let matchedBy: "contact" | "domain" | "subject" | null = null;
+    if (byEmail.has(email)) { account = byEmail.get(email)!; matchedBy = "contact"; }
+    else if (domain && !isFreeMailDomain(domain) && byDomain.has(domain)) { account = byDomain.get(domain)!; matchedBy = "domain"; }
     else {
       const name = companyFromSubject(m.subject);
       if (name && byName.has(name)) { account = byName.get(name)!; matchedBy = "subject"; }
@@ -367,6 +395,19 @@ export async function reclassifyInboxRow(messageId: string): Promise<InboxRow> {
   const { data, error } = await supabase.from("inbox_replies").select("*").eq("message_id", messageId).single();
   if (error) throw new Error(error.message);
   const row = data as InboxRow;
+  if (!row.account_id && row.from_email) {
+    const domain = domainOf(row.from_email);
+    const name = companyFromSubject(row.subject);
+    const { byEmail, byDomain, byName } = await matchAccounts([row.from_email], domain && !isFreeMailDomain(domain) ? [domain] : [], name ? [name] : []);
+    const hit = byEmail.get(row.from_email.toLowerCase()) ?? (domain ? byDomain.get(domain) : undefined) ?? (name ? byName.get(name) : undefined);
+    if (hit) {
+      const matchedBy = byEmail.has(row.from_email.toLowerCase()) ? "contact" : domain && byDomain.has(domain) ? "domain" : "subject";
+      await updateInboxRow(messageId, { account_id: hit.accountId, account_name: hit.accountName, account_matched_by: matchedBy });
+      row.account_id = hit.accountId;
+      row.account_name = hit.accountName;
+      row.account_matched_by = matchedBy;
+    }
+  }
   const classification = await classify(row.thread, row.account_name);
   if (!classification) throw new Error("The classifier did not return a readable answer. Try again.");
   return updateInboxRow(messageId, {
@@ -439,7 +480,25 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
   let body: string | null = null;
   let source: InboxDraft["source"] = "model";
   const client = getAnthropicClient();
-  if (client) {
+  if (sentiment === "positive" && !row.is_broker_intro) {
+    // Seb's fixed structure; the model only contributes an optional detail sentence.
+    let detail: string | null = null;
+    if (client) {
+      try {
+        const response = await client.messages.create({
+          model: CLASSIFY_MODEL,
+          max_tokens: 120,
+          system: POSITIVE_DETAIL_SYSTEM,
+          messages: [{ role: "user", content: positiveDetailPrompt(row.thread) }],
+        });
+        const text = response.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim().replace(/^"|"$/g, "");
+        detail = text && text.length <= 220 && !/^(none|n\/a|empty|"")\.?$/i.test(text) ? text : null;
+      } catch {
+        detail = null;
+      }
+    }
+    body = positiveDraft(firstName, detail);
+  } else if (client) {
     const examples = await recentSentReplies();
     try {
       const response = await client.messages.create({

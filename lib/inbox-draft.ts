@@ -21,7 +21,7 @@ Hard rules:
 - Output the email body only: greeting, body, closing. No subject line, no commentary, no quotes around it.
 
 By reply type:
-- POSITIVE (they will speak): appreciate the reply and the willingness to speak, say that a Teams invite with a few times will follow from my scheduling assistant, who is copied. Do not propose times yourself. If they named a city and date to meet in person, confirm it plainly.
+- POSITIVE (they will speak): Seb's fixed structure is used instead of free writing (see positiveDraft); you will only be asked for an optional detail sentence.
 - NEUTRAL (deferral or not now): acknowledge without arguing, close the loop, and name the next touch plainly using the timing given ("I'll check back in the spring", "I'll reach out again in Q2"). If no timing was given, "I'll check back in a few months". Optional one short genuine positive note if the thread earns it. Never longer than their email.
 - NEGATIVE (stop, remove, hostile): one or two sentences. "Understood" and a clean close. No door left open, no pitch, no apology beyond a brief one if we clearly overstepped.
 - UNCLEAR or BROKER INTRO: answer what they actually asked or acknowledged, in the same voice, and ask one plain question if needed.`;
@@ -98,9 +98,7 @@ export function normalizeDraft(raw: string): string {
 /** Deterministic fallbacks when the model is unavailable. */
 export function fallbackDraft(sentiment: Sentiment, firstName: string | null, timingText: string | null): string {
   const hi = `Hi ${firstName ?? "there"},`;
-  if (sentiment === "positive") {
-    return `${hi}\n\nThank you for the reply, and appreciate the willingness to speak. My scheduling assistant (copied) will send over a few times with a Teams invite.\n\nBest,\nSebastian`;
-  }
+  if (sentiment === "positive") return positiveDraft(firstName, null);
   if (sentiment === "negative") {
     return `${hi}\n\nUnderstood. I will leave it there.\n\nBest,\nSebastian`;
   }
@@ -120,4 +118,29 @@ export function firstNameOfSender(name: string | null | undefined, email: string
   const local = (email ?? "").split("@")[0] ?? "";
   const part = local.split(/[._-]/)[0];
   return part && part.length > 1 && /^[a-z]+$/i.test(part) ? part[0].toUpperCase() + part.slice(1).toLowerCase() : null;
+}
+
+/**
+ * Positive replies follow Seb's own structure every time: glad to hear from
+ * you, appreciate the willingness to talk, the scheduling tool sends times
+ * and a Teams invite once they confirm. An optional one-sentence detail
+ * (a city and date they offered, a document they sent) slots in the middle.
+ */
+export function positiveDraft(firstName: string | null, detailSentence: string | null, casual = false): string {
+  const hi = `Hi ${firstName ?? "there"},`;
+  const detail = detailSentence && detailSentence.trim() ? ` ${detailSentence.trim().replace(/\s*[\u2013\u2014]\s*/g, ", ")}` : "";
+  const body = `Great to hear from you, and appreciate the willingness to talk.${detail} My scheduling tool will send over some times along with a Teams invite once you confirm.`;
+  const close = casual ? "Thank you,\nSeb" : "Best,\nSebastian";
+  return `${hi}\n\n${body}\n\n${close}`;
+}
+
+export const POSITIVE_DETAIL_SYSTEM = `You help Sebastian (Seb) Alvarez of Valstone reply to someone who agreed to speak. Seb's reply already says: "Great to hear from you, and appreciate the willingness to talk. My scheduling tool will send over some times along with a Teams invite once you confirm."
+
+Your only job: decide whether ONE short extra sentence is needed to acknowledge something specific they said that the fixed text does not cover, such as an in-person meeting they proposed in a named city on a date, a document or deck they attached, or a question they asked that needs a one-line answer. If so, write that one sentence in Seb's plain voice (no dashes, "thank you" never "thanks", no banned sales phrases). If nothing specific needs acknowledging, answer with an empty string.
+
+Never propose times. Never repeat what the fixed text says. Output the sentence only, or nothing.`;
+
+export function positiveDetailPrompt(thread: ThreadMessage[]): string {
+  const last = thread[thread.length - 1];
+  return `Their latest message (${last?.at.slice(0, 10) ?? ""}):\n\n${(last?.text ?? "").slice(0, 2000)}\n\nOne extra sentence, or empty.`;
 }

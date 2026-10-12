@@ -26,7 +26,7 @@ type Row = {
   has_mine: boolean;
   account_id: string | null;
   account_name: string | null;
-  account_matched_by: "domain" | "subject" | null;
+  account_matched_by: "contact" | "domain" | "subject" | null;
   sentiment: Sentiment | null;
   timing_text: string | null;
   suggested_date: string | null;

@@ -21,3 +21,17 @@ describe("inbox drafts", () => {
     expect(validateDraft(fallbackDraft("negative", "Scott", null), 100)).toEqual([]);
   });
 });
+
+describe("positive replies", () => {
+  it("follows Seb's structure with no detail", async () => {
+    const { positiveDraft } = await import("../lib/inbox-draft");
+    expect(positiveDraft("Michael", null)).toBe(
+      "Hi Michael,\n\nGreat to hear from you, and appreciate the willingness to talk. My scheduling tool will send over some times along with a Teams invite once you confirm.\n\nBest,\nSebastian",
+    );
+  });
+  it("slots one detail sentence in the middle", async () => {
+    const { positiveDraft } = await import("../lib/inbox-draft");
+    const d = positiveDraft("Ravi", "Dallas on October 22 works on my end.");
+    expect(d).toContain("willingness to talk. Dallas on October 22 works on my end. My scheduling tool");
+  });
+});
