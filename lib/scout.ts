@@ -326,7 +326,8 @@ export type DetailsResult = {
 /**
  * Fetch a single page's text content via Jina AI Reader.
  * Jina renders the page like a browser and returns clean readable text.
- * Best for live/modern websites. Do NOT use for Wayback Machine URLs.
+ * Used for live pages and, with the id_ raw-playback form, for Wayback
+ * Machine pages (see fetchArchivedPageViaJina).
  */
 function jinaHeaders(): Record<string, string> {
   const headers: Record<string, string> = { Accept: "text/plain" };
@@ -958,6 +959,21 @@ const CACHEABLE_FAILURES = new Set<WaybackSnapshotFailure>([
   "prior_owner",
 ]);
 
+/**
+ * Read an archived page through Jina. Returns null when Jina fails, returns
+ * nothing useful, or returns Archive.org's own "not archived" page, so the
+ * caller falls back to the direct download.
+ */
+async function fetchArchivedPageViaJina(playbackUrl: string): Promise<string | null> {
+  const text = await fetchPageText(playbackUrl, 30000, 1);
+  if (!text || text.length < 300) return null;
+  const head = text.slice(0, 600).toLowerCase();
+  if (/wayback machine (has not|hasn't|doesn't have|does not have) (archived|that page)|this url has been excluded|page cannot be displayed due to robots\.txt/.test(head)) {
+    return null;
+  }
+  return text;
+}
+
 /** "/web/20190101000000/https://x" -> "/web/20190101000000id_/https://x" */
 export function rawPlaybackUrl(archiveUrl: string): string {
   return archiveUrl.replace(/\/web\/(\d{4,14})\//, "/web/$1id_/");
@@ -988,7 +1004,16 @@ export async function fetchWaybackSnapshot(
   // The id_ flag asks for the raw archived HTML without the Wayback toolbar
   // wrapper: a lighter response with fewer redirects. The cache key and the
   // link shown in the tool keep the plain URL.
-  const fetched = await fetchRawText(rawPlaybackUrl(secureArchiveUrl), 30000, 8000, deadlineAt);
+  // Archive.org rate-limits page playback per IP, and Vercel's outbound IPs
+  // are shared with thousands of other apps, so a direct download can be
+  // refused (HTTP 429) before this run has fetched a single page. Jina reads
+  // the archived page from its own addresses, so it goes first; the direct
+  // download stays as the fallback and is otherwise unchanged.
+  const playbackUrl = rawPlaybackUrl(secureArchiveUrl);
+  const viaJina = await fetchArchivedPageViaJina(playbackUrl);
+  const fetched = viaJina
+    ? { text: viaJina.slice(0, 8000), failure: null, status: 200, attempts: 1 }
+    : await fetchRawText(playbackUrl, 30000, 8000, deadlineAt);
   if (fetched.failure) {
     const statusDetail = fetched.status ? ` HTTP ${fetched.status}` : "";
     const attemptDetail = fetched.attempts > 1
