@@ -50,8 +50,11 @@ export const sourcingBulkJob = inngest.createFunction(
   async ({ event, step }) => {
     const { jobId, input } = event.data as {
       jobId: string;
-      input: { entries: string[]; weeklyOutreachIds?: string[] };
+      input: { entries: string[]; weeklyOutreachIds?: string[]; force?: boolean };
     };
+    // `force` re-sources every company even when a recent run exists (used to
+    // redo a batch after an Archive.org outage).
+    const force = input.force === true;
 
     await step.run("mark-running", () => markRunning(jobId));
 
@@ -150,12 +153,14 @@ export const sourcingBulkJob = inngest.createFunction(
               try {
                 // requireArchive: re-run companies whose archive history was
                 // lost to an Archive.org outage rather than reusing the gap.
-                const cached = await findRecentSourcingByUrl(
-                  normalizeSourcingUrl(url),
-                  90,
-                  undefined,
-                  true,
-                );
+                const cached = force
+                  ? null
+                  : await findRecentSourcingByUrl(
+                      normalizeSourcingUrl(url),
+                      90,
+                      undefined,
+                      true,
+                    );
                 if (cached?.result) {
                   return {
                     cached: true,
