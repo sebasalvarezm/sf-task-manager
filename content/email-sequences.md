@@ -535,7 +535,7 @@ Best,
 
 I wanted to check in as I have not heard back. I completely understand how busy things can get, but I truly think our rail logistics focus is worth discussing.
 
-Our ecosystem is built to span rail logistics from the railcar to the terminal, including transportation management and track-and-trace, crew and workforce scheduling, and gate and yard operations, and we view these as horizontal capabilities that extend across the entire freight value chain. Today, we own GeoMetrix Logistics, a track-and-trace TMS in the railcar space, and PST, a crew scheduling platform for Class 1 railroads.
+Our ecosystem is built to span rail logistics from the railcar to the terminal, including transportation management and track-and-trace, crew and workforce scheduling, and gate and yard operations, and we view these as horizontal capabilities that extend across the entire freight value chain. Today, we own GeoMetrix Logistics, a track-and-trace TMS in the railcar space, PST, a crew scheduling platform for Class 1 railroads, and Nascent, a gate automation platform that also serves the Class 1s.
 
 Most of these operators have grown up on isolated systems that do not talk to each other, so there is a clear opportunity to integrate key workflows and become a one-stop shop for customers who are tired of managing a dozen separate IT vendors.
 
