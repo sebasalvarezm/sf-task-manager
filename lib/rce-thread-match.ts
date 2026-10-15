@@ -9,7 +9,7 @@ import type { OutlookRelationshipEmail } from "./microsoft";
  * so candidate threads are scored on evidence instead of "most recent wins".
  */
 
-export type RceThreadConfidence = "domain" | "subject" | "none";
+export type RceThreadConfidence = "contact" | "domain" | "subject" | "none";
 
 export type RceThreadMatch = {
   /** The message to reply to, or null when nothing scored high enough. */
@@ -19,12 +19,31 @@ export type RceThreadMatch = {
   reason: string;
 };
 
+/** A Salesforce contact of the account is on the thread: the strongest evidence,
+ * and the only one that works when the owner writes from another company's
+ * domain (a holding company, a personal address). */
+const CONTACT_PARTICIPANT = 120;
 const DOMAIN_PARTICIPANT = 100;
 const NAME_IN_SUBJECT = 50;
 const USER_REPLIED = 25;
 const NAME_IN_BODY_ONLY = 5;
+/** Up to this many points for a recent thread; nothing for one two years old. */
+const RECENCY_MAX = 40;
+const RECENCY_HORIZON_DAYS = 730;
 /** Below this a thread is only a stray body mention, so it is not worth replying into. */
 const CONFIDENCE_FLOOR = 40;
+
+/**
+ * Out-of-office and other automatic replies are not a conversation. Replying
+ * into one lands the reconnect under a two-year-old "I'm away until Tuesday",
+ * addressed to whoever's autoresponder fired, so they never count as targets.
+ */
+export function isAutomaticReply(message: Pick<OutlookRelationshipEmail, "subject" | "bodyText">): boolean {
+  const subject = (message.subject ?? "").trim();
+  if (/^(automatic reply|automatische antwort|réponse automatique|auto(-| )?reply|out of (the )?office|ooo)\b/i.test(subject)) return true;
+  const head = (message.bodyText ?? "").trim().slice(0, 400).toLowerCase();
+  return /\b(i am|i'm|i will be|i'll be) (currently )?(out of|away from) (the )?office\b/.test(head) || /\bthis is an automated (reply|response|message)\b/.test(head);
+}
 
 const LEGAL_SUFFIXES = new Set([
   "inc", "inc.", "llc", "l.l.c.", "ltd", "ltd.", "limited", "corp", "corp.",
@@ -89,8 +108,11 @@ export function matchRceReplyThread(
   accountName: string,
   companyDomain: string | null,
   mailboxAddress: string,
+  /** Email addresses of the account's Salesforce contacts, when known. */
+  knownContactEmails: Iterable<string> = [],
 ): RceThreadMatch {
   const mailbox = mailboxAddress.toLowerCase();
+  const contactEmails = new Set(Array.from(knownContactEmails).map((e) => e.toLowerCase()).filter(Boolean));
   const domain = companyDomain?.toLowerCase() ?? "";
   const useDomain = Boolean(domain) && !PUBLIC_EMAIL_DOMAINS.has(domain);
   const tokens = distinctiveNameTokens(accountName);
@@ -107,14 +129,15 @@ export function matchRceReplyThread(
   let best: { score: number; confidence: RceThreadConfidence; reason: string; target: OutlookRelationshipEmail } | null = null;
 
   for (const messages of threads.values()) {
-    // Only a message the user received can be replied to in the original chain.
+    // Only a real message the user received can be replied to in the original chain.
     const received = messages
-      .filter((message) => message.fromEmail && message.fromEmail !== mailbox)
+      .filter((message) => message.fromEmail && message.fromEmail !== mailbox && !isAutomaticReply(message))
       .sort((a, b) => new Date(a.sentDateTime).getTime() - new Date(b.sentDateTime).getTime());
     const target = received[received.length - 1];
     if (!target) continue;
 
     const participants = messages.flatMap((message) => [message.fromEmail, ...message.toEmails]);
+    const contactParticipant = participants.find((address) => address && contactEmails.has(address.toLowerCase()));
     const domainParticipant = useDomain
       ? participants.find((address) => address && domainOf(address).endsWith(domain))
       : undefined;
@@ -122,20 +145,30 @@ export function matchRceReplyThread(
     const userReplied = messages.some((message) => message.fromEmail === mailbox);
 
     let score = 0;
-    if (domainParticipant) score += DOMAIN_PARTICIPANT;
-    if (subjectHit) score += NAME_IN_SUBJECT;
+    // The subject bonus is the fallback evidence for broker threads (no company
+    // address on them). Once someone from the company is on the thread it adds
+    // nothing: otherwise an old "Opportunity - NECS" chain outranked the live
+    // conversation with the CEO whose subject did not happen to name the company.
+    if (contactParticipant) score += CONTACT_PARTICIPANT;
+    else if (domainParticipant) score += DOMAIN_PARTICIPANT;
+    else if (subjectHit) score += NAME_IN_SUBJECT;
+    else score += NAME_IN_BODY_ONLY;
     if (userReplied) score += USER_REPLIED;
-    if (!domainParticipant && !subjectHit) score += NAME_IN_BODY_ONLY;
-    // Recency only separates threads that are otherwise equally well evidenced.
+    // Recency matters within a tier: the latest real exchange is the one to
+    // continue, and a thread from two years ago earns nothing here.
     const ageDays = (Date.now() - new Date(target.sentDateTime).getTime()) / 86_400_000;
-    score += Math.max(0, 5 - ageDays / 365);
+    score += RECENCY_MAX * Math.max(0, 1 - ageDays / RECENCY_HORIZON_DAYS);
 
-    const confidence: RceThreadConfidence = domainParticipant
-      ? "domain"
-      : subjectHit
-        ? "subject"
-        : "none";
-    const reason = domainParticipant
+    const confidence: RceThreadConfidence = contactParticipant
+      ? "contact"
+      : domainParticipant
+        ? "domain"
+        : subjectHit
+          ? "subject"
+          : "none";
+    const reason = contactParticipant
+      ? `${contactParticipant} (a Salesforce contact on this account) is on this thread`
+      : domainParticipant
       ? `${domainParticipant} is on this thread`
       : subjectHit
         ? `${accountName} is named in the subject, but nobody from their domain is on the thread. Check the chain before sending.`

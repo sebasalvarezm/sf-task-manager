@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { fetchContactsForAccounts } from "@/lib/salesforce-contacts";
 import { isAuthenticated } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { getAnthropicClient } from "@/lib/anthropic";
@@ -109,8 +110,12 @@ function replyPrompt(input: {
   relationshipText: string;
   sentStyleExamples: string;
   personalAngleText: string;
+  replyTo: { email: string; subject: string; sentAt: string } | null;
 }): string {
-  return `Draft a reconnect email for an M&A professional. ${SHARED_RULES} Do not include a subject line, greeting, or signature because this will be inserted into an existing Outlook reply draft.
+  const replyLine = input.replyTo
+    ? `This reply goes into the Outlook thread "${input.replyTo.subject}" (last message from ${input.replyTo.email} on ${input.replyTo.sentAt.slice(0, 10)}). Write it for that person and that thread; do not address anyone else and do not use a name from a different thread.`
+    : "";
+  return `Draft a reconnect email for an M&A professional. ${SHARED_RULES} Do not include a subject line, greeting, or signature because this will be inserted into an existing Outlook reply draft. ${replyLine}
 
 Company: ${input.item.account_name}
 Salesforce activity timeline (newest first; "(me)" is Sebastian, "(colleague)" is a teammate):
@@ -205,15 +210,30 @@ export async function POST(request: Request) {
       }
       return "";
     });
-    const [domainEmails, nameEmails, personalAngleEmails, history] = await Promise.all([
+    // The account's Salesforce contacts. Their addresses find the right chain
+    // even when the owner writes from a holding company or personal domain.
+    const contactEmails: string[] = item.sf_account_id
+      ? await fetchContactsForAccounts([item.sf_account_id])
+          .then((byAccount) =>
+            (byAccount.get(item.sf_account_id!) ?? [])
+              .map((c) => (c.Email ?? "").toLowerCase())
+              .filter(Boolean),
+          )
+          .catch(() => [])
+      : [];
+    const [domainEmails, nameEmails, contactEmailsFound, personalAngleEmails, history] = await Promise.all([
       domain ? searchMailboxMessages(domain, 50).catch(() => []) : Promise.resolve([]),
       searchMailboxMessages(item.account_name, 50).catch(() => []),
+      Promise.all(contactEmails.slice(0, 5).map((email) => searchMailboxMessages(email, 25).catch(() => []))).then((lists) => lists.flat()),
       searchMailboxMessages("100th birthday", 12).catch(() => []),
       fetchAccountHistory(item.sf_account_id, { valstoneDomain: domainOfMailbox(mailboxAddress) }).catch(
         (): AccountHistory => ({ entries: [], lines: [], currentUserName: null, takeover: null }),
       ),
     ]);
-    const relationshipEmails = [...domainEmails, ...nameEmails]
+    for (const entry of history.entries) {
+      if (entry.contactEmail) contactEmails.push(entry.contactEmail.toLowerCase());
+    }
+    const relationshipEmails = [...domainEmails, ...nameEmails, ...contactEmailsFound]
       .filter((email, index, all) => all.findIndex((candidate) => candidate.id === email.id) === index)
       .sort((a, b) => new Date(a.sentDateTime).getTime() - new Date(b.sentDateTime).getTime())
       .slice(-50);
@@ -231,7 +251,7 @@ export async function POST(request: Request) {
       .join("\n\n");
 
     // Tier 1: the user's own Outlook chain, scored on evidence.
-    const threadMatch = matchRceReplyThread(relationshipEmails, item.account_name, domain, mailboxAddress);
+    const threadMatch = matchRceReplyThread(relationshipEmails, item.account_name, domain, mailboxAddress, contactEmails);
     const replyTarget = threadMatch.replyTarget;
 
     // Tier 2: a colleague's exchange in Salesforce, only when Outlook has nothing.
@@ -254,7 +274,16 @@ export async function POST(request: Request) {
 
     const prompt = isTakeover
       ? takeoverPrompt({ item, history, group, sentStyleExamples: generalStyleExamples })
-      : replyPrompt({ item, history, relationshipText, sentStyleExamples, personalAngleText });
+      : replyPrompt({
+          item,
+          history,
+          relationshipText,
+          sentStyleExamples,
+          personalAngleText,
+          replyTo: replyTarget
+            ? { email: replyTarget.fromEmail, subject: replyTarget.subject, sentAt: replyTarget.sentDateTime }
+            : null,
+        });
 
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
@@ -267,6 +296,11 @@ export async function POST(request: Request) {
       draft: string;
       subject?: string;
     };
+    if (!isTakeover && typeof parsed.draft === "string") {
+      // The model is told not to greet, but "Hey Chris," still slips in now and
+      // then, and the name it picks can come from the wrong thread.
+      parsed.draft = parsed.draft.replace(/^\s*(hi|hey|hello|dear|good (morning|afternoon|evening))\b[^\n]*\n+/i, "").trimStart();
+    }
 
     const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
     // Preparing again replaces the Outlook draft. The previous one is removed
