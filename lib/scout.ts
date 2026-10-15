@@ -2225,6 +2225,14 @@ export async function personalizeOutreach(
       ? `\nThe company's specific named products include: ${products.slice(0, 6).join(", ")}. If possible, mention one of these by name rather than describing the company generically.\n`
       : "";
 
+  // QiSoft (food, dairy and paper plants) is a door into CPG. When a company in
+  // another group clearly serves food, beverage or CPG manufacturers, the
+  // closing sentence may say so; the Process Manufacturing paragraph already
+  // names QiSoft, so it never repeats it.
+  const cpgBridge = /Process Manufacturing group/i.test(paragraph)
+    ? ""
+    : `\nIf, and only if, this company clearly serves food, beverage, dairy or consumer packaged goods manufacturers, the sentence may add that Valstone also owns QiSoft, a quality and production platform used by food, dairy and paper manufacturers, as the reason the fit is strong. Skip this entirely when the connection is not obvious.\n`;
+
   const resp = await callClaude(client, 2, {
     model: "claude-sonnet-4-6",
     max_tokens: 300,
@@ -2232,10 +2240,10 @@ export async function personalizeOutreach(
       {
         role: "user",
         content: `Below is an outreach paragraph that will be sent to the company at ${url}. Write ONE additional sentence that will be appended as the paragraph's final sentence. It must reference something specific about this company (a named product, a niche they serve, how they fit the group described) and explain why they fit, e.g. "What Cargosnap does on the material handling side, making every damage claim and handoff visible and traceable, is exactly the kind of execution layer this group is built around." The sentence should sound like something you'd say out loud to a founder over coffee. Use short clauses, plain language, and avoid stacking multiple concepts into a single noun phrase.
-${productsHint}
+${productsHint}${cpgBridge}
 Rules:
 - Return ONLY the one new sentence. Do not repeat or rewrite the paragraph.
-- Exactly one sentence, 12 to 40 words.
+- Exactly one sentence, 12 to 45 words.
 - Do NOT start with "In simple terms".
 - Do NOT use em dashes (—) anywhere in the output.
 - Keep the tone identical to the paragraph.

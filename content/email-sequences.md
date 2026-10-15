@@ -624,6 +624,43 @@ Thank you,
 
 ---
 
+## Manufacturing — Process Manufacturing
+
+### Email 1 — Initial Outreach
+
+I have studied {{account.name}} going back to the release of (INSERT PRODUCT). My name is {{sender.first_name}}, and I lead investment efforts at Valstone. We are a global provider of mission-critical software for industrial end markets, where these systems sit at the center of daily operations.
+
+We are building a dedicated Process Manufacturing group. The vision is to become a long-term home for the software that runs process plants in food and beverage, dairy, paper and packaging, and chemicals, from the ingredients and specifications coming in, through recipe and batch execution, quality, SPC and lab data on the line, to lot traceability, food safety and audit compliance going out. In simple terms, we help manufacturers make a consistent product every batch and prove it to auditors and customers, with less waste and fewer manual steps.
+
+I will be near [INSERT TOWN AND WEEK] and would love to discuss at your office or a good restaurant nearby. Please let me know if available.
+
+Best,
+{{sender.first_name}}
+
+### Email 2 — Follow-up
+
+Quick follow-up to see if you got my last email.
+
+As mentioned, we are building a Process Manufacturing operating group that supports core plant workflows like recipe and batch execution, quality and SPC, lab data, lot traceability, and food safety and audit compliance. I believe there could be meaningful synergy between {{account.name}} and Valstone in this ecosystem.
+
+Let me know if you are available to meet in the next two weeks. I am flexible and happy to accommodate your schedule.
+
+Best,
+{{sender.name}}
+
+### Email 3 — Final Check-in
+
+I wanted to check in as I have not heard back. I completely understand how busy things can get, but I truly think our process manufacturing focus is worth discussing.
+
+Our ecosystem is built to span the process plant from ingredients in to finished lots out, including recipe and batch execution, quality and SPC, lab data, traceability, and food safety and audit compliance. Today, we own QiSoft, a quality and production intelligence platform used by food, dairy and paper manufacturers across Europe and North America, Matrix Industrial Control Systems, an MES for meat and dairy processors, and WEM Automation, process control for feed mills, and we are actively adding more software across process manufacturing.
+
+Most of these operators have grown up on isolated systems that do not talk to each other, so there is a clear opportunity to integrate key workflows and become a one-stop shop for customers who are tired of managing a dozen separate IT vendors.
+
+If you are open to a meet and discuss in person, feel free to suggest a date that works for you, and I will gladly coordinate.
+
+Thank you,
+{{sender.first_name}}
+
 ## Manufacturing — Production Quality
 
 ### Email 1 — Initial Outreach

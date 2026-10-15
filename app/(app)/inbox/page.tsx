@@ -319,7 +319,7 @@ export default function InboxPage() {
       const to = (data.recipients ?? []).map((r: { name: string | null; email: string }) => r.name ?? r.email).join(", ");
       const sf = data.salesforce;
       const parts = [`Sent to ${to}${data.cc?.length ? ` (cc ${data.cc.join(", ")})` : ""}.`];
-      if (sf?.responded) parts.push(`Responded set${sf.responded.responseTypeValue ? `, type "${sf.responded.responseTypeValue}"` : ""}.`);
+      if (sf?.responded) parts.push(`Responded set${sf.responded.responseTypeValue ? `, type "${sf.responded.responseTypeValue}"` : sf.responded.keptExisting ? `, type kept as "${sf.responded.keptExisting}"` : ""}.`);
       if (sf?.task) parts.push(`RCE task ${sf.task.action} for ${longDate(sf.task.date)}.`);
       if (sf?.skipped) parts.push(`Salesforce: ${sf.skipped}.`);
       setSentNote(parts.join(" "));

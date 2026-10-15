@@ -1,5 +1,5 @@
 import { getValidCredentials } from "./token-manager";
-import { sfFetch, sfErrorText, assertSalesforceId } from "./sf-query";
+import { sfFetch, sfErrorText, assertSalesforceId, sfQuery } from "./sf-query";
 import { upsertFollowUpTask, type FollowUpOutcome } from "./salesforce-calls";
 import type { Sentiment } from "./inbox-classify";
 
@@ -80,7 +80,26 @@ export type RespondedOutcome = {
   respondedField: string | null;
   responseTypeField: string | null;
   responseTypeValue: string | null;
+  /** The value already on the account that was deliberately left in place. */
+  keptExisting: string | null;
 };
+
+/**
+ * Positive is sticky: an account that once agreed to talk and is now "too
+ * busy, try Q1" is still a positive relationship, and the stats should say
+ * so. Negative always wins (do-not-contact must land). Neutral only fills an
+ * empty field or replaces another neutral-type value.
+ */
+export function shouldOverwriteResponseType(current: string | null, next: string, values: string[]): boolean {
+  if (!current || !current.trim()) return true;
+  if (current === next) return false;
+  const positive = pickResponseTypeValue(values, "positive");
+  const negative = pickResponseTypeValue(values, "negative");
+  if (next === negative) return true;
+  if (current === positive) return false;
+  if (current === negative) return false; // only the user should walk a do-not-contact back
+  return true;
+}
 
 export async function markAccountResponded(accountId: string, sentiment: Sentiment): Promise<RespondedOutcome> {
   assertSalesforceId(accountId, "account id");
@@ -88,7 +107,7 @@ export async function markAccountResponded(accountId: string, sentiment: Sentime
   if (!credentials) throw new Error("NOT_CONNECTED");
   const fields = await describeResponseFields();
   const patch: Record<string, unknown> = {};
-  const outcome: RespondedOutcome = { respondedField: null, responseTypeField: null, responseTypeValue: null };
+  const outcome: RespondedOutcome = { respondedField: null, responseTypeField: null, responseTypeValue: null, keptExisting: null };
   if (fields.responded) {
     patch[fields.responded.name] = fields.responded.yesValue;
     outcome.respondedField = fields.responded.name;
@@ -96,9 +115,24 @@ export async function markAccountResponded(accountId: string, sentiment: Sentime
   if (fields.responseType) {
     const value = pickResponseTypeValue(fields.responseType.values, sentiment);
     if (value) {
-      patch[fields.responseType.name] = value;
-      outcome.responseTypeField = fields.responseType.name;
-      outcome.responseTypeValue = value;
+      let current: string | null = null;
+      try {
+        const rows = await sfQuery<Record<string, unknown>>(
+          `SELECT ${fields.responseType.name} FROM Account WHERE Id = '${accountId}' LIMIT 1`,
+          credentials,
+        );
+        const raw = rows[0]?.[fields.responseType.name];
+        current = typeof raw === "string" ? raw : null;
+      } catch {
+        current = null;
+      }
+      if (shouldOverwriteResponseType(current, value, fields.responseType.values)) {
+        patch[fields.responseType.name] = value;
+        outcome.responseTypeField = fields.responseType.name;
+        outcome.responseTypeValue = value;
+      } else {
+        outcome.keptExisting = current;
+      }
     }
   }
   if (Object.keys(patch).length === 0) return outcome;
