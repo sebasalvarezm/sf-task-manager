@@ -357,14 +357,30 @@ export async function refreshCandidates(): Promise<RefreshSummary> {
 
 // ── Reads and decisions ──────────────────────────────────────────────────────
 
+/** Columns the review screen needs; screen_facts and bookkeeping stay server-side to keep the phone payload small. */
+const LIST_COLUMNS =
+  "sf_account_id, account_name, website, account_url, employees, country, industry, owner_name, last_e1_at, last_e1_by, sends, " +
+  "rule_status, rule_reason, eligible_on, sends_in_window, screen_status, screen_reason, review_status, skip_reason, reviewed_at, pushed_week_start, refreshed_at";
+
+/** Every account in the pool. Supabase caps a single select at 1,000 rows, so this pages through. */
 export async function listCandidates(): Promise<CandidateRow[]> {
-  const { data, error } = await getSupabaseAdmin()
-    .from("outreach_candidates")
-    .select("*")
-    .eq("in_pool", true)
-    .order("last_e1_at", { ascending: true, nullsFirst: true });
-  if (error) throw new Error(error.message);
-  return (data ?? []) as CandidateRow[];
+  const supabase = getSupabaseAdmin();
+  const out: CandidateRow[] = [];
+  const page = 1000;
+  for (let from = 0; ; from += page) {
+    const { data, error } = await supabase
+      .from("outreach_candidates")
+      .select(LIST_COLUMNS)
+      .eq("in_pool", true)
+      .order("last_e1_at", { ascending: true, nullsFirst: true })
+      .order("sf_account_id", { ascending: true })
+      .range(from, from + page - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as unknown as CandidateRow[];
+    for (const r of rows) out.push({ ...r, sends: Array.isArray(r.sends) ? r.sends.slice(0, 5) : [] });
+    if (rows.length < page) break;
+  }
+  return out;
 }
 
 export async function skipCandidate(accountId: string, reason: string | null): Promise<CandidateRow> {

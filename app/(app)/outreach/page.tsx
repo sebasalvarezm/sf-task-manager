@@ -147,7 +147,7 @@ function OutreachInner() {
       }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load");
+      setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped while loading. Pull to refresh or reopen the page.");
     } finally {
       setLoading(false);
     }
@@ -164,11 +164,11 @@ function OutreachInner() {
       const res = await fetch("/api/outreach/candidates", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Refresh failed");
-      setItems(data.items ?? []);
+      await load();
       const s = data.summary;
       setMessage(`Refreshed: ${s.inPool} accounts in the pool, ${s.eligible} eligible now, ${s.waiting} waiting, ${s.blocked} blocked${s.droppedFromPool ? `, ${s.droppedFromPool} left the pool` : ""}.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Refresh failed");
+      setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped before Salesforce answered. Tap Refresh again.");
     } finally {
       setRefreshing(false);
     }

@@ -31,8 +31,8 @@ export async function GET() {
 export async function POST() {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const summary = await refreshCandidates();
-    return NextResponse.json({ summary, items: await listCandidates() });
+    // Summary only: the page reloads the list itself, which keeps this response tiny on mobile.
+    return NextResponse.json({ summary: await refreshCandidates() });
   } catch (err) {
     return fail(err);
   }
