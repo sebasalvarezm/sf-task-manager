@@ -62,6 +62,17 @@ export default function InMailQueuePage() {
   const [draftInitial, setDraftInitial] = useState("");
   const [draftFollowup, setDraftFollowup] = useState("");
   const [copied, setCopied] = useState<"subject" | "initial" | "followup" | null>(null);
+  const [copiedRow, setCopiedRow] = useState<string | null>(null);
+  // Phones have no Recruiter web app worth opening; the LinkedIn app does open
+  // a people search, and the profile page there has "View in Recruiter".
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const sync = () => setIsMobile(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -229,7 +240,24 @@ export default function InMailQueuePage() {
     }
   }
 
-  const profileHref = (row: Row) => row.linkedin_url ?? row.navigator_url ?? null;
+  const peopleSearchHref = (row: Row) =>
+    row.contact_name
+      ? `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([row.contact_name, row.account_name].filter(Boolean).join(" "))}`
+      : null;
+  // Desktop: Salesforce profile link, else Recruiter search. Phone: profile link, else LinkedIn people search (opens the app).
+  const profileHref = (row: Row) => row.linkedin_url ?? (isMobile ? peopleSearchHref(row) : row.navigator_url) ?? null;
+
+  async function copyRowInMail(row: Row) {
+    const text = [row.subject, row.initial_message].filter(Boolean).join("\n\n");
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedRow(row.who_id);
+      window.setTimeout(() => setCopiedRow((v) => (v === row.who_id ? null : v)), 1500);
+    } catch {
+      setError("Could not copy. Open the InMail and copy it from there.");
+    }
+  }
 
   return (
     <>
@@ -308,7 +336,96 @@ export default function InMailQueuePage() {
               : "Nothing in this view."}
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-line bg-white">
+          <>
+          <div className="space-y-3 md:hidden">
+            {visible.map((row) => {
+              const since = daysSince(row.e5_sent_at ? `${row.e5_sent_at}T12:00:00` : null);
+              const sentDays = daysSince(row.sent_at);
+              const href = profileHref(row);
+              const isBusy = busy.has(row.who_id);
+              const canGenerate = row.status === "pending" || row.status === "needs_review";
+              return (
+                <div key={row.who_id} className="rounded-xl border border-line bg-white p-3 shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-semibold text-ink">{row.contact_name ?? "Unknown contact"}</div>
+                      <div className="truncate text-sm text-ink-muted">{row.account_name ?? "—"}</div>
+                    </div>
+                    <Badge variant={STATUS_LABEL[row.status].variant} dot>
+                      {STATUS_LABEL[row.status].label}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 text-xs text-ink-muted">
+                    E5 sent {row.e5_sent_at ?? "—"}{since !== null ? ` (${since}d ago)` : ""}
+                    {row.status === "sent" && sentDays !== null ? (
+                      <span className={sentDays >= 7 ? " font-semibold text-brand" : ""}>
+                        {" · "}{sentDays >= 7 ? "Follow-up due" : `Follow-up in ${7 - sentDays}d`}
+                      </span>
+                    ) : null}
+                  </div>
+                  {row.flags.length > 0 ? (
+                    <ul className="mt-1 space-y-0.5 text-xs text-warning">
+                      {row.flags.map((flag) => (
+                        <li key={flag}>{flag}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {row.initial_message ? (
+                      <Button size="sm" onClick={() => void copyRowInMail(row)}>
+                        {copiedRow === row.who_id ? <Check className="mr-1 h-4 w-4" /> : <Copy className="mr-1 h-4 w-4" />}
+                        {copiedRow === row.who_id ? "Copied" : "Copy InMail"}
+                      </Button>
+                    ) : (
+                      <Button size="sm" loading={isBusy} disabled={!canGenerate || !row.e1_body || !row.first_name} onClick={() => void generate(row.who_id)}>
+                        <Sparkles className="mr-1 h-4 w-4" /> Generate
+                      </Button>
+                    )}
+                    {href ? (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-line bg-white px-3 text-sm font-medium text-ink active:bg-surface-2"
+                      >
+                        <MessageSquare className="h-4 w-4" /> {row.linkedin_url ? "Open profile" : "Find on LinkedIn"}
+                      </a>
+                    ) : (
+                      <span />
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {row.initial_message ? (
+                      <Button size="sm" variant="ghost" onClick={() => setOpenId(row.who_id)}>
+                        Open
+                      </Button>
+                    ) : null}
+                    {row.initial_message && canGenerate ? (
+                      <Button size="sm" variant="ghost" loading={isBusy} onClick={() => void generate(row.who_id)}>
+                        Regenerate
+                      </Button>
+                    ) : null}
+                    {row.status === "generated" || row.status === "needs_review" ? (
+                      <Button size="sm" variant="ghost" onClick={() => void setStatus(row, "followup_sent")}>
+                        Both sent
+                      </Button>
+                    ) : null}
+                    {row.status === "sent" ? (
+                      <Button size="sm" variant="ghost" onClick={() => void setStatus(row, "followup_sent")}>
+                        Follow-up sent
+                      </Button>
+                    ) : null}
+                    {row.status !== "dismissed" && row.status !== "followup_sent" ? (
+                      <Button size="sm" variant="ghost" className="text-ink-muted" onClick={() => void setStatus(row, "dismissed")}>
+                        Dismiss
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="hidden overflow-x-auto rounded-2xl border border-line bg-white md:block">
             <table className="w-full min-w-[820px] text-sm">
               <thead className="bg-surface-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
                 <tr>
@@ -411,6 +528,7 @@ export default function InMailQueuePage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
 
         {open ? (
@@ -442,9 +560,9 @@ export default function InMailQueuePage() {
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex h-9 items-center gap-1 rounded-lg border border-line px-3 text-sm font-medium text-ink hover:bg-surface-2"
-                      title={open.linkedin_url ? "LinkedIn profile from Salesforce" : "Search in LinkedIn Recruiter"}
+                      title={open.linkedin_url ? "LinkedIn profile from Salesforce" : isMobile ? "Search in the LinkedIn app" : "Search in LinkedIn Recruiter"}
                     >
-                      <MessageSquare className="h-4 w-4" /> {open.linkedin_url ? "Open profile" : "Open in Recruiter"}
+                      <MessageSquare className="h-4 w-4" /> {open.linkedin_url ? "Open profile" : isMobile ? "Find on LinkedIn" : "Open in Recruiter"}
                     </a>
                   ) : null}
                   {open.contact_name ? (

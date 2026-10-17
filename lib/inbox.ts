@@ -543,14 +543,30 @@ export type SendOutcome = {
   salesforce: { responded: RespondedOutcome | null; task: FollowUpOutcome | null; skipped: string | null };
 };
 
-async function markMessageRead(messageId: string): Promise<void> {
+async function setMessageRead(messageId: string, isRead: boolean): Promise<boolean> {
   const credentials = await getMsValidCredentials();
-  if (!credentials) return;
-  await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}`, {
+  if (!credentials) return false;
+  const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ isRead: true }),
-  }).catch(() => undefined);
+    body: JSON.stringify({ isRead }),
+  }).catch(() => null);
+  return !!response && response.ok;
+}
+
+async function markMessageRead(messageId: string): Promise<void> {
+  await setMessageRead(messageId, true);
+}
+
+/**
+ * "I'll deal with this one myself in Outlook": flip the message back to
+ * unread there and take it out of the tool's pile (status skipped). Nothing
+ * is sent and Salesforce is not touched.
+ */
+export async function markInboxUnread(messageId: string): Promise<InboxRow> {
+  const ok = await setMessageRead(messageId, false);
+  if (!ok) throw new Error("Could not mark the message unread in Outlook. Check the Outlook connection and try again.");
+  return updateInboxRow(messageId, { status: "skipped" });
 }
 
 /**

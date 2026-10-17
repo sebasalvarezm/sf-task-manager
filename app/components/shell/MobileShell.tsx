@@ -33,7 +33,7 @@ export function MobileShell({ children }: { children: ReactNode }) {
   }, [open]);
 
   return (
-    <div className="flex h-screen bg-surface text-ink">
+    <div className="flex h-screen bg-surface text-ink supports-[height:100dvh]:h-[100dvh]">
       <Sidebar open={open} />
 
       {open && (

@@ -263,6 +263,14 @@ export default function InboxPage() {
     const row = await patch({ status: "skipped" });
     if (row) setOpenId(null);
   }
+  async function markUnread() {
+    const row = await patch({ markUnread: true });
+    if (row) setOpenId(null);
+  }
+  async function restore() {
+    const row = await patch({ status: "new" });
+    if (row) setOpenId(null);
+  }
   async function reclassify() {
     const row = await patch({ reclassify: true });
     if (row) {
@@ -432,7 +440,7 @@ export default function InboxPage() {
                         </span>
                         {s ? <Badge variant={s.variant} size="sm">{s.label}</Badge> : <Badge variant="neutral" size="sm">Not classified</Badge>}
                         {!r.account_id ? <Badge variant="neutral" size="sm">{r.is_broker_intro ? "Broker" : "No account"}</Badge> : null}
-                        {r.status === "skipped" ? <Badge variant="neutral" size="sm">Skipped</Badge> : null}
+                        {r.status === "skipped" ? <Badge variant="neutral" size="sm">Removed</Badge> : null}
                         {r.status === "sent" ? <Badge variant="ok" size="sm">Replied</Badge> : null}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-ink-muted">
@@ -589,7 +597,9 @@ export default function InboxPage() {
                 {menuOpen ? (
                   <div className="absolute bottom-full left-3 z-10 mb-2 w-56 overflow-hidden rounded-xl border border-line bg-white shadow-xl">
                     <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void reclassify(); }}>Reclassify</button>
-                    {!isSent ? <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void skip(); }}>Skip (mark done, no reply)</button> : null}
+                    {!isSent && open?.status !== "skipped" ? <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void skip(); }}>Remove from pile (no reply)</button> : null}
+                    {!isSent && open?.status !== "skipped" ? <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void markUnread(); }}>Mark unread in Outlook and remove</button> : null}
+                    {open?.status === "skipped" ? <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void restore(); }}>Put back in pile</button> : null}
                     <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); setOpenId(null); }}>Close</button>
                   </div>
                 ) : null}
