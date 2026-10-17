@@ -656,6 +656,11 @@ export async function createOutlookNewDraft(params: {
 }): Promise<OutlookReplyDraft> {
   const credentials = await getMsValidCredentials();
   if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  // Same signature handling as updateOutlookDraft, so the draft looks right in Outlook from the start.
+  const signature = await getStoredSignature();
+  const payload = signature
+    ? { contentType: "HTML", content: composeHtmlBody(params.body, signature.html) }
+    : { contentType: "Text", content: params.body };
   const response = await fetch("https://graph.microsoft.com/v1.0/me/messages", {
     method: "POST",
     headers: {
@@ -664,7 +669,7 @@ export async function createOutlookNewDraft(params: {
     },
     body: JSON.stringify({
       subject: params.subject,
-      body: { contentType: "Text", content: params.body },
+      body: payload,
       toRecipients: [{ emailAddress: { address: params.to } }],
     }),
   });

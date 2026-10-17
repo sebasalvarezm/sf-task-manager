@@ -44,6 +44,7 @@ type Row = {
   sends_in_window: number;
   screen_status: ScreenStatus;
   screen_reason: string | null;
+  screen_facts: { summary?: string | null; ownership?: string | null; investment?: string | null; softwareType?: string | null; group?: { group: string | null; mainGroup: string | null } | null } | null;
   review_status: ReviewStatus;
   skip_reason: string | null;
   reviewed_at: string | null;
@@ -261,13 +262,14 @@ function OutreachInner() {
   }
 
   const eligibleAll = useMemo(() => items.filter((r) => r.review_status === "open" && r.rule_status === "eligible"), [items]);
-  // Checked and passed first, then unclear, then unchecked; within each, oldest last E1 first.
+  // Review = checked and passed (software first, then unclear), oldest last E1 first. Unchecked accounts wait in the queue.
   const eligible = useMemo(() => {
-    const rank = (r: Row) => (r.screen_status === "software" ? 0 : r.screen_status === "unclear" || r.screen_status === "error" ? 1 : 2);
+    const rank = (r: Row) => (r.screen_status === "software" ? 0 : 1);
     return eligibleAll
-      .filter((r) => r.screen_status !== "not_software" && r.screen_status !== "acquired")
+      .filter((r) => r.screen_status === "software" || r.screen_status === "unclear")
       .sort((a, b) => rank(a) - rank(b) || ((a.last_e1_at ?? "") < (b.last_e1_at ?? "") ? -1 : 1));
   }, [eligibleAll]);
+  const unchecked = useMemo(() => eligibleAll.filter((r) => r.screen_status === "pending" || r.screen_status === "error").length, [eligibleAll]);
   const filtered = useMemo(() => eligibleAll.filter((r) => r.screen_status === "not_software" || r.screen_status === "acquired"), [eligibleAll]);
   readyRef.current = eligible.filter((r) => r.screen_status === "software").length;
   const waiting = useMemo(
@@ -307,7 +309,7 @@ function OutreachInner() {
         {settingsOpen && settings ? <SettingsPanel settings={settings} onSaved={(s) => { setSettings(s); setShown(s.batchSize); setSettingsOpen(false); setMessage("Rules saved. Refresh from Salesforce to apply them."); }} /> : null}
 
         <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
-          <Stat label="Ready to review" value={eligible.filter((r) => r.screen_status === "software").length} hint={`${eligible.length} eligible`} />
+          <Stat label="Ready to review" value={eligible.length} hint={unchecked > 0 ? `${unchecked} in the check queue` : "all checked"} />
           <Stat label="Waiting" value={waiting.length} />
           <Stat label="In Weekly Outreach" value={weekCount ?? pushedThisWeek} hint="this week · target 70" />
         </div>
@@ -368,7 +370,7 @@ function OutreachInner() {
             ))}
             {tab === "review" && eligible.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-line bg-white p-10 text-center text-sm text-ink-muted">
-                Nothing eligible right now. {waiting.length > 0 ? `${waiting.length} account${waiting.length === 1 ? " is" : "s are"} waiting on the 60-day window.` : ""}{filtered.length > 0 ? ` ${filtered.length} filtered out by the software check.` : ""}
+                {unchecked > 0 ? `${unchecked} eligible accounts are still being checked; the next batch appears here as it finishes. ` : "Nothing eligible right now. "}{waiting.length > 0 ? `${waiting.length} account${waiting.length === 1 ? " is" : "s are"} waiting on the 60-day window.` : ""}{filtered.length > 0 ? ` ${filtered.length} filtered out by the software check.` : ""}
               </div>
             ) : null}
             {tab === "review" && eligible.length > shown ? (
@@ -429,6 +431,14 @@ function CandidateCard({
         {row.review_status === "pushed" ? <Badge variant="ok" size="sm">Pushed · week of {fmtDate(row.pushed_week_start)}</Badge> : null}
         {row.review_status === "skipped" ? <Badge variant="neutral" size="sm">Skipped{row.skip_reason ? ` · ${row.skip_reason}` : ""}</Badge> : null}
       </div>
+      {row.screen_facts?.summary ? (
+        <p className="mt-1 break-words text-sm text-ink">
+          {row.screen_facts.summary}
+          {row.country ? `, ${row.country}` : ""}
+          {row.last_e1_at ? `, last contacted ${fmtDate(row.last_e1_at)}${row.last_e1_by ? ` by ${row.last_e1_by.split(" ")[0]}` : ""}` : ""}.
+          {row.screen_facts.group?.group ? <span className="text-ink-muted"> Group: {row.screen_facts.group.mainGroup ? `${row.screen_facts.group.mainGroup} / ` : ""}{row.screen_facts.group.group}.</span> : null}
+        </p>
+      ) : null}
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
         {site ? (
           <a href={site} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand hover:underline">

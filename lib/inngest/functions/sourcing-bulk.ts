@@ -93,6 +93,19 @@ export const sourcingBulkJob = inngest.createFunction(
             if (!item.url || item.error) return null;
             return step.run(`classify-${i}`, async () => {
               try {
+                // The Outreach check already classified this company when it
+                // was pushed; reuse that instead of running the classifier again.
+                const presetId = input.weeklyOutreachIds?.[i];
+                if (presetId) {
+                  const { data: preset } = await getSupabaseAdmin()
+                    .from("weekly_outreach")
+                    .select("group_name, industry, source")
+                    .eq("id", presetId)
+                    .maybeSingle();
+                  if (preset?.source === "outreach" && preset.group_name) {
+                    return { matched: true, group: preset.group_name, mainGroup: preset.industry ?? null, confidence: null } as SourcingResult["portfolioMatch"];
+                  }
+                }
                 const cached = await findRecentSourcingByUrl(
                   normalizeSourcingUrl(item.url!),
                   90,

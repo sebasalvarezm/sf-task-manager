@@ -228,17 +228,23 @@ function detectTakeover(entries: AccountHistoryEntry[], currentUserId: string | 
   const isMine = (entry: AccountHistoryEntry) =>
     (currentUserId && entry.ownerId === currentUserId) ||
     (currentUserName && entry.ownerName === currentUserName);
-  if (emails.some(isMine)) return null;
-
+  // A takeover is when the most recent exchange belongs to a colleague. Older
+  // emails of the user's own (an E1 years ago, say) do not make it theirs.
   const latest = emails[0];
+  if (isMine(latest)) return null;
   const colleagueName = latest.ownerName as string;
   const chain = emails.filter((entry) => entry.ownerName === colleagueName);
-  const contactEntry = chain.find((entry) => entry.contactName) ?? chain.find((entry) => entry.contactEmail) ?? null;
-  const contactName = contactEntry?.contactName ?? null;
+  // The person who actually answered the colleague, else whoever the colleague wrote to.
+  const contactEntry =
+    chain.find((entry) => entry.direction === "in" && entry.contactEmail) ??
+    chain.find((entry) => entry.contactName) ??
+    chain.find((entry) => entry.contactEmail) ??
+    null;
+  const contactName = contactEntry?.contactName ?? chain.find((entry) => entry.contactName)?.contactName ?? null;
   return {
     colleagueName,
     contactName,
-    contactEmail: contactEntry?.contactEmail ?? null,
+    contactEmail: contactEntry?.contactEmail ?? chain.find((entry) => entry.contactEmail)?.contactEmail ?? null,
     contactFirstName: firstName(contactName),
     lastExchangeDate: latest.date,
     exchangeCount: chain.length,

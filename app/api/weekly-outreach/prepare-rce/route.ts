@@ -182,6 +182,45 @@ Return ONLY JSON:
 // Several Outlook searches, Salesforce history and an AI draft in one call.
 export const maxDuration = 300;
 
+/** Subject for a fresh email when there is no chain to reply into. */
+function freshSubject(accountName: string): string {
+  return `Valstone / ${accountName} catch up`;
+}
+
+/** A new email needs a greeting; the reply prompt is told not to write one. */
+function ensureGreeting(draft: string, firstName: string | null): string {
+  const body = draft.trimStart();
+  if (/^(hi|hey|hello|dear|good (morning|afternoon|evening))\b/i.test(body)) return body;
+  return `Hi ${firstName ?? "there"},\n\n${body}`;
+}
+
+type FreshRecipient = { email: string; name: string | null; firstName: string | null; why: string };
+
+async function pickFreshRecipient(accountId: string | null, history: AccountHistory): Promise<FreshRecipient | null> {
+  const first = (name: string | null) => (name ? name.trim().split(/\s+/)[0] || null : null);
+  const answered = history.entries.find((e) => e.isEmail && e.direction === "in" && e.contactEmail);
+  if (answered?.contactEmail) {
+    return { email: answered.contactEmail, name: answered.contactName, firstName: first(answered.contactName), why: `answered Valstone on ${answered.date}` };
+  }
+  const written = history.entries.find((e) => e.isEmail && e.contactEmail);
+  if (written?.contactEmail) {
+    return { email: written.contactEmail, name: written.contactName, firstName: first(written.contactName), why: `last written to on ${written.date}` };
+  }
+  if (!accountId) return null;
+  const contacts = (await fetchContactsForAccounts([accountId])).get(accountId) ?? [];
+  const rank = (title: string | null) => {
+    const t = (title ?? "").toLowerCase();
+    if (/founder/.test(t)) return 1;
+    if (/\bceo\b|chief executive/.test(t)) return 2;
+    if (/president|owner|managing director/.test(t)) return 3;
+    if (/\bcto\b|\bcoo\b|\bcfo\b|chief/.test(t)) return 4;
+    return 9;
+  };
+  const best = contacts.filter((c) => c.Email).sort((a, b) => rank(a.Title) - rank(b.Title))[0];
+  if (!best?.Email) return null;
+  return { email: best.Email.toLowerCase(), name: best.Name ?? null, firstName: best.FirstName ?? first(best.Name ?? null), why: `most senior Salesforce contact${best.Title ? `, ${best.Title}` : ""}` };
+}
+
 export async function POST(request: Request) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = (await request.json()) as { id?: string };
@@ -233,6 +272,10 @@ export async function POST(request: Request) {
     for (const entry of history.entries) {
       if (entry.contactEmail) contactEmails.push(entry.contactEmail.toLowerCase());
     }
+    // Who a fresh email should go to when there is no chain of our own to reply
+    // into: the person who answered Valstone most recently, then whoever we last
+    // wrote to, then the most senior Salesforce contact with an email.
+    const freshRecipient = await pickFreshRecipient(item.sf_account_id, history).catch(() => null);
     const relationshipEmails = [...domainEmails, ...nameEmails, ...contactEmailsFound]
       .filter((email, index, all) => all.findIndex((candidate) => candidate.id === email.id) === index)
       .sort((a, b) => new Date(a.sentDateTime).getTime() - new Date(b.sentDateTime).getTime())
@@ -368,17 +411,19 @@ export async function POST(request: Request) {
         groupConfidence: group.confidence,
       };
       metadata.takeover = takeoverMetadata;
-      const subject = parsed.subject?.trim() || `Reconnecting on ${item.account_name}`;
+      const subject = freshSubject(item.account_name);
       replySubject = subject;
       metadata.replySubject = subject;
-      if (takeover.contactEmail) {
+      const to = takeover.contactEmail ?? freshRecipient?.email ?? null;
+      if (to) {
         // A real new-message draft, so Save and Approve & Send work like a reply.
         try {
           const outlookDraft = await createOutlookNewDraft({
-            to: takeover.contactEmail,
+            to,
             subject,
-            body: parsed.draft,
+            body: ensureGreeting(parsed.draft, takeover.contactFirstName ?? freshRecipient?.firstName ?? null),
           });
+          metadata.recipients = [{ name: takeover.contactName ?? freshRecipient?.name ?? null, email: to }];
           metadata.outlookDraftId = outlookDraft.id;
           replySubject = outlookDraft.subject;
           metadata.replySubject = outlookDraft.subject;
@@ -392,6 +437,34 @@ export async function POST(request: Request) {
         }
       } else {
         outlookWarning = `Salesforce has no email address for ${takeover.contactName ?? "the contact"}, so this draft is copy and paste only. Add the contact's email in Salesforce and re-prepare to get a sendable draft.`;
+      }
+    } else {
+      // No chain of our own in Outlook and no colleague exchange either: still
+      // give Seb a sendable new email instead of a copy-and-paste draft.
+      const subject = freshSubject(item.account_name);
+      replySubject = subject;
+      metadata.replySubject = subject;
+      if (freshRecipient) {
+        try {
+          const outlookDraft = await createOutlookNewDraft({
+            to: freshRecipient.email,
+            subject,
+            body: ensureGreeting(parsed.draft, freshRecipient.firstName),
+          });
+          metadata.outlookDraftId = outlookDraft.id;
+          metadata.recipients = [{ name: freshRecipient.name, email: freshRecipient.email }];
+          replySubject = outlookDraft.subject;
+          metadata.replySubject = outlookDraft.subject;
+          outlookWarning = `No earlier chain found in your Outlook, so this is a new email to ${freshRecipient.name ?? freshRecipient.email} (${freshRecipient.why}).`;
+        } catch (draftError) {
+          if (draftError instanceof Error && draftError.message === "OUTLOOK_RECONNECT_REQUIRED") {
+            outlookWarning = "A copyable draft is ready, but Outlook didn't allow creating the draft. Reconnect Outlook and prepare again.";
+          } else {
+            throw draftError;
+          }
+        }
+      } else {
+        outlookWarning = "No earlier chain in your Outlook and no contact with an email on the Salesforce account, so this draft is copy and paste only.";
       }
     }
 

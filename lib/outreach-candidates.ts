@@ -360,7 +360,7 @@ export async function refreshCandidates(): Promise<RefreshSummary> {
 /** Columns the review screen needs; screen_facts and bookkeeping stay server-side to keep the phone payload small. */
 const LIST_COLUMNS =
   "sf_account_id, account_name, website, account_url, employees, country, industry, owner_name, last_e1_at, last_e1_by, sends, " +
-  "rule_status, rule_reason, eligible_on, sends_in_window, screen_status, screen_reason, review_status, skip_reason, reviewed_at, pushed_week_start, refreshed_at";
+  "rule_status, rule_reason, eligible_on, sends_in_window, screen_status, screen_reason, screen_facts, review_status, skip_reason, reviewed_at, pushed_week_start, refreshed_at";
 
 /** Every account in the pool. Supabase caps a single select at 1,000 rows, so this pages through. */
 export async function listCandidates(): Promise<CandidateRow[]> {
@@ -377,7 +377,15 @@ export async function listCandidates(): Promise<CandidateRow[]> {
       .range(from, from + page - 1);
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as unknown as CandidateRow[];
-    for (const r of rows) out.push({ ...r, sends: Array.isArray(r.sends) ? r.sends.slice(0, 5) : [] });
+    for (const r of rows) {
+      const f = (r.screen_facts ?? null) as Record<string, unknown> | null;
+      const g = (f?.group ?? null) as { matched?: boolean; group?: string | null; mainGroup?: string | null } | null;
+      out.push({
+        ...r,
+        sends: Array.isArray(r.sends) ? r.sends.slice(0, 5) : [],
+        screen_facts: f ? { summary: f.summary ?? null, ownership: f.ownership ?? null, investment: f.investment ?? null, softwareType: f.softwareType ?? null, group: g?.matched ? { group: g.group ?? null, mainGroup: g.mainGroup ?? null } : null } : null,
+      });
+    }
     if (rows.length < page) break;
   }
   return out;
@@ -417,13 +425,24 @@ export async function pushCandidate(accountId: string, weekStart?: string): Prom
     sourceReference: "Outreach review",
   });
   const now = new Date().toISOString();
-  const { data, error } = await getSupabaseAdmin()
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
     .from("outreach_candidates")
     .update({ review_status: "pushed", reviewed_at: now, weekly_outreach_id: item.id, pushed_week_start: item.week_start, skip_reason: null, updated_at: now })
     .eq("sf_account_id", accountId)
     .select("*")
     .single();
   if (error) throw new Error(error.message);
+  // The check already classified the company; hand the group to Weekly Outreach
+  // so Sourcing does not run the classifier a second time.
+  const facts = (data as CandidateRow).screen_facts as { group?: { matched?: boolean; group?: string | null; mainGroup?: string | null } | null } | null;
+  if (facts?.group?.matched && facts.group.group) {
+    const patch: Record<string, string> = { group_name: facts.group.group };
+    if (facts.group.mainGroup) patch.industry = facts.group.mainGroup;
+    await supabase.from("weekly_outreach").update(patch).eq("id", item.id);
+    item.group_name = facts.group.group;
+    if (facts.group.mainGroup) item.industry = facts.group.mainGroup;
+  }
   return { row: data as CandidateRow, item };
 }
 

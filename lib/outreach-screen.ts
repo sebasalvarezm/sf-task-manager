@@ -1,6 +1,6 @@
 import { getAnthropicClient, MODELS } from "./anthropic";
 import { getSupabaseAdmin } from "./supabase";
-import { fetchPageText } from "./scout";
+import { fetchPageText, loadGroupFiles, matchGroup, type GroupMatch } from "./scout";
 import type { CandidateRow, ScreenStatus } from "./outreach-candidates";
 
 /**
@@ -21,6 +21,13 @@ export type ScreenVerdict = {
     acquiredBy: string | null;
     acquiredWhen: string | null;
     employeesOnSite: number | null;
+    /** bootstrapped | pe_backed | vc_backed | public | subsidiary | unknown */
+    ownership: string | null;
+    /** A funding round or investment in the last 18 months, when found. */
+    investment: string | null;
+    /** One line for the card: "Ag retailer ERP, Canada, bootstrapped, no acquisition or investment on record." */
+    summary: string | null;
+    group: GroupMatch | null;
     confidence: "high" | "medium" | "low";
     source: string[];
   };
@@ -29,7 +36,7 @@ export type ScreenVerdict = {
 const SYSTEM = `You screen companies for Valstone, a permanent-capital acquirer of vertical market software (VMS) businesses serving industrial sectors. Given a company's website text and basic facts, answer two questions only:
 
 1. Is this a software business? "software" means the company's core offering is its own software product (SaaS or on-premise) that customers run or subscribe to. "software_plus_services" means a real product plus implementation or managed services around it (still fine). "services" means consulting, integration of other vendors' software, staffing, agencies, or IT services with no product of their own. "hardware" means the revenue is devices or equipment with software as a feature. "other" is everything else (distributor, media, non-profit, marketplace).
-2. Has the company been acquired or merged in the last 18 months, or is it now a subsidiary or brand of a larger group? Look for "part of", "a [Group] company", "acquired by", "now [New name]", "joined", press releases, or a redirect to a parent site. If the page does not settle it, you may run ONE web search for "<company name> acquired" and use only clear, dated results.
+2. Has the company been acquired or merged in the last 18 months, taken outside investment (a funding round, PE or VC money) in the last 18 months, or is it now a subsidiary or brand of a larger group? Look for "part of", "a [Group] company", "acquired by", "now [New name]", "joined", "backed by", "raised", press releases, or a redirect to a parent site. If the page does not settle it, you may run ONE web search for "<company name> acquired OR investment" and use only clear, dated results.
 
 Verdict rules:
 - "acquired": clear evidence of an acquisition or merger in the last 18 months, or now owned by a PE firm or strategic group since then.
@@ -37,8 +44,10 @@ Verdict rules:
 - "software": software or software_plus_services, and no acquisition evidence.
 - "unclear": the site text is too thin, blocked, parked, or you cannot tell. Never guess.
 
+Also classify ownership: "bootstrapped" (founder or privately owned, no outside capital found), "pe_backed", "vc_backed", "public", "subsidiary", or "unknown".
+
 Output ONLY a JSON object:
-{"verdict":"software|not_software|acquired|unclear","business_model":"software|software_plus_services|services|hardware|other|null","software_type":"<one short phrase, e.g. 'fleet maintenance software for rail'>|null","acquired_by":"<name>|null","acquired_when":"<month year or year>|null","employees_on_site":<number|null>,"confidence":"high|medium|low","reason":"<one plain sentence, max 160 characters, no dashes>"}`;
+{"verdict":"software|not_software|acquired|unclear","business_model":"software|software_plus_services|services|hardware|other|null","software_type":"<one short phrase, e.g. 'fleet maintenance software for rail'>|null","acquired_by":"<name>|null","acquired_when":"<month year or year>|null","ownership":"bootstrapped|pe_backed|vc_backed|public|subsidiary|unknown","investment":"<e.g. 'Series A, March 2026'>|null","employees_on_site":<number|null>,"confidence":"high|medium|low","summary":"<what they sell in 3 to 6 words, then ownership and deal status, e.g. 'Ag retailer ERP, bootstrapped, no acquisition or investment on record'>","reason":"<one plain sentence, max 160 characters, no dashes>"}`;
 
 function parseVerdict(raw: string): ScreenVerdict | null {
   const m = raw.match(/\{[\s\S]*\}/);
@@ -63,6 +72,10 @@ function parseVerdict(raw: string): ScreenVerdict | null {
       acquiredBy: str(o.acquired_by),
       acquiredWhen: str(o.acquired_when),
       employeesOnSite: typeof o.employees_on_site === "number" && Number.isFinite(o.employees_on_site) ? Math.round(o.employees_on_site) : null,
+      ownership: str(o.ownership),
+      investment: str(o.investment),
+      summary: (str(o.summary) ?? null)?.replace(/\s*[\u2013\u2014]\s*/g, ", ").replace(/\.$/, "").slice(0, 160) ?? null,
+      group: null,
       confidence,
       source: [],
     },
@@ -132,25 +145,34 @@ export async function screenCompany(input: { name: string; website: string | nul
     "Website text:",
     site.text.slice(0, 7000),
   ].join("\n");
-  const response = await client.messages.create({
-    model: MODELS.drafting,
-    max_tokens: 400,
-    system: SYSTEM,
-    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }],
-    messages: [{ role: "user", content: user }],
-  });
-  const text = response.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .join("")
-    .trim();
-  const parsed = parseVerdict(text);
+  const ask = async (withSearch: boolean) => {
+    const response = await client.messages.create({
+      model: MODELS.drafting,
+      max_tokens: 400,
+      system: SYSTEM,
+      ...(withSearch ? { tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 1 }] } : {}),
+      messages: [{ role: "user", content: user }],
+    });
+    return response.content
+      .map((b) => (b.type === "text" ? b.text : ""))
+      .join("")
+      .trim();
+  };
+  // A search that eats the whole answer now and then leaves no JSON; ask once more from the site text alone.
+  let parsed = parseVerdict(await ask(true));
+  if (!parsed) parsed = parseVerdict(await ask(false));
   if (!parsed) return { status: "error", reason: "The model did not return a readable verdict.", facts: { ...emptyFacts(), source: site.pages } };
   parsed.facts.source = site.pages;
+  if (parsed.status === "software") {
+    // Same portfolio-group classifier Sourcing uses, run once here so the push
+    // carries the group and Sourcing can skip its own classification step.
+    parsed.facts.group = await matchGroup(client, site.text, loadGroupFiles()).catch(() => null);
+  }
   return parsed;
 }
 
 function emptyFacts(): ScreenVerdict["facts"] {
-  return { softwareType: null, businessModel: null, acquiredBy: null, acquiredWhen: null, employeesOnSite: null, confidence: "low", source: [] };
+  return { softwareType: null, businessModel: null, acquiredBy: null, acquiredWhen: null, employeesOnSite: null, ownership: null, investment: null, summary: null, group: null, confidence: "low", source: [] };
 }
 
 // ── Queue ────────────────────────────────────────────────────────────────────
