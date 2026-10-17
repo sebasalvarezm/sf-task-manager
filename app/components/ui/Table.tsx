@@ -19,7 +19,7 @@ export function Table({
 
 Table.Head = function TableHead({ children }: { children: ReactNode }) {
   return (
-    <thead className="bg-surface-3 text-xs uppercase tracking-widest text-ink-muted">
+    <thead className="text-xs text-ink-secondary">
       {children}
     </thead>
   );
@@ -37,7 +37,7 @@ Table.HeadCell = function TableHeadCell({
   return (
     <th
       scope="col"
-      className={`px-4 py-2.5 text-left font-semibold whitespace-nowrap ${className}`}
+      className={`px-4 py-2.5 text-left font-normal whitespace-nowrap border-b border-line ${className}`}
       {...rest}
     >
       {children}

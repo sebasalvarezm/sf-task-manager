@@ -209,7 +209,7 @@ type PrepMeeting = MeetingMatch & {
 
 export default function PrepPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-navy" />}>
+    <Suspense fallback={<div className="min-h-screen bg-surface" />}>
       <PrepPageContent />
     </Suspense>
   );
@@ -786,7 +786,7 @@ function PrepPageContent() {
   return (
     <>
       <PageHeader
-        title="Call Prep"
+        title="Call prep"
         actions={
           <>
             {msConnected === true ? (
@@ -1099,11 +1099,11 @@ function MeetingRow({
             </div>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500 md:hidden">
-            <span className="rounded-full bg-gray-100 px-2.5 py-1">
+            <span className="rounded-sm bg-gray-100 px-2.5 py-1">
               {meeting.meetingDate}
             </span>
             {meeting.startTime && (
-              <span className="rounded-full bg-gray-100 px-2.5 py-1">
+              <span className="rounded-sm bg-gray-100 px-2.5 py-1">
                 {meeting.startTime}
               </span>
             )}
@@ -1121,14 +1121,14 @@ function MeetingRow({
                 {effectiveMatch.accountName}
               </span>
               {manualMatch && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-600">
+                <span className="inline-flex items-center gap-1 rounded-sm border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-600">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
                   Manually linked
                 </span>
               )}
               <button
                 onClick={() => onStartEdit(effectiveMatch.accountName)}
-                className="text-xs text-gray-400 underline underline-offset-2 transition-colors hover:text-brand-orange"
+                className="text-xs text-gray-400 underline-offset-2 transition-colors hover:text-ink-secondary"
               >
                 Change
               </button>
@@ -1169,7 +1169,7 @@ function MeetingRow({
                 {isEditing && effectiveMatch && (
                   <button
                     onClick={onCancelEdit}
-                    className="min-h-10 flex-1 text-xs text-gray-400 underline underline-offset-2 transition-colors hover:text-red-500 md:min-h-0 md:flex-none"
+                    className="min-h-10 flex-1 text-xs text-gray-400 underline-offset-2 transition-colors hover:text-red-500 md:min-h-0 md:flex-none"
                   >
                     Cancel
                   </button>
@@ -1247,7 +1247,7 @@ function MeetingRow({
                 Generating...
                 <button
                   onClick={onCancelGenerate}
-                  className="ml-1 text-gray-400 hover:text-red-500 underline underline-offset-2 transition-colors"
+                  className="ml-1 text-gray-400 hover:text-red-500 underline-offset-2 transition-colors"
                 >
                   Cancel
                 </button>
@@ -1262,7 +1262,7 @@ function MeetingRow({
                 </span>
                 <button
                   onClick={onGenerate}
-                  className="min-h-10 rounded-lg border border-brand-orange/30 px-3 text-xs font-semibold text-brand-orange hover:bg-orange-50 md:min-h-0 md:border-0 md:px-0 md:hover:bg-transparent md:hover:underline"
+                  className="min-h-10 rounded-lg border border-brand-orange/30 px-3 text-xs font-semibold text-ink underline hover:bg-orange-50 md:min-h-0 md:border-0 md:px-0 md:hover:bg-transparent md:hover:underline"
                 >
                   Retry
                 </button>
@@ -1274,7 +1274,7 @@ function MeetingRow({
               <>
                 <button
                   onClick={onGenerate}
-                  className="min-h-10 w-full rounded-lg border border-gray-200 px-3 text-xs font-medium text-gray-500 transition-colors hover:border-brand-orange hover:text-brand-orange md:min-h-0 md:w-auto md:border-0 md:px-0 md:text-gray-400"
+                  className="min-h-10 w-full rounded-lg border border-gray-200 px-3 text-xs font-medium text-gray-500 transition-colors hover:border-brand-orange hover:text-ink-secondary md:min-h-0 md:w-auto md:border-0 md:px-0 md:text-gray-400"
                   title="Regenerate one-pager"
                 >
                   <span className="md:hidden">Regenerate</span>
@@ -1282,7 +1282,7 @@ function MeetingRow({
                 </button>
                 <button
                   onClick={onToggleExpand}
-                  className="min-h-10 w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-navy transition-colors hover:border-brand-orange hover:text-brand-orange md:min-h-0 md:w-auto md:px-2 md:py-1.5"
+                  className="min-h-10 w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-navy transition-colors hover:border-brand-orange hover:text-ink-secondary md:min-h-0 md:w-auto md:px-2 md:py-1.5"
                 >
                   {expanded ? "Hide" : "View"}
                 </button>

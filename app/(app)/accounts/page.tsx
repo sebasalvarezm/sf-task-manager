@@ -114,7 +114,7 @@ function relativeTime(iso: string): string {
 
 export default function AccountsPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-navy" />}>
+    <Suspense fallback={<div className="min-h-screen bg-surface" />}>
       <AccountsPageContent />
     </Suspense>
   );
@@ -378,7 +378,7 @@ function AccountsPageContent() {
   return (
     <>
       <PageHeader
-        title="Account Creator"
+        title="Account creator"
         subtitle="Paste a company URL — the enrichment runs in the background. Keep working in another tool while it does its thing."
         actions={
           <ConnectSalesforce
@@ -468,7 +468,7 @@ function AccountsPageContent() {
                   {urlInputs.length < 5 ? (
                     <button
                       onClick={handleAddUrl}
-                      className="text-sm text-brand-orange hover:underline"
+                      className="text-sm text-ink underline"
                     >
                       + Add another URL
                     </button>
@@ -592,7 +592,7 @@ function AccountsPageContent() {
                         <div className="flex items-center gap-3">
                           {item.confidence && (
                             <span
-                              className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                              className={`text-xs font-medium px-2.5 py-1 rounded-sm ${
                                 item.confidence === "high"
                                   ? "bg-green-50 text-green-700 border border-green-200"
                                   : item.confidence === "medium"
@@ -772,7 +772,7 @@ function AccountsPageContent() {
                   <button
                     onClick={handleCreateAll}
                     disabled={creatingAll}
-                    className="w-full border-2 border-brand-orange text-brand-orange hover:bg-brand-orange hover:text-white disabled:opacity-50 font-semibold py-3 rounded-lg transition-colors text-sm"
+                    className="w-full border-2 border-brand-orange text-ink underline hover:bg-brand-orange hover:text-white disabled:opacity-50 font-semibold py-3 rounded-lg transition-colors text-sm"
                   >
                     {creatingAll ? (
                       <span className="flex items-center justify-center gap-2">

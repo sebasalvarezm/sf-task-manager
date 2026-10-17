@@ -1520,7 +1520,7 @@ export default function WeeklyOutreachPage() {
   return (
     <>
       <PageHeader
-        title="Weekly Outreach"
+        title="Weekly outreach"
         subtitle={`${counts.total} / ${WEEKLY_GOAL} weekly goal · ${counts.rce} RCE · ${counts.e1} E1 · ${counts.ready} drafts ready`}
         actions={
           <input
@@ -1686,7 +1686,7 @@ export default function WeeklyOutreachPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="rounded bg-brand-soft px-2 py-1 text-xs font-bold text-brand">
+                    <span className="rounded bg-brand-soft px-2 py-1 text-xs font-bold text-ink underline">
                       {item.outreach_type}
                     </span>
                     <span className="text-xs text-ink-muted">#{index + 1}</span>
@@ -1749,14 +1749,14 @@ export default function WeeklyOutreachPage() {
                     onChange={(event) =>
                       void updateRow(item, { rceDraftEnabled: event.target.checked })
                     }
-                    className="h-6 w-6 rounded border-line text-brand focus:ring-brand"
+                    className="h-6 w-6 rounded border-line text-ink underline focus:ring-brand"
                     aria-label={`Draft reconnect for ${item.account_name}`}
                   />
                 </label>
               ) : null}
 
               <details className="mt-3 border-t border-line pt-3">
-                <summary className="cursor-pointer text-sm font-medium text-brand">
+                <summary className="cursor-pointer text-sm font-medium text-ink underline">
                   Edit Salesforce fields
                 </summary>
                 <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1842,7 +1842,7 @@ export default function WeeklyOutreachPage() {
                   type="button"
                   onClick={() => void moveRowToNextWeek(item)}
                   disabled={movingRows.has(item.id)}
-                  className="py-2 text-sm font-semibold text-brand disabled:opacity-50"
+                  className="py-2 text-sm font-semibold text-ink underline disabled:opacity-50"
                 >
                   {movingRows.has(item.id) ? "Moving…" : "Move to next week"}
                 </button>
@@ -1924,7 +1924,7 @@ export default function WeeklyOutreachPage() {
                         onChange={(event) =>
                           updateRow(item, { outreachType: event.target.value as WeeklyOutreachType })
                         }
-                        className="h-10 w-full border-0 bg-transparent px-2 font-semibold text-brand focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        className="h-10 w-full border-0 bg-transparent px-2 font-semibold text-ink underline focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
                       >
                         <option value="E1">E1</option>
                         <option value="RCE">RCE</option>
@@ -1995,7 +1995,7 @@ export default function WeeklyOutreachPage() {
                         ))}
                       </select>
                       {item.sourcing_job_id ? (
-                        <Link className="px-1 text-[10px] text-brand underline" href={`/sourcing?jobId=${item.sourcing_job_id}`}>
+                        <Link className="px-1 text-[10px] text-ink underline" href={`/sourcing?jobId=${item.sourcing_job_id}`}>
                           Open sourcing
                         </Link>
                       ) : null}
@@ -2037,7 +2037,7 @@ export default function WeeklyOutreachPage() {
                                 rceDraftEnabled: event.target.checked,
                               })
                             }
-                            className="h-4 w-4 shrink-0 rounded border-line text-brand focus:ring-brand"
+                            className="h-4 w-4 shrink-0 rounded border-line text-ink underline focus:ring-brand"
                             aria-label={`Draft reconnect for ${item.account_name}`}
                           />
                           {item.rce_draft_enabled === false ? (
@@ -2047,7 +2047,7 @@ export default function WeeklyOutreachPage() {
                               type="button"
                               onClick={() => void prepareRce(item)}
                               disabled={preparingRces.has(item.id)}
-                              className="min-w-0 flex-1 text-left font-medium text-brand hover:underline disabled:opacity-50"
+                              className="min-w-0 flex-1 text-left font-medium text-ink underline hover:text-ink-secondary disabled:opacity-50"
                             >
                               {preparingRces.has(item.id) ? "Preparing…" : "Prepare"}
                             </button>
@@ -2059,7 +2059,7 @@ export default function WeeklyOutreachPage() {
                           type="button"
                           onKeyDown={(event) => handleGridNavigation(event, index, 9)}
                           onClick={() => openRceReview(item)}
-                          className="h-10 w-full px-2 text-left font-medium text-brand hover:bg-brand-soft"
+                          className="h-10 w-full px-2 text-left font-medium text-ink underline hover:bg-brand-soft"
                         >
                           Review
                         </button>
@@ -2086,7 +2086,7 @@ export default function WeeklyOutreachPage() {
                         type="button"
                         onClick={() => void moveRowToNextWeek(item)}
                         disabled={movingRows.has(item.id)}
-                        className="whitespace-nowrap font-semibold text-brand hover:underline disabled:opacity-50"
+                        className="whitespace-nowrap font-semibold text-ink underline hover:text-ink-secondary disabled:opacity-50"
                         aria-label={`Move ${item.account_name} to next week`}
                       >
                         {movingRows.has(item.id) ? "Moving…" : "Move →"}
@@ -2125,7 +2125,7 @@ export default function WeeklyOutreachPage() {
                           );
                         }}
                         disabled={row.saving}
-                        className="h-10 w-full border-0 bg-transparent px-2 text-xs font-semibold text-brand focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        className="h-10 w-full border-0 bg-transparent px-2 text-xs font-semibold text-ink underline focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
                       >
                         <option value="">—</option>
                         <option value="E1">E1</option>
@@ -2444,13 +2444,13 @@ export default function WeeklyOutreachPage() {
               {/* Header: one line on phones (company · position · next), full detail on laptops. */}
               <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3 sm:px-6 sm:py-4">
                 <div className="min-w-0 flex-1">
-                  <span className="hidden text-xs font-bold uppercase tracking-wide text-brand sm:block">RCE review</span>
+                  <span className="hidden text-xs font-bold uppercase tracking-wide text-ink underline sm:block">RCE review</span>
                   <div className="flex items-center gap-2">
                     <h2 id="rce-review-title" className="truncate text-lg font-semibold text-ink sm:mt-1 sm:text-xl">
                       {reviewingRce.account_name}
                     </h2>
                     {reviewPosition ? (
-                      <span className="shrink-0 rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
+                      <span className="shrink-0 rounded-sm bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
                         {reviewPosition.current} of {reviewPosition.total}
                       </span>
                     ) : null}
@@ -2482,7 +2482,7 @@ export default function WeeklyOutreachPage() {
                   {/* Phone: status chip + a toggle for the long explanation. */}
                   <div className="mt-1 flex items-center gap-2 sm:hidden">
                     <span
-                      className={`truncate rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      className={`truncate rounded-sm px-2 py-0.5 text-[11px] font-semibold ${
                         reviewingRce.outlook_draft_ready
                           ? "bg-ok/10 text-ok"
                           : "bg-warning/10 text-warning"
@@ -2497,7 +2497,7 @@ export default function WeeklyOutreachPage() {
                     <button
                       type="button"
                       onClick={() => setReviewContextOpen((open) => !open)}
-                      className="shrink-0 text-[11px] font-semibold text-brand"
+                      className="shrink-0 text-[11px] font-semibold text-ink underline"
                     >
                       {reviewContextOpen ? "Hide context" : "Why this draft"}
                     </button>
@@ -2583,7 +2583,7 @@ export default function WeeklyOutreachPage() {
                         </span>
                         <button
                           type="button"
-                          className="shrink-0 font-semibold text-brand underline underline-offset-2"
+                          className="shrink-0 font-semibold text-ink underline underline-offset-2"
                           onClick={() => void saveDraftNow()}
                         >
                           Retry

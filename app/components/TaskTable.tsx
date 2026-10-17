@@ -284,15 +284,15 @@ export default function TaskTable({
                       <p className="font-semibold mb-2 text-white">Shortcode reference:</p>
                       <div className="space-y-1.5">
                         <div className="flex gap-2">
-                          <span className="text-brand-orange font-mono font-bold w-16 shrink-0">D</span>
+                          <span className="text-ink underline font-mono font-bold w-16 shrink-0">D</span>
                           <span className="text-gray-300">Hard delete the task permanently</span>
                         </div>
                         <div className="flex gap-2">
-                          <span className="text-brand-orange font-mono font-bold w-16 shrink-0">RCE14</span>
+                          <span className="text-ink underline font-mono font-bold w-16 shrink-0">RCE14</span>
                           <span className="text-gray-300">Mark complete + new task in 14 days</span>
                         </div>
                         <div className="flex gap-2">
-                          <span className="text-brand-orange font-mono font-bold w-16 shrink-0">P30</span>
+                          <span className="text-ink underline font-mono font-bold w-16 shrink-0">P30</span>
                           <span className="text-gray-300">Push due date back by 30 days</span>
                         </div>
                       </div>
@@ -336,7 +336,7 @@ export default function TaskTable({
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 text-brand-orange hover:text-brand-orange-hover text-sm font-medium underline underline-offset-2"
+                    className="inline-flex items-center gap-1 text-ink underline hover:text-ink text-sm font-medium underline-offset-2"
                   >
                     Open ↗
                   </a>
@@ -369,7 +369,7 @@ export default function TaskTable({
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="text-sm text-brand-orange hover:text-brand-orange-hover underline underline-offset-2 font-mono"
+                      className="text-sm text-ink underline hover:text-ink underline-offset-2 font-mono"
                     >
                       {task.ActivityDate}
                     </a>
@@ -454,7 +454,7 @@ export default function TaskTable({
                     href={website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-brand-orange hover:text-brand-orange-hover underline underline-offset-2 font-mono"
+                    className="text-ink underline hover:text-ink underline-offset-2 font-mono"
                   >
                     {task.ActivityDate}
                   </a>
@@ -466,7 +466,7 @@ export default function TaskTable({
                   href={task.AccountUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-brand-orange hover:text-brand-orange-hover font-medium underline underline-offset-2"
+                  className="inline-flex items-center gap-1 text-ink underline hover:text-ink font-medium underline-offset-2"
                 >
                   Open in Salesforce ↗
                 </a>

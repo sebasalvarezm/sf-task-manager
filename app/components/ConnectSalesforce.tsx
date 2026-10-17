@@ -9,7 +9,7 @@ export default function ConnectSalesforce({ connected, onDisconnect }: Props) {
   if (connected) {
     return (
       <div className="flex items-center gap-3">
-        <span className="flex items-center gap-2 text-sm text-green-600 font-medium bg-green-50 border border-green-200 rounded-full px-3 py-1">
+        <span className="flex items-center gap-2 text-sm text-green-600 font-medium bg-green-50 border border-green-200 rounded-sm px-3 py-1">
           <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
           Salesforce connected
         </span>

@@ -10,10 +10,10 @@ type Props = HTMLAttributes<HTMLDivElement> & {
 };
 
 const VARIANT: Record<Variant, { wrap: string; icon: typeof CheckCircle2 }> = {
-  ok:     { wrap: "bg-ok-soft border-ok/20 text-ok",         icon: CheckCircle2 },
-  warn:   { wrap: "bg-warn-soft border-warn/20 text-warn",   icon: AlertTriangle },
-  danger: { wrap: "bg-danger-soft border-danger/20 text-danger", icon: AlertCircle },
-  info:   { wrap: "bg-info-soft border-info/20 text-info",   icon: Info },
+  ok:     { wrap: "bg-white border-ok text-ink",       icon: CheckCircle2 },
+  warn:   { wrap: "bg-white border-warn text-ink",     icon: AlertTriangle },
+  danger: { wrap: "bg-white border-danger text-ink",   icon: AlertCircle },
+  info:   { wrap: "bg-white border-line text-ink",     icon: Info },
 };
 
 export function Alert({

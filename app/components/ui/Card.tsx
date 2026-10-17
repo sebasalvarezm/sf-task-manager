@@ -13,11 +13,11 @@ export function Card({
   ...rest
 }: CardProps) {
   const base =
-    "bg-surface-2 border border-line rounded-lg shadow-sm transition-all";
+    "bg-surface-2 border border-line rounded-md transition-colors";
   const hover = hoverable
-    ? "hover:shadow-md hover:-translate-y-0.5 hover:border-line-strong cursor-pointer"
+    ? "hover:bg-surface-3 cursor-pointer"
     : "";
-  const pad = padded ? "p-6" : "";
+  const pad = padded ? "p-5" : "";
   return (
     <div className={`${base} ${hover} ${pad} ${className}`} {...rest}>
       {children}

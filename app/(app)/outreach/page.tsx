@@ -3,22 +3,18 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ExternalLink, RefreshCw, Settings2, Send, SkipForward, RotateCcw, ClipboardList } from "lucide-react";
-import { PageHeader } from "@/app/components/ui/PageHeader";
+import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
-import { Alert } from "@/app/components/ui/Alert";
-import { Badge } from "@/app/components/ui/Badge";
 
 /**
- * Outreach: the review screen for the next accounts to email.
+ * Outreach: the next companies to email, prequalified.
  *
- * The pool is the "GOGOGO" report (E1s in the last year, Valstone record
- * type, headcount band, core countries). Every account carries the
- * rules-of-engagement verdict (lib/outreach-rules.ts). Seb reviews the
- * eligible ones in batches, pushes to Weekly Outreach with one tap or skips
- * with a reason, and the pool refills from the top. "Check a list" is the old
- * Re-Contact paste box, now on the same rule.
+ * One list. Every row here has already passed the rules of engagement
+ * (lib/outreach-rules.ts) and the website check (lib/outreach-screen.ts):
+ * software business, not acquired or funded recently. Seb reads two lines,
+ * pushes to Weekly Outreach or skips, and the list refills. Everything else
+ * (waiting, filtered out, done, check a list, rules) lives behind one menu.
  */
 
 type RuleStatus = "eligible" | "wait" | "blocked";
@@ -77,21 +73,21 @@ type CheckRow = {
   lastSend: Send | null;
 };
 
-type Tab = "review" | "waiting" | "filtered" | "done" | "check";
+type View = "next" | "waiting" | "filtered" | "done" | "check" | "rules";
 
-const SKIP_REASONS = ["Not software", "Services-heavy", "Acquired", "Too small or too big", "Wrong geography", "Rule exception", "Other"];
-
-const SCREEN_LABEL: Record<ScreenStatus, { label: string; variant: "neutral" | "ok" | "warn" | "danger" | "info" }> = {
-  pending: { label: "Not checked yet", variant: "neutral" },
-  software: { label: "Software", variant: "ok" },
-  not_software: { label: "Not software", variant: "danger" },
-  acquired: { label: "Acquired", variant: "danger" },
-  unclear: { label: "Unclear", variant: "warn" },
-  error: { label: "Check failed", variant: "warn" },
+const VIEW_LABEL: Record<View, string> = {
+  next: "Next to contact",
+  waiting: "Waiting on the window",
+  filtered: "Filtered out by the check",
+  done: "Pushed and skipped",
+  check: "Check a list",
+  rules: "Rules",
 };
 
+const SKIP_REASONS = ["Not software", "Services-heavy", "Acquired", "Wrong size", "Wrong geography", "Rule exception", "Other"];
+
 function fmtDate(d: string | null | undefined): string {
-  if (!d) return "—";
+  if (!d) return "";
   return new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -109,9 +105,36 @@ function hrefOf(url: string | null): string | null {
   return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 }
 
+function firstName(name: string | null): string | null {
+  return name ? name.split(" ")[0] : null;
+}
+
+const OWNERSHIP: Record<string, string> = {
+  bootstrapped: "bootstrapped",
+  pe_backed: "PE-backed",
+  vc_backed: "VC-backed",
+  public: "public",
+  subsidiary: "subsidiary",
+};
+
+/** Line two of a row: what they sell, where, size, group, and ownership. */
+function describe(row: Row): string {
+  const f = row.screen_facts;
+  const parts: string[] = [];
+  if (f?.summary) parts.push(f.summary);
+  else if (f?.softwareType) parts.push(f.softwareType);
+  else if (row.industry) parts.push(row.industry);
+  if (row.country) parts.push(row.country);
+  if (row.employees !== null) parts.push(`${row.employees} people`);
+  if (f?.group?.group) parts.push(f.group.group);
+  if (!f?.summary && f?.ownership && OWNERSHIP[f.ownership]) parts.push(OWNERSHIP[f.ownership]);
+  if (!f?.summary && f?.investment) parts.push(`raised ${f.investment}`);
+  return parts.join(" · ");
+}
+
 export default function OutreachPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-navy" />}>
+    <Suspense fallback={<div className="min-h-screen bg-surface" />}>
       <OutreachInner />
     </Suspense>
   );
@@ -119,19 +142,21 @@ export default function OutreachPage() {
 
 function OutreachInner() {
   const params = useSearchParams();
-  const [tab, setTab] = useState<Tab>(params.get("tab") === "check" ? "check" : "review");
+  const [view, setView] = useState<View>(params.get("tab") === "check" ? "check" : "next");
   const [items, setItems] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [skipFor, setSkipFor] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [weekCount, setWeekCount] = useState<number | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [shown, setShown] = useState(50);
   const [screen, setScreen] = useState<{ pending: number; running: boolean; step: string | null }>({ pending: 0, running: false, step: null });
+  const readyRef = useRef(0);
 
   const pollScreen = useCallback(async () => {
     try {
@@ -146,23 +171,23 @@ function OutreachInner() {
     }
   }, []);
 
-  // How many checked-and-passed cards are waiting for Seb right now (kept in a ref so callbacks see the latest).
-  const readyRef = useRef(0);
-
-  /** Keep about one batch of checked cards ahead of Seb; otherwise leave the rest unchecked (each check costs a site read and a model call). */
-  const ensureScreened = useCallback(async (batch: number, force = false) => {
-    const running = await pollScreen();
-    if (running) return;
-    if (!force && readyRef.current >= batch) return;
-    try {
-      const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch }) });
-      const data = await res.json();
-      if (res.ok && data.jobId) setScreen((s) => ({ ...s, running: true, step: "Starting…" }));
-      else if (!res.ok && data.error) setError(data.error);
-    } catch {
-      /* the next poll will try again */
-    }
-  }, [pollScreen]);
+  /** Keep one batch of checked rows ahead of Seb. Each check costs a site read and a model call, so the rest waits. */
+  const ensureScreened = useCallback(
+    async (batch: number, force = false) => {
+      const running = await pollScreen();
+      if (running) return;
+      if (!force && readyRef.current >= batch) return;
+      try {
+        const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch }) });
+        const data = await res.json();
+        if (res.ok && data.jobId) setScreen((s) => ({ ...s, running: true, step: null }));
+        else if (!res.ok && data.error) setError(data.error);
+      } catch {
+        /* next poll retries */
+      }
+    },
+    [pollScreen],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -170,7 +195,8 @@ function OutreachInner() {
       const [res, weekRes, setRes] = await Promise.all([fetch("/api/outreach/candidates"), fetch("/api/weekly-outreach"), fetch("/api/outreach/settings")]);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not load");
-      setItems(data.items ?? []);
+      const rows = (data.items ?? []) as Row[];
+      setItems(rows);
       const week = await weekRes.json().catch(() => null);
       setWeekCount(Array.isArray(week?.items) ? week.items.length : null);
       const set = await setRes.json().catch(() => null);
@@ -179,11 +205,10 @@ function OutreachInner() {
         setShown(set.settings.batchSize ?? 50);
       }
       setError(null);
-      const rows = (data.items ?? []) as Row[];
       readyRef.current = rows.filter((r) => r.review_status === "open" && r.rule_status === "eligible" && r.screen_status === "software").length;
       void ensureScreened(set?.settings?.batchSize ?? 50);
     } catch (err) {
-      setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped while loading. Pull to refresh or reopen the page.");
+      setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped while loading. Reopen the page.");
     } finally {
       setLoading(false);
     }
@@ -192,7 +217,6 @@ function OutreachInner() {
     void load();
   }, [load]);
 
-  // While a check runs, pull fresh verdicts every 12 seconds; when it ends, reload once and top up if needed.
   useEffect(() => {
     if (!screen.running) return;
     const id = window.setInterval(async () => {
@@ -212,16 +236,17 @@ function OutreachInner() {
   async function refresh() {
     setRefreshing(true);
     setError(null);
-    setMessage(null);
+    setNotice(null);
+    setMenuOpen(false);
     try {
       const res = await fetch("/api/outreach/candidates", { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Refresh failed");
       await load();
       const s = data.summary;
-      setMessage(`Refreshed: ${s.inPool} accounts in the pool, ${s.eligible} eligible now, ${s.waiting} waiting, ${s.blocked} blocked${s.droppedFromPool ? `, ${s.droppedFromPool} left the pool` : ""}.`);
+      setNotice(`Pool rebuilt from Salesforce: ${s.inPool} accounts, ${s.eligible} eligible, ${s.waiting} waiting, ${s.blocked} blocked.`);
     } catch (err) {
-      setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped before Salesforce answered. Tap Refresh again.");
+      setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped before Salesforce answered. Try again.");
     } finally {
       setRefreshing(false);
     }
@@ -243,10 +268,7 @@ function OutreachInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not save");
       replaceRow(data.item);
-      if (action === "push") {
-        setWeekCount((n) => (n === null ? null : n + 1));
-        setMessage(`${row.account_name} added to Weekly Outreach (week of ${fmtDate(data.weekly?.week_start)}).`);
-      }
+      if (action === "push") setWeekCount((n) => (n === null ? null : n + 1));
       if (action === "reopen") setWeekCount(null);
       setSkipFor(null);
       if (action !== "reopen") void ensureScreened(settings?.batchSize ?? 50);
@@ -261,253 +283,254 @@ function OutreachInner() {
     }
   }
 
-  const eligibleAll = useMemo(() => items.filter((r) => r.review_status === "open" && r.rule_status === "eligible"), [items]);
-  // Review = checked and passed (software first, then unclear), oldest last E1 first. Unchecked accounts wait in the queue.
-  const eligible = useMemo(() => {
+  const open = useMemo(() => items.filter((r) => r.review_status === "open"), [items]);
+  const eligibleAll = useMemo(() => open.filter((r) => r.rule_status === "eligible"), [open]);
+  const next = useMemo(() => {
     const rank = (r: Row) => (r.screen_status === "software" ? 0 : 1);
     return eligibleAll
       .filter((r) => r.screen_status === "software" || r.screen_status === "unclear")
       .sort((a, b) => rank(a) - rank(b) || ((a.last_e1_at ?? "") < (b.last_e1_at ?? "") ? -1 : 1));
   }, [eligibleAll]);
   const unchecked = useMemo(() => eligibleAll.filter((r) => r.screen_status === "pending" || r.screen_status === "error").length, [eligibleAll]);
+  const waiting = useMemo(() => open.filter((r) => r.rule_status !== "eligible").sort((a, b) => ((a.eligible_on ?? "9999") < (b.eligible_on ?? "9999") ? -1 : 1)), [open]);
   const filtered = useMemo(() => eligibleAll.filter((r) => r.screen_status === "not_software" || r.screen_status === "acquired"), [eligibleAll]);
-  readyRef.current = eligible.filter((r) => r.screen_status === "software").length;
-  const waiting = useMemo(
-    () => items.filter((r) => r.review_status === "open" && r.rule_status !== "eligible").sort((a, b) => (a.eligible_on ?? "9999") < (b.eligible_on ?? "9999") ? -1 : 1),
-    [items],
-  );
   const done = useMemo(() => items.filter((r) => r.review_status !== "open").sort((a, b) => ((a.reviewed_at ?? "") < (b.reviewed_at ?? "") ? 1 : -1)), [items]);
-  const pushedThisWeek = useMemo(() => {
-    const now = new Date();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-    const key = monday.toISOString().slice(0, 10);
-    return items.filter((r) => r.review_status === "pushed" && (r.pushed_week_start ?? "") >= key).length;
-  }, [items]);
-  const lastRefresh = items[0]?.refreshed_at ?? null;
+  readyRef.current = next.filter((r) => r.screen_status === "software").length;
+
+  const batch = settings?.batchSize ?? 50;
+  const list = view === "next" ? next.slice(0, shown) : view === "waiting" ? waiting : view === "filtered" ? filtered : view === "done" ? done : [];
+
+  const statusLine = [
+    `${next.length} ready`,
+    unchecked > 0 ? `${unchecked} being checked` : null,
+    `${waiting.length} waiting on the ${settings?.windowDays ?? 60}-day window`,
+    weekCount !== null ? `${weekCount} in Weekly Outreach this week` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <>
-      <PageHeader
-        title="Outreach"
-        subtitle="Accounts from the E1 report that pass the rules of engagement. Push the good ones to Weekly Outreach, skip the rest."
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" size="sm" leftIcon={<Settings2 size={14} />} onClick={() => setSettingsOpen((v) => !v)}>
-              Rules
-            </Button>
-            <Button size="sm" leftIcon={<RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />} loading={refreshing} onClick={() => void refresh()}>
-              Refresh from Salesforce
-            </Button>
-          </div>
-        }
-      />
-      <PageContent>
-        {error ? <Alert variant="danger" className="mb-4">{error}</Alert> : null}
-        {message ? <Alert variant="info" className="mb-4">{message}</Alert> : null}
-
-        {settingsOpen && settings ? <SettingsPanel settings={settings} onSaved={(s) => { setSettings(s); setShown(s.batchSize); setSettingsOpen(false); setMessage("Rules saved. Refresh from Salesforce to apply them."); }} /> : null}
-
-        <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
-          <Stat label="Ready to review" value={eligible.length} hint={unchecked > 0 ? `${unchecked} in the check queue` : "all checked"} />
-          <Stat label="Waiting" value={waiting.length} />
-          <Stat label="In Weekly Outreach" value={weekCount ?? pushedThisWeek} hint="this week · target 70" />
+    <PageContent>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-normal tracking-tight text-ink">{VIEW_LABEL[view]}</h1>
+          <p className="mt-1 text-sm text-ink-secondary">{statusLine}</p>
         </div>
-
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          {(
-            [
-              ["review", `Review (${eligible.length})`],
-              ["waiting", `Waiting (${waiting.length})`],
-              ["filtered", `Filtered out (${filtered.length})`],
-              ["done", `Done (${done.length})`],
-              ["check", "Check a list"],
-            ] as Array<[Tab, string]>
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${tab === key ? "bg-navy text-white" : "bg-surface-3 text-ink hover:bg-line"}`}
-            >
-              {label}
-            </button>
-          ))}
-          {screen.running ? (
-            <span className="w-full text-xs text-brand sm:ml-auto sm:w-auto">
-              <RefreshCw size={11} className="mr-1 inline animate-spin" />
-              Checking websites… {screen.step ?? ""}
-            </span>
-          ) : screen.pending > 0 ? (
-            <button type="button" onClick={() => void ensureScreened(settings?.batchSize ?? 50, true)} className="w-full text-left text-xs text-brand hover:underline sm:ml-auto sm:w-auto">
-              {screen.pending} eligible accounts not checked yet. Check the next {Math.min(screen.pending, settings?.batchSize ?? 50)}
-            </button>
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label="More views"
+            className="flex h-9 w-9 items-center justify-center rounded-sm border border-line-strong bg-white text-ink-secondary hover:bg-surface-3"
+          >
+            <MoreHorizontal size={18} strokeWidth={1.5} />
+          </button>
+          {menuOpen ? (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden />
+              <div className="absolute right-0 z-20 mt-1 w-64 overflow-hidden rounded-md border border-line bg-white shadow-xl">
+                {(["next", "waiting", "filtered", "done", "check", "rules"] as View[]).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => {
+                      setView(key);
+                      setMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-3 ${view === key ? "bg-surface-3 text-ink" : "text-ink-secondary"}`}
+                  >
+                    <span>{VIEW_LABEL[key]}</span>
+                    <span className="text-xs text-ink-muted tabular-nums">
+                      {key === "next" ? next.length : key === "waiting" ? waiting.length : key === "filtered" ? filtered.length : key === "done" ? done.length : ""}
+                    </span>
+                  </button>
+                ))}
+                <div className="border-t border-line" />
+                <button type="button" disabled={refreshing} onClick={() => void refresh()} className="w-full px-3 py-2 text-left text-sm text-ink-secondary hover:bg-surface-3 disabled:text-ink-muted">
+                  {refreshing ? "Rebuilding the pool…" : "Rebuild the pool from Salesforce"}
+                </button>
+                {unchecked > 0 ? (
+                  <button type="button" onClick={() => { setMenuOpen(false); void ensureScreened(batch, true); }} className="w-full px-3 py-2 text-left text-sm text-ink-secondary hover:bg-surface-3">
+                    Check the next {Math.min(unchecked, batch)} now
+                  </button>
+                ) : null}
+                <Link href="/outreach/legacy" className="block px-3 py-2 text-sm text-ink-muted no-underline hover:bg-surface-3">Legacy queue (Outreach.io push)</Link>
+              </div>
+            </>
           ) : null}
-          {lastRefresh ? <span className="w-full text-xs text-ink-muted sm:w-auto">Pool refreshed {new Date(lastRefresh).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span> : null}
         </div>
+      </div>
 
-        {tab === "check" ? (
-          <CheckList onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
-        ) : loading ? (
-          <p className="text-sm text-ink-muted">Loading…</p>
-        ) : items.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-line bg-white p-10 text-center text-sm text-ink-muted">
-            Nothing here yet. Click Refresh from Salesforce to build the pool from the E1 report.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {(tab === "review" ? eligible.slice(0, shown) : tab === "waiting" ? waiting : tab === "filtered" ? filtered : done).map((row) => (
-              <CandidateCard
-                key={row.sf_account_id}
-                row={row}
-                busy={busy.has(row.sf_account_id)}
-                skipOpen={skipFor === row.sf_account_id}
-                onSkipToggle={() => setSkipFor((v) => (v === row.sf_account_id ? null : row.sf_account_id))}
-                onPush={() => void act(row, "push")}
-                onSkip={(reason) => void act(row, "skip", reason)}
-                onReopen={() => void act(row, "reopen")}
-              />
-            ))}
-            {tab === "review" && eligible.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-line bg-white p-10 text-center text-sm text-ink-muted">
-                {unchecked > 0 ? `${unchecked} eligible accounts are still being checked; the next batch appears here as it finishes. ` : "Nothing eligible right now. "}{waiting.length > 0 ? `${waiting.length} account${waiting.length === 1 ? " is" : "s are"} waiting on the 60-day window.` : ""}{filtered.length > 0 ? ` ${filtered.length} filtered out by the software check.` : ""}
-              </div>
-            ) : null}
-            {tab === "review" && eligible.length > shown ? (
-              <div className="flex justify-center pt-2">
-                <Button variant="secondary" onClick={() => setShown((n) => n + (settings?.batchSize ?? 50))}>
-                  Show next {Math.min(settings?.batchSize ?? 50, eligible.length - shown)} of {eligible.length - shown} more
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        )}
-        <p className="mt-8 text-center text-xs text-ink-muted">
-          Need the old queue with the direct Outreach.io push? <Link href="/outreach/legacy" className="text-brand hover:underline">Open the legacy view</Link>.
+      {error ? <p className="mb-4 rounded-sm border border-danger bg-white px-3 py-2 text-sm text-ink">{error}</p> : null}
+      {notice ? <p className="mb-4 text-sm text-ink-secondary">{notice}</p> : null}
+
+      {view === "rules" && settings ? (
+        <RulesPanel settings={settings} onSaved={(s) => { setSettings(s); setShown(s.batchSize); setNotice("Rules saved. Rebuild the pool to apply them."); setView("next"); }} />
+      ) : view === "check" ? (
+        <CheckList onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
+      ) : loading ? (
+        <p className="text-sm text-ink-secondary">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-ink-secondary">Nothing here yet. Rebuild the pool from Salesforce from the menu.</p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-ink-secondary">
+          {view === "next"
+            ? unchecked > 0
+              ? `Nothing checked yet. ${unchecked} accounts are in the check queue; rows appear here as they pass.`
+              : "Nothing to contact right now."
+            : "Nothing here."}
         </p>
-      </PageContent>
-    </>
+      ) : (
+        <div className="rounded-md border border-line bg-white">
+          {list.map((row) => (
+            <CandidateRow
+              key={row.sf_account_id}
+              row={row}
+              view={view}
+              busy={busy.has(row.sf_account_id)}
+              skipOpen={skipFor === row.sf_account_id}
+              expanded={expanded.has(row.sf_account_id)}
+              onToggle={() =>
+                setExpanded((prev) => {
+                  const n = new Set(prev);
+                  if (n.has(row.sf_account_id)) n.delete(row.sf_account_id);
+                  else n.add(row.sf_account_id);
+                  return n;
+                })
+              }
+              onSkipToggle={() => setSkipFor((v) => (v === row.sf_account_id ? null : row.sf_account_id))}
+              onPush={() => void act(row, "push")}
+              onSkip={(reason) => void act(row, "skip", reason)}
+              onReopen={() => void act(row, "reopen")}
+            />
+          ))}
+        </div>
+      )}
+
+      {view === "next" && next.length > shown ? (
+        <div className="mt-4 flex justify-center">
+          <Button variant="secondary" onClick={() => setShown((n) => n + batch)}>
+            Show {Math.min(batch, next.length - shown)} more
+          </Button>
+        </div>
+      ) : null}
+      {view === "next" && screen.running ? (
+        <p className="mt-4 text-xs text-ink-muted">Checking websites{screen.step ? `, ${screen.step.toLowerCase()}` : ""}…</p>
+      ) : null}
+    </PageContent>
   );
 }
 
-function Stat({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
-  return (
-    <div className="rounded-xl border border-line bg-white px-3 py-3 text-center sm:px-4">
-      <div className="text-[11px] leading-tight text-ink-muted sm:text-xs">{label}</div>
-      <div className="text-2xl font-semibold text-ink">{value}</div>
-      {hint ? <div className="text-[11px] text-ink-muted">{hint}</div> : null}
-    </div>
-  );
-}
-
-function CandidateCard({
+function CandidateRow({
   row,
+  view,
   busy,
   skipOpen,
+  expanded,
+  onToggle,
   onSkipToggle,
   onPush,
   onSkip,
   onReopen,
 }: {
   row: Row;
+  view: View;
   busy: boolean;
   skipOpen: boolean;
+  expanded: boolean;
+  onToggle: () => void;
   onSkipToggle: () => void;
   onPush: () => void;
   onSkip: (reason: string) => void;
   onReopen: () => void;
 }) {
-  const screen = SCREEN_LABEL[row.screen_status] ?? SCREEN_LABEL.pending;
-  const ruleVariant = row.rule_status === "eligible" ? "ok" : row.rule_status === "wait" ? "warn" : "danger";
   const isOpen = row.review_status === "open";
   const site = hrefOf(row.website);
-  return (
-    <div className="min-w-0 overflow-hidden rounded-xl border border-line bg-white p-3 shadow-sm sm:p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-0 break-words text-base font-semibold text-ink">{row.account_name}</span>
-        {row.employees !== null ? <Badge variant="neutral" size="sm">{row.employees} employees</Badge> : null}
-        {row.country ? <Badge variant="neutral" size="sm">{row.country}</Badge> : null}
-        <Badge variant={screen.variant} size="sm">{screen.label}</Badge>
-        {row.review_status === "pushed" ? <Badge variant="ok" size="sm">Pushed · week of {fmtDate(row.pushed_week_start)}</Badge> : null}
-        {row.review_status === "skipped" ? <Badge variant="neutral" size="sm">Skipped{row.skip_reason ? ` · ${row.skip_reason}` : ""}</Badge> : null}
-      </div>
-      {row.screen_facts?.summary ? (
-        <p className="mt-1 break-words text-sm text-ink">
-          {row.screen_facts.summary}
-          {row.country ? `, ${row.country}` : ""}
-          {row.last_e1_at ? `, last contacted ${fmtDate(row.last_e1_at)}${row.last_e1_by ? ` by ${row.last_e1_by.split(" ")[0]}` : ""}` : ""}.
-          {row.screen_facts.group?.group ? <span className="text-ink-muted"> Group: {row.screen_facts.group.mainGroup ? `${row.screen_facts.group.mainGroup} / ` : ""}{row.screen_facts.group.group}.</span> : null}
-        </p>
-      ) : null}
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
-        {site ? (
-          <a href={site} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand hover:underline">
-            {hostOf(row.website)} <ExternalLink size={11} />
-          </a>
-        ) : null}
-        {row.account_url ? (
-          <a href={row.account_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand hover:underline">
-            Salesforce <ExternalLink size={11} />
-          </a>
-        ) : null}
-        {row.industry ? <span>{row.industry}</span> : null}
-        {row.owner_name ? <span>Owner: {row.owner_name}</span> : null}
-      </div>
-      <div className="mt-2 flex flex-wrap items-start gap-2 text-sm">
-        <Badge variant={ruleVariant} size="sm" dot>
-          {row.rule_status === "eligible" ? "Eligible" : row.rule_status === "wait" ? `Wait until ${fmtDate(row.eligible_on)}` : "Blocked"}
-        </Badge>
-        <span className="min-w-0 break-words text-ink">{row.rule_reason}</span>
-      </div>
-      {row.sends.length > 0 ? (
-        <div className="mt-1.5 break-words text-xs text-ink-muted">
-          Sends: {row.sends.slice(0, 5).map((s) => `${s.type} ${fmtDate(s.date)}${s.by ? ` (${s.by.split(" ")[0]})` : ""}`).join(" · ")}
-          {row.sends.length > 5 ? ` · +${row.sends.length - 5} more` : ""}
-        </div>
-      ) : null}
-      {row.screen_reason ? <p className="mt-1.5 break-words text-xs text-ink-muted"><span className="font-medium text-ink">Check:</span> {row.screen_reason}</p> : null}
+  const lastContact = row.last_e1_at ? `Last contacted ${fmtDate(row.last_e1_at)}${row.last_e1_by ? ` by ${firstName(row.last_e1_by)}` : ""}` : "Never contacted";
+  const lineTwo = describe(row);
+  // Line three carries the state the row is in when it is not simply "next".
+  const lineThree =
+    view === "waiting"
+      ? row.rule_reason
+      : view === "filtered"
+        ? row.screen_reason ?? ""
+        : view === "done"
+          ? row.review_status === "pushed"
+            ? `Pushed to Weekly Outreach, week of ${fmtDate(row.pushed_week_start)}`
+            : `Skipped${row.skip_reason ? `, ${row.skip_reason.toLowerCase()}` : ""}`
+          : row.screen_status === "unclear"
+            ? `Check was unclear: ${row.screen_reason ?? ""}`
+            : null;
+  const pushLabel = view === "next" ? "Push" : "Push anyway";
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {isOpen ? (
-          <>
-            <Button size="sm" leftIcon={<Send size={14} />} loading={busy} onClick={onPush} className="flex-1 sm:flex-none">
-              {row.rule_status === "eligible" && row.screen_status !== "not_software" && row.screen_status !== "acquired" ? "Push to Weekly Outreach" : "Push anyway"}
+  return (
+    <div className="border-b border-line last:border-b-0">
+      <div className="flex items-start gap-3 px-4 py-3 hover:bg-surface-3 sm:items-center">
+        <button type="button" onClick={onToggle} aria-label={expanded ? "Hide details" : "Show details"} className="mt-1 shrink-0 text-ink-muted hover:text-ink sm:mt-0">
+          {expanded ? <ChevronDown size={16} strokeWidth={1.5} /> : <ChevronRight size={16} strokeWidth={1.5} />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            {row.account_url ? (
+              <a href={row.account_url} target="_blank" rel="noreferrer" className="text-[15px] font-medium text-ink no-underline hover:underline">
+                {row.account_name}
+              </a>
+            ) : (
+              <span className="text-[15px] font-medium text-ink">{row.account_name}</span>
+            )}
+            {site ? (
+              <a href={site} target="_blank" rel="noreferrer" className="text-[13px] text-ink-muted no-underline hover:underline">
+                {hostOf(row.website)}
+              </a>
+            ) : null}
+          </div>
+          {lineTwo ? <p className="truncate text-[13px] text-ink-secondary">{lineTwo}</p> : null}
+          <p className="truncate text-[13px] text-ink-secondary">{lastContact}</p>
+          {lineThree ? <p className="mt-0.5 text-[13px] text-ink-muted">{lineThree}</p> : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {isOpen ? (
+            <>
+              <Button size="sm" loading={busy} onClick={onPush}>
+                {pushLabel}
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={onSkipToggle}>
+                Skip
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="ghost" loading={busy} onClick={onReopen}>
+              Put back
             </Button>
-            <Button size="sm" variant="secondary" leftIcon={<SkipForward size={14} />} disabled={busy} onClick={onSkipToggle} className="flex-1 sm:flex-none">
-              Skip
-            </Button>
-          </>
-        ) : (
-          <Button size="sm" variant="ghost" leftIcon={<RotateCcw size={14} />} loading={busy} onClick={onReopen}>
-            Put back in review
-          </Button>
-        )}
+          )}
+        </div>
       </div>
       {skipOpen && isOpen ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1.5 border-t border-line bg-surface-3 px-4 py-2 pl-11">
           {SKIP_REASONS.map((reason) => (
-            <button
-              key={reason}
-              type="button"
-              disabled={busy}
-              onClick={() => onSkip(reason)}
-              className="rounded-full border border-line bg-surface-2 px-3 py-1 text-xs text-ink hover:bg-surface-3"
-            >
+            <button key={reason} type="button" disabled={busy} onClick={() => onSkip(reason)} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink hover:bg-surface-3">
               {reason}
             </button>
           ))}
+        </div>
+      ) : null}
+      {expanded ? (
+        <div className="border-t border-line bg-surface-3 px-4 py-3 pl-11 text-[13px] text-ink-secondary">
+          <p><span className="text-ink">Rule:</span> {row.rule_reason}</p>
+          {row.screen_reason ? <p className="mt-1"><span className="text-ink">Check:</span> {row.screen_reason}</p> : null}
+          {row.screen_facts?.investment ? <p className="mt-1"><span className="text-ink">Investment:</span> {row.screen_facts.investment}</p> : null}
+          {row.sends.length > 0 ? (
+            <p className="mt-1"><span className="text-ink">Sends:</span> {row.sends.map((s) => `${s.type} ${fmtDate(s.date)}${s.by ? ` (${firstName(s.by)})` : ""}`).join(" · ")}</p>
+          ) : null}
+          {row.owner_name ? <p className="mt-1"><span className="text-ink">Salesforce owner:</span> {row.owner_name}</p> : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-function SettingsPanel({ settings, onSaved }: { settings: Settings; onSaved: (s: Settings) => void }) {
-  const [form, setForm] = useState({
-    ...settings,
-    countriesText: settings.countries.join(", "),
-    excludedText: settings.excludedUsers.join(", "),
-  });
+function RulesPanel({ settings, onSaved }: { settings: Settings; onSaved: (s: Settings) => void }) {
+  const [form, setForm] = useState({ ...settings, countriesText: settings.countries.join(", "), excludedText: settings.excludedUsers.join(", ") });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const num = (key: keyof Settings) => (e: ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [key]: Number(e.target.value) }));
@@ -515,11 +538,7 @@ function SettingsPanel({ settings, onSaved }: { settings: Settings; onSaved: (s:
     setSaving(true);
     setErr(null);
     try {
-      const body = {
-        ...form,
-        countries: form.countriesText.split(",").map((s) => s.trim()).filter(Boolean),
-        excludedUsers: form.excludedText.split(",").map((s) => s.trim()).filter(Boolean),
-      };
+      const body = { ...form, countries: form.countriesText.split(",").map((s) => s.trim()).filter(Boolean), excludedUsers: form.excludedText.split(",").map((s) => s.trim()).filter(Boolean) };
       const res = await fetch("/api/outreach/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not save");
@@ -530,26 +549,26 @@ function SettingsPanel({ settings, onSaved }: { settings: Settings; onSaved: (s:
       setSaving(false);
     }
   }
-  const field = "w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm text-ink";
+  const field = "mt-1 h-10 w-full rounded-sm border border-line-strong bg-white px-3 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4";
+  const label = "block text-[13px] text-ink-secondary";
   return (
-    <div className="mb-4 rounded-xl border border-line bg-surface-2 p-4">
-      <div className="mb-3 text-sm font-semibold text-ink">Rules of engagement and pool filters</div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <label className="text-xs text-ink-muted">Window (days)<input type="number" className={field} value={form.windowDays} onChange={num("windowDays")} /></label>
-        <label className="text-xs text-ink-muted">Max sends in window<input type="number" className={field} value={form.maxSendsInWindow} onChange={num("maxSendsInWindow")} /></label>
-        <label className="text-xs text-ink-muted">Sequence in flight (days)<input type="number" className={field} value={form.inFlightDays} onChange={num("inFlightDays")} /></label>
-        <label className="text-xs text-ink-muted">Cards per batch<input type="number" className={field} value={form.batchSize} onChange={num("batchSize")} /></label>
-        <label className="text-xs text-ink-muted">E1 lookback (months)<input type="number" className={field} value={form.lookbackMonths} onChange={num("lookbackMonths")} /></label>
-        <label className="text-xs text-ink-muted">Min employees<input type="number" className={field} value={form.minEmployees} onChange={num("minEmployees")} /></label>
-        <label className="text-xs text-ink-muted">Max employees<input type="number" className={field} value={form.maxEmployees} onChange={num("maxEmployees")} /></label>
-        <label className="text-xs text-ink-muted">Account record type<input type="text" className={field} value={form.recordType} onChange={(e) => setForm((f) => ({ ...f, recordType: e.target.value }))} /></label>
-        <label className="col-span-2 text-xs text-ink-muted">Countries (comma separated)<input type="text" className={field} value={form.countriesText} onChange={(e) => setForm((f) => ({ ...f, countriesText: e.target.value }))} /></label>
-        <label className="col-span-2 text-xs text-ink-muted">Users whose E1s do not create candidates<input type="text" className={field} value={form.excludedText} onChange={(e) => setForm((f) => ({ ...f, excludedText: e.target.value }))} /></label>
+    <div className="max-w-2xl rounded-md border border-line bg-white p-5">
+      <p className="mb-4 text-sm text-ink-secondary">Sends from every user count against the window. Sequence starts counted: E1, RCE1, D-E1, D-RCE1, IB-E1, IB-RCE, Fund-E1, Fund-RCE1, LI.</p>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <label className={label}>Window (days)<input type="number" className={field} value={form.windowDays} onChange={num("windowDays")} /></label>
+        <label className={label}>Max sends in window<input type="number" className={field} value={form.maxSendsInWindow} onChange={num("maxSendsInWindow")} /></label>
+        <label className={label}>Sequence in flight (days)<input type="number" className={field} value={form.inFlightDays} onChange={num("inFlightDays")} /></label>
+        <label className={label}>Rows per batch<input type="number" className={field} value={form.batchSize} onChange={num("batchSize")} /></label>
+        <label className={label}>E1 lookback (months)<input type="number" className={field} value={form.lookbackMonths} onChange={num("lookbackMonths")} /></label>
+        <label className={label}>Account record type<input type="text" className={field} value={form.recordType} onChange={(e) => setForm((f) => ({ ...f, recordType: e.target.value }))} /></label>
+        <label className={label}>Min employees<input type="number" className={field} value={form.minEmployees} onChange={num("minEmployees")} /></label>
+        <label className={label}>Max employees<input type="number" className={field} value={form.maxEmployees} onChange={num("maxEmployees")} /></label>
+        <label className={`${label} col-span-2 sm:col-span-3`}>Countries<input type="text" className={field} value={form.countriesText} onChange={(e) => setForm((f) => ({ ...f, countriesText: e.target.value }))} /></label>
+        <label className={`${label} col-span-2 sm:col-span-3`}>Users whose E1s do not create candidates<input type="text" className={field} value={form.excludedText} onChange={(e) => setForm((f) => ({ ...f, excludedText: e.target.value }))} /></label>
       </div>
-      <p className="mt-2 text-xs text-ink-muted">Sends from every user still count against the window. Sequence starts counted: E1, RCE1, D-E1, D-RCE1, IB-E1, IB-RCE, Fund-E1, Fund-RCE1, LI.</p>
-      {err ? <Alert variant="danger" className="mt-3">{err}</Alert> : null}
-      <div className="mt-3 flex justify-end">
-        <Button size="sm" loading={saving} onClick={() => void save()}>Save rules</Button>
+      {err ? <p className="mt-3 text-sm text-danger">{err}</p> : null}
+      <div className="mt-5 flex justify-end">
+        <Button loading={saving} onClick={() => void save()}>Save</Button>
       </div>
     </div>
   );
@@ -561,6 +580,7 @@ function CheckList({ onPushed }: { onPushed: () => void }) {
   const [checking, setChecking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [pushed, setPushed] = useState<Set<string>>(new Set());
 
   async function check() {
     const names = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -572,6 +592,7 @@ function CheckList({ onPushed }: { onPushed: () => void }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Check failed");
       setRows(data.rows ?? []);
+      setPushed(new Set());
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Check failed");
     } finally {
@@ -581,73 +602,77 @@ function CheckList({ onPushed }: { onPushed: () => void }) {
 
   async function push(row: CheckRow) {
     if (!row.accountId) return;
-    setBusy((p) => new Set(p).add(row.accountId!));
+    const id = row.accountId;
+    setBusy((p) => new Set(p).add(id));
     try {
       const res = await fetch("/api/weekly-outreach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ outreachType: "E1", accountId: row.accountId, source: "outreach", sourceReference: `Check a list: ${row.input}` }),
+        body: JSON.stringify({ outreachType: "E1", accountId: id, source: "outreach", sourceReference: `Check a list: ${row.input}` }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not push");
-      setRows((prev) => prev.map((r) => (r.accountId === row.accountId ? { ...r, input: `${r.input} ✓` } : r)));
+      setPushed((p) => new Set(p).add(id));
       onPushed();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not push");
     } finally {
       setBusy((p) => {
         const n = new Set(p);
-        n.delete(row.accountId!);
+        n.delete(id);
         return n;
       });
     }
   }
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-xl border border-line bg-white p-3 sm:p-4">
-        <label className="text-sm font-medium text-ink" htmlFor="check-names">Company names, one per line</label>
-        <textarea
-          id="check-names"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={6}
-          placeholder={"Acme Software\nGlaass\nPestBoss"}
-          className="mt-2 w-full rounded-lg border border-line bg-white p-2 text-sm text-ink"
-        />
-        <div className="mt-2 flex justify-end">
-          <Button size="sm" leftIcon={<ClipboardList size={14} />} loading={checking} onClick={() => void check()}>Check against the rules</Button>
-        </div>
+    <div className="max-w-2xl">
+      <label className="block text-[13px] text-ink-secondary" htmlFor="check-names">Company names, one per line</label>
+      <textarea
+        id="check-names"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={6}
+        className="mt-1 w-full rounded-sm border border-line-strong bg-white p-3 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4"
+      />
+      <div className="mt-3 flex justify-end">
+        <Button loading={checking} onClick={() => void check()}>Check</Button>
       </div>
-      {err ? <Alert variant="danger">{err}</Alert> : null}
-      {rows.map((row) => {
-        const v = row.verdict;
-        const variant = !v ? "neutral" : v.status === "eligible" ? "ok" : v.status === "wait" ? "warn" : "danger";
-        return (
-          <div key={row.input} className="min-w-0 overflow-hidden rounded-xl border border-line bg-white p-3 shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold text-ink">{row.accountName ?? row.input}</span>
-              {row.status === "not_found" ? <Badge variant="danger" size="sm">No Salesforce match</Badge> : null}
-              {row.status === "multiple" ? <Badge variant="warn" size="sm">{row.matchCount} matches, verify</Badge> : null}
-              {v ? <Badge variant={variant} size="sm" dot>{v.status === "eligible" ? "Eligible" : v.status === "wait" ? `Wait until ${fmtDate(v.eligibleOn)}` : "Blocked"}</Badge> : null}
-              {row.accountUrl ? (
-                <a href={row.accountUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">
-                  Salesforce <ExternalLink size={11} />
-                </a>
-              ) : null}
-            </div>
-            {row.accountName && row.accountName !== row.input ? <div className="text-xs text-ink-muted">Pasted as “{row.input}”</div> : null}
-            {v ? <p className="mt-1 text-sm text-ink">{v.reason}</p> : null}
-            {row.accountId ? (
-              <div className="mt-2">
-                <Button size="sm" variant={v?.status === "eligible" ? "primary" : "secondary"} leftIcon={<Send size={14} />} loading={busy.has(row.accountId)} onClick={() => void push(row)}>
-                  {v?.status === "eligible" ? "Push to Weekly Outreach" : "Push anyway"}
-                </Button>
+      {err ? <p className="mt-3 text-sm text-danger">{err}</p> : null}
+      {rows.length > 0 ? (
+        <div className="mt-5 rounded-md border border-line bg-white">
+          {rows.map((row) => {
+            const v = row.verdict;
+            const state = row.status === "not_found" ? "No Salesforce match" : !v ? "" : v.status === "eligible" ? "Eligible" : v.status === "wait" ? `Wait until ${fmtDate(v.eligibleOn)}` : "Blocked";
+            const isPushed = !!row.accountId && pushed.has(row.accountId);
+            return (
+              <div key={row.input} className="flex items-start gap-3 border-b border-line px-4 py-3 last:border-b-0 sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    {row.accountUrl ? (
+                      <a href={row.accountUrl} target="_blank" rel="noreferrer" className="text-[15px] font-medium text-ink no-underline hover:underline">{row.accountName ?? row.input}</a>
+                    ) : (
+                      <span className="text-[15px] font-medium text-ink">{row.accountName ?? row.input}</span>
+                    )}
+                    {row.status === "multiple" ? <span className="text-[13px] text-warn">{row.matchCount} matches, verify</span> : null}
+                    {row.accountName && row.accountName !== row.input ? <span className="text-[13px] text-ink-muted">pasted as “{row.input}”</span> : null}
+                  </div>
+                  <p className="text-[13px] text-ink-secondary">{[state, v?.reason].filter(Boolean).join(" · ")}</p>
+                </div>
+                {row.accountId ? (
+                  isPushed ? (
+                    <span className="text-[13px] text-ok">Pushed</span>
+                  ) : (
+                    <Button size="sm" variant={v?.status === "eligible" ? "primary" : "secondary"} loading={busy.has(row.accountId)} onClick={() => void push(row)}>
+                      {v?.status === "eligible" ? "Push" : "Push anyway"}
+                    </Button>
+                  )
+                ) : null}
               </div>
-            ) : null}
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

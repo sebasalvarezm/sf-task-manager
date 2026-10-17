@@ -254,28 +254,28 @@ export default function TriagePage() {
           </div>
         )}
         {scanResult && !scanning && (
-          <div className="text-xs text-gray-600 bg-gray-100 rounded-full px-3 py-1 inline-block">
+          <div className="text-xs text-gray-600 bg-gray-100 rounded-sm px-3 py-1 inline-block">
             {scanResult}
           </div>
         )}
 
         {/* Stats bar */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center text-xs rounded-full px-3 py-1 ${priorityBadge.p1}`}>
+          <span className={`inline-flex items-center text-xs rounded-sm px-3 py-1 ${priorityBadge.p1}`}>
             P1: {counts.p1}
           </span>
-          <span className={`inline-flex items-center text-xs rounded-full px-3 py-1 ${priorityBadge.p2}`}>
+          <span className={`inline-flex items-center text-xs rounded-sm px-3 py-1 ${priorityBadge.p2}`}>
             P2: {counts.p2}
           </span>
-          <span className={`inline-flex items-center text-xs rounded-full px-3 py-1 ${priorityBadge.p3}`}>
+          <span className={`inline-flex items-center text-xs rounded-sm px-3 py-1 ${priorityBadge.p3}`}>
             P3: {counts.p3}
           </span>
           {counts.flagged > 0 && (
-            <span className="inline-flex items-center text-xs rounded-full px-3 py-1 bg-violet-50 text-violet-600 border border-violet-200">
+            <span className="inline-flex items-center text-xs rounded-sm px-3 py-1 bg-violet-50 text-violet-600 border border-violet-200">
               Flagged: {counts.flagged}
             </span>
           )}
-          <span className="inline-flex items-center text-xs rounded-full px-3 py-1 bg-gray-100 text-gray-600">
+          <span className="inline-flex items-center text-xs rounded-sm px-3 py-1 bg-gray-100 text-gray-600">
             Drafts: {counts.drafts}
           </span>
         </div>
@@ -353,18 +353,18 @@ export default function TriagePage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <span
-                        className={`text-xs font-medium rounded-full px-2 py-0.5 ${priorityBadge[email.priority]}`}
+                        className={`text-xs font-medium rounded-sm px-2 py-0.5 ${priorityBadge[email.priority]}`}
                       >
                         {email.priority.toUpperCase()}
                       </span>
                       {email.is_flagged && (
-                        <span className="text-xs font-medium rounded-full px-2 py-0.5 bg-violet-50 text-violet-600 border border-violet-200">
+                        <span className="text-xs font-medium rounded-sm px-2 py-0.5 bg-violet-50 text-violet-600 border border-violet-200">
                           Flagged
                         </span>
                       )}
                       {isReviewed && (
                         <span
-                          className={`text-xs font-medium rounded-full px-2 py-0.5 ${reviewBadge(email.review_status)}`}
+                          className={`text-xs font-medium rounded-sm px-2 py-0.5 ${reviewBadge(email.review_status)}`}
                         >
                           {email.review_status === "approved"
                             ? "Approved"
@@ -529,7 +529,7 @@ export default function TriagePage() {
                         ) : (
                           <div className="flex items-center gap-2 mt-3">
                             <span
-                              className={`text-xs font-medium rounded-full px-3 py-1 ${reviewBadge(email.review_status)}`}
+                              className={`text-xs font-medium rounded-sm px-3 py-1 ${reviewBadge(email.review_status)}`}
                             >
                               {email.review_status === "approved"
                                 ? "Approved"

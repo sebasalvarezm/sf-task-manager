@@ -372,18 +372,18 @@ export default function TripPage() {
 
   return (
     <>
-      <PageHeader title="Trip Planner" />
+      <PageHeader title="Trip planner" />
       <PageContent>
         <div>
           {/* Connection status */}
           <div className="flex flex-wrap gap-2 mb-6">
             {sfConnected === true ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
+              <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-sm px-3 py-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
                 Salesforce connected
               </span>
             ) : sfConnected === false ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
+              <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-sm px-3 py-1">
                 Salesforce not connected
               </span>
             ) : (
@@ -445,7 +445,7 @@ export default function TripPage() {
                 {searching && (
                   <button
                     onClick={handleCancelSearch}
-                    className="hover:text-danger underline underline-offset-2 transition-colors"
+                    className="hover:text-danger underline-offset-2 transition-colors"
                   >
                     Cancel search
                   </button>
@@ -453,7 +453,7 @@ export default function TripPage() {
                 {scanning && (
                   <button
                     onClick={handleCancelScan}
-                    className="hover:text-danger underline underline-offset-2 transition-colors"
+                    className="hover:text-danger underline-offset-2 transition-colors"
                   >
                     Cancel scan
                   </button>
@@ -528,7 +528,7 @@ export default function TripPage() {
               <div className="flex gap-2 mb-4">
                 <button
                   onClick={() => setActiveTab("existing")}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                  className={`px-4 py-2 rounded-sm text-sm font-medium transition-colors ${
                     activeTab === "existing"
                       ? "bg-navy text-white"
                       : "bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
@@ -538,7 +538,7 @@ export default function TripPage() {
                 </button>
                 <button
                   onClick={() => setActiveTab("discover")}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                  className={`px-4 py-2 rounded-sm text-sm font-medium transition-colors ${
                     activeTab === "discover"
                       ? "bg-navy text-white"
                       : "bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
@@ -590,7 +590,7 @@ export default function TripPage() {
                                 {r.accountName}
                               </a>
                               <span
-                                className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                                className={`text-[10px] px-2 py-0.5 rounded-sm border ${
                                   r.addressSource === "billing"
                                     ? "text-green-700 bg-green-50 border-green-200"
                                     : "text-blue-700 bg-blue-50 border-blue-200"
@@ -746,12 +746,12 @@ export default function TripPage() {
                                       {c.name}
                                     </span>
                                   )}
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full border bg-navy text-white border-navy">
+                                  <span className="text-[10px] px-2 py-0.5 rounded-sm border bg-navy text-white border-navy">
                                     {c.subVertical}
                                   </span>
                                   {c.employeesEstimate != null && (
                                     <span
-                                      className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                                      className={`text-[10px] px-2 py-0.5 rounded-sm border ${
                                         c.employeesEstimate >= 20 &&
                                         c.employeesEstimate <= 150
                                           ? "bg-emerald-50 text-emerald-700 border-emerald-200"
@@ -771,14 +771,14 @@ export default function TripPage() {
                                       "Location unknown"}
                                   </span>
                                   {c.distanceMiles != null && (
-                                    <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                                    <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-sm bg-blue-50 text-blue-700 border border-blue-200">
                                       {c.distanceMiles} mi
                                       {c.durationText ? ` · ${c.durationText}` : ""}
                                     </span>
                                   )}
                                   {c.distanceMiles == null &&
                                     c.straightLineMiles != null && (
-                                      <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+                                      <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-sm bg-gray-100 text-gray-600 border border-gray-200">
                                         ~{c.straightLineMiles} mi
                                       </span>
                                     )}
@@ -786,7 +786,7 @@ export default function TripPage() {
                               </div>
                               <div className="shrink-0">
                                 <span
-                                  className={`text-xs px-2 py-1 rounded-full border ${
+                                  className={`text-xs px-2 py-1 rounded-sm border ${
                                     c.ownership === "independent"
                                       ? "text-green-700 bg-green-50 border-green-200"
                                       : c.ownership === "pe_vc"

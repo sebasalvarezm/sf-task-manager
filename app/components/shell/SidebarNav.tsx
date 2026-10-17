@@ -26,16 +26,16 @@ const INTERN_NAV_HREFS: readonly string[] = ["/", "/sourcing"];
 const NAV = [
   { href: "/",         label: "Home",         icon: Home },
   { href: "/tasks",    label: "Tasks",        icon: ListChecks },
-  { href: "/prep",     label: "Call Prep",    icon: FileText },
-  { href: "/weekly-outreach", label: "Weekly Outreach", icon: CalendarRange },
+  { href: "/prep",     label: "Call prep",    icon: FileText },
+  { href: "/weekly-outreach", label: "Weekly outreach", icon: CalendarRange },
   { href: "/sourcing", label: "Sourcing",     icon: Search },
-  { href: "/calls",    label: "Call Logger",  icon: Phone },
+  { href: "/calls",    label: "Call logger",  icon: Phone },
   { href: "/outreach", label: "Outreach",     icon: Send },
-  { href: "/inmail",   label: "InMail Queue", icon: MessageSquare },
+  { href: "/inmail",   label: "InMail queue", icon: MessageSquare },
   { href: "/inbox",    label: "Inbox",        icon: Inbox },
   { href: "/accounts", label: "Accounts",     icon: Building2 },
   { href: "/stats",    label: "Stats",        icon: BarChart3 },
-  { href: "/trip",     label: "Trip Planner", icon: MapPin },
+  { href: "/trip",     label: "Trip planner", icon: MapPin },
 ] as const;
 
 const KIND_TO_ROUTE: Record<Job["kind"], string> = {

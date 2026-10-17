@@ -11,12 +11,12 @@ type Props = HTMLAttributes<HTMLSpanElement> & {
 };
 
 const VARIANT: Record<Variant, string> = {
-  neutral: "bg-surface-3 text-ink-secondary border-line",
-  brand: "bg-brand-soft text-brand border-brand/20",
-  ok: "bg-ok-soft text-ok border-ok/20",
-  warn: "bg-warn-soft text-warn border-warn/20",
-  danger: "bg-danger-soft text-danger border-danger/20",
-  info: "bg-info-soft text-info border-info/20",
+  neutral: "bg-white text-ink-secondary border-line",
+  brand: "bg-brand text-white border-brand",
+  ok: "bg-ok-soft text-ok border-transparent",
+  warn: "bg-warn-soft text-warn border-transparent",
+  danger: "bg-danger-soft text-danger border-transparent",
+  info: "bg-info-soft text-info border-transparent",
 };
 
 const DOT: Record<Variant, string> = {
@@ -29,8 +29,8 @@ const DOT: Record<Variant, string> = {
 };
 
 const SIZE: Record<Size, string> = {
-  sm: "h-5 px-2 text-[11px] gap-1",
-  md: "h-6 px-2.5 text-xs gap-1.5",
+  sm: "h-5 px-1.5 text-[11px] gap-1",
+  md: "h-6 px-2 text-xs gap-1.5",
 };
 
 export function Badge({
@@ -44,7 +44,7 @@ export function Badge({
 }: Props) {
   return (
     <span
-      className={`inline-flex items-center font-medium border rounded-full ${VARIANT[variant]} ${SIZE[size]} ${className}`}
+      className={`inline-flex items-center font-medium border rounded-sm ${VARIANT[variant]} ${SIZE[size]} ${className}`}
       {...rest}
     >
       {dot && <span className={`h-1.5 w-1.5 rounded-full ${DOT[variant]}`} />}

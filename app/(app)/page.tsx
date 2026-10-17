@@ -31,14 +31,14 @@ type Tool = {
 
 const TOOLS: Tool[] = [
   { href: "/tasks", title: "Tasks", description: "Manage open Salesforce tasks by week and send reconnects into Weekly Outreach.", icon: ListChecks, needs: ["sf"] },
-  { href: "/prep", title: "Call Prep", description: "Generate a 60-second briefing plus a complete business and relationship refresher.", icon: FileText, needs: ["sf", "ms"] },
-  { href: "/weekly-outreach", title: "Weekly Outreach", description: "Build this week's E1 and RCE list from Tasks, Re-Contact, or Salesforce names.", icon: CalendarRange, needs: ["sf", "ms"] },
+  { href: "/prep", title: "Call prep", description: "Generate a 60-second briefing plus a complete business and relationship refresher.", icon: FileText, needs: ["sf", "ms"] },
+  { href: "/weekly-outreach", title: "Weekly outreach", description: "Build this week's E1 and RCE list from Tasks, Re-Contact, or Salesforce names.", icon: CalendarRange, needs: ["sf", "ms"] },
   { href: "/sourcing", title: "Sourcing", description: "Research companies and produce personalized, ready-to-review E1 outreach.", icon: Search, needs: [] },
-  { href: "/calls", title: "Call Logger", description: "Review Outlook meetings and log calls and follow-ups to Salesforce.", icon: Phone, needs: ["sf", "ms"] },
-  { href: "/outreach", title: "Outreach Queue", description: "Surface accounts due for another contact and push the next step to Salesforce and Outreach.", icon: Send, needs: ["sf", "outreach"] },
-  { href: "/accounts", title: "Account Creator", description: "Create a Salesforce account from a company URL.", icon: Building2, needs: ["sf"] },
-  { href: "/stats", title: "Weekly Stats", description: "Review CDM outreach, calls, meetings, and pipeline.", icon: BarChart3, needs: ["sf"] },
-  { href: "/trip", title: "Trip Planner", description: "Find nearby accounts and discover targets around a trip.", icon: MapPin, needs: ["sf"] },
+  { href: "/calls", title: "Call logger", description: "Review Outlook meetings and log calls and follow-ups to Salesforce.", icon: Phone, needs: ["sf", "ms"] },
+  { href: "/outreach", title: "Outreach", description: "Surface accounts due for another contact and push the next step to Salesforce and Outreach.", icon: Send, needs: ["sf", "outreach"] },
+  { href: "/accounts", title: "Account creator", description: "Create a Salesforce account from a company URL.", icon: Building2, needs: ["sf"] },
+  { href: "/stats", title: "Weekly stats", description: "Review CDM outreach, calls, meetings, and pipeline.", icon: BarChart3, needs: ["sf"] },
+  { href: "/trip", title: "Trip planner", description: "Find nearby accounts and discover targets around a trip.", icon: MapPin, needs: ["sf"] },
 ];
 
 // Interns only get the Sourcing card. Enforcement is in middleware.ts.
@@ -120,21 +120,10 @@ export default function HomePage() {
 
   return (
     <>
-      {/* Hero */}
-      <section className="relative overflow-hidden rounded-xl bg-navy text-ink-inverse mb-6 md:mb-8 px-5 py-6 md:px-8 md:py-10">
-        <div className="absolute inset-0 bg-gradient-to-br from-navy via-navy to-navy-dark opacity-90 pointer-events-none" />
-        <div className="relative">
-          <p className="text-xs uppercase tracking-widest text-ink-inverse-muted mb-2">
-            Valstone &middot; Platform
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight">
-            {greeting()}.
-          </h1>
-          <p className="text-sm text-ink-inverse-muted mt-1.5">
-            {formatToday()}
-          </p>
-        </div>
-      </section>
+      <div className="mb-8 mt-2 md:mt-4">
+        <h1 className="text-[32px] leading-[38px] font-normal tracking-tight text-ink">{greeting()}{isIntern ? "" : ", Seb"}</h1>
+        <p className="mt-1 text-sm text-ink-secondary">{formatToday()}</p>
+      </div>
 
       {/* Status banner */}
       {dashSummary && (
@@ -157,7 +146,7 @@ export default function HomePage() {
           )}
           {dashSummary.overdueTasks === 0 && dashSummary.dueOutreach === 0 && (
             <Badge variant="ok" size="md" dot>
-              All clear — nothing overdue
+              All clear, nothing overdue
             </Badge>
           )}
         </div>

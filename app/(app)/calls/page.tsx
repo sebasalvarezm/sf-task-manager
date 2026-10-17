@@ -44,7 +44,7 @@ type SubmitResult = {
 
 export default function CallsPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-navy" />}>
+    <Suspense fallback={<div className="min-h-screen bg-surface" />}>
       <CallsPageContent />
     </Suspense>
   );
@@ -653,7 +653,7 @@ function CallsPageContent() {
   return (
     <>
       <PageHeader
-        title="Call Logger"
+        title="Call logger"
         actions={
           <>
             {msConnected === true ? (
@@ -947,7 +947,7 @@ function CallsPageContent() {
                   {submitting && (
                     <button
                       onClick={handleCancelSubmit}
-                      className="text-gray-300 hover:text-red-400 text-xs underline underline-offset-2 transition-colors"
+                      className="text-gray-300 hover:text-red-400 text-xs underline-offset-2 transition-colors"
                     >
                       Cancel
                     </button>

@@ -28,29 +28,28 @@ export default function LoginPage() {
       router.push("/");
       router.refresh();
     } else {
-      setError("Incorrect password. Please try again.");
+      setError("Incorrect password. Try again.");
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-navy px-4">
+    <div className="min-h-screen flex items-center justify-center bg-surface px-4">
       <div className="w-full max-w-sm">
-        {/* The logo image has the same navy background as this page. */}
         <div className="flex justify-center mb-6">
           <Image
-            src="/valstone-logo.png"
+            src="/valstone-logo-dark.png"
             alt="Valstone"
             width={216}
             height={60}
-            className="h-[60px] w-auto"
+            className="h-[40px] w-auto"
             priority
           />
         </div>
 
-        <div className="bg-surface-2 rounded-xl shadow-lg p-10 border border-line">
-          <h1 className="text-xl font-semibold text-ink text-center mb-1.5 tracking-tight">
-            Valstone Platform
+        <div className="bg-surface-2 rounded-md p-8 border border-line">
+          <h1 className="text-xl font-normal text-ink text-center mb-1.5 tracking-tight">
+            Valstone platform
           </h1>
           <p className="text-sm text-ink-muted text-center mb-8">
             Enter your access password to continue
@@ -76,7 +75,7 @@ export default function LoginPage() {
               disabled={!password}
               className="w-full"
             >
-              {loading ? "Signing in…" : "Sign In"}
+              Sign in
             </Button>
           </form>
         </div>

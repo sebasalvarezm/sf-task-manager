@@ -45,11 +45,11 @@ export function MobileShell({ children }: { children: ReactNode }) {
       )}
 
       <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="sticky top-0 z-20 flex items-center gap-2 bg-navy text-ink-inverse px-3 h-14 border-b border-navy-light md:hidden">
+        <div className="sticky top-0 z-20 flex items-center gap-2 bg-surface-sidebar text-ink px-3 h-14 border-b border-line md:hidden">
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="-ml-1 p-2 rounded-md hover:bg-navy-light/40 active:bg-navy-light/60 transition-colors"
+            className="-ml-1 p-2 rounded-sm hover:bg-surface-3 active:bg-surface-4 transition-colors"
             aria-label="Open navigation menu"
             aria-expanded={open}
           >
@@ -58,7 +58,7 @@ export function MobileShell({ children }: { children: ReactNode }) {
           <SidebarLogo />
         </div>
 
-        <div className="mx-auto max-w-[1280px] px-4 py-5 md:px-8 md:py-8">
+        <div className="mx-auto max-w-[1120px] px-4 py-6 md:px-8 md:py-10">
           {children}
         </div>
       </main>

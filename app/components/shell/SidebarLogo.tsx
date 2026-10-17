@@ -1,8 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
 
-// The image is the full "VALSTONE" wordmark (636 x 177, navy background that
-// matches the sidebar), so it is the only logo: no separate text next to it.
+// The full "VALSTONE" wordmark, dark lettering on a transparent background
+// (derived from the navy original), so it sits on the light sidebar.
 export function SidebarLogo() {
   return (
     <Link
@@ -11,11 +11,11 @@ export function SidebarLogo() {
       aria-label="Valstone home"
     >
       <Image
-        src="/valstone-logo.png"
+        src="/valstone-logo-dark.png"
         alt="Valstone"
         width={115}
         height={32}
-        className="h-8 w-auto shrink-0"
+        className="h-7 w-auto shrink-0"
         priority
       />
     </Link>

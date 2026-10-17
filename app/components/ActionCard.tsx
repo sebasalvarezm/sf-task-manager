@@ -35,7 +35,7 @@ export default function ActionCard({
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 flex flex-col">
       <div>
         <span
-          className={`inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${PILL_STYLES[tone]}`}
+          className={`inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-sm ${PILL_STYLES[tone]}`}
         >
           {pill}
         </span>

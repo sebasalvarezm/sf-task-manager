@@ -630,7 +630,7 @@ export default function StatsPage() {
   return (
     <>
       <PageHeader
-        title="Weekly Stats"
+        title="Weekly stats"
         subtitle={`${TEAM_CONFIG[team].label} Group`}
         actions={
           <>
@@ -1480,7 +1480,7 @@ function CdmTeamBadge({ team }: { team: StatsTeam }) {
   const cfg = TEAM_CONFIG[team];
   return (
     <div className="relative group inline-block">
-      <span className="inline-flex items-center gap-2 text-xs font-medium text-navy bg-white border border-gray-200 rounded-full px-3 py-1.5 cursor-help select-none">
+      <span className="inline-flex items-center gap-2 text-xs font-medium text-navy bg-white border border-gray-200 rounded-sm px-3 py-1.5 cursor-help select-none">
         <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
         {cfg.label} Team
         <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

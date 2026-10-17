@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Inbox as InboxIcon, ChevronDown, ChevronUp, MoreHorizontal, Send, Sparkles } from "lucide-react";
+import { RefreshCw, Inbox as InboxIcon, ChevronDown, ChevronUp, MoreHorizontal, Send, Asterisk } from "lucide-react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
@@ -386,7 +386,7 @@ export default function InboxPage() {
               ) : null}
             </div>
             <details className="mt-3">
-              <summary className="cursor-pointer text-xs font-medium text-brand">Or paste it as text</summary>
+              <summary className="cursor-pointer text-xs font-medium text-ink underline">Or paste it as text</summary>
               <textarea value={sigText} onChange={(e) => setSigText(e.target.value)} placeholder={"Sebastian Alvarez\nDirector, M&A | Valstone\n..."} className="mt-2 min-h-28 w-full rounded-lg border border-line p-3 text-base" />
               <Button size="sm" className="mt-2" disabled={sigBusy || !sigText.trim()} onClick={() => void signatureAction({ text: sigText })}>Save pasted signature</Button>
             </details>
@@ -405,7 +405,7 @@ export default function InboxPage() {
               key={key}
               type="button"
               onClick={() => setFilter(key)}
-              className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-sm ${
+              className={`whitespace-nowrap rounded-sm border px-3 py-1.5 text-sm ${
                 filter === key ? "border-navy bg-navy text-white" : "border-line bg-white text-ink"
               }`}
             >
@@ -493,7 +493,7 @@ export default function InboxPage() {
                 <div className="rounded-xl border border-line bg-surface-3 p-3">
                   <p className={`whitespace-pre-wrap text-sm text-ink ${threadOpen ? "" : "line-clamp-[12]"}`}>{open.thread[open.thread.length - 1]?.text || open.preview}</p>
                   {open.thread.length > 1 ? (
-                    <button type="button" onClick={() => setThreadOpen((v) => !v)} className="mt-2 flex items-center gap-1 text-xs font-medium text-brand">
+                    <button type="button" onClick={() => setThreadOpen((v) => !v)} className="mt-2 flex items-center gap-1 text-xs font-medium text-ink underline">
                       {threadOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       {threadOpen ? "Show less" : `Show full thread (${open.thread.length - 1} earlier)`}
                     </button>
@@ -519,7 +519,7 @@ export default function InboxPage() {
                         type="button"
                         disabled={busy}
                         onClick={() => void setSentiment(s)}
-                        className={`rounded-full border px-3 py-1.5 text-sm ${
+                        className={`rounded-sm border px-3 py-1.5 text-sm ${
                           open.sentiment === s ? "border-navy bg-navy text-white" : "border-line bg-white text-ink"
                         }`}
                       >
@@ -535,8 +535,8 @@ export default function InboxPage() {
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{isSent ? "Reply sent" : "Your reply"}</p>
                     {!isSent ? (
-                      <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-xs font-medium text-brand disabled:text-ink-muted">
-                        <Sparkles size={13} /> {drafting ? "Drafting…" : "Redraft"}
+                      <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-xs font-medium text-ink underline disabled:text-ink-muted">
+                        <Asterisk size={13} /> {drafting ? "Drafting…" : "Redraft"}
                       </button>
                     ) : null}
                   </div>

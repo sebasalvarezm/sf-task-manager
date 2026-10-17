@@ -496,7 +496,7 @@ export default function CallLoggerTable({
                       </p>
                       <div className="space-y-1.5">
                         <div className="flex gap-2">
-                          <span className="text-brand-orange font-mono font-bold w-10 shrink-0">
+                          <span className="text-ink underline font-mono font-bold w-10 shrink-0">
                             C1
                           </span>
                           <span className="text-gray-300">
@@ -504,7 +504,7 @@ export default function CallLoggerTable({
                           </span>
                         </div>
                         <div className="flex gap-2">
-                          <span className="text-brand-orange font-mono font-bold w-10 shrink-0">
+                          <span className="text-ink underline font-mono font-bold w-10 shrink-0">
                             RCC
                           </span>
                           <span className="text-gray-300">
@@ -599,7 +599,7 @@ export default function CallLoggerTable({
                           notesOpen.has(meeting.eventId)
                             ? "bg-brand-orange text-white"
                             : entry.notes
-                              ? "bg-orange-100 text-brand-orange border border-orange-300"
+                              ? "bg-orange-100 text-ink underline border border-orange-300"
                               : "bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
                         }`}
                         title={
@@ -729,7 +729,7 @@ export default function CallLoggerTable({
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 text-brand-orange hover:text-brand-orange-hover text-sm font-medium underline underline-offset-2"
+                      className="inline-flex items-center gap-1 text-ink underline hover:text-ink text-sm font-medium underline-offset-2"
                     >
                       Open ↗
                     </a>
@@ -914,7 +914,7 @@ export default function CallLoggerTable({
                                 href={granola.webUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-brand-orange underline underline-offset-2"
+                                className="text-ink underline underline-offset-2"
                               >
                                 Open in Granola ↗
                               </a>
@@ -922,7 +922,7 @@ export default function CallLoggerTable({
                             <button
                               type="button"
                               onClick={() => void toggleTranscript(meeting.eventId, granola.noteId)}
-                              className="font-medium text-navy underline underline-offset-2"
+                              className="font-medium text-navy underline-offset-2"
                               aria-expanded={Boolean(t?.open)}
                             >
                               {t?.open ? "Hide transcript" : "Show transcript"}

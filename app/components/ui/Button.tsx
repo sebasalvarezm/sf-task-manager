@@ -1,5 +1,4 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
@@ -14,20 +13,26 @@ type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const VARIANT: Record<Variant, string> = {
   primary:
-    "bg-brand text-white hover:bg-brand-hover disabled:bg-brand/60 shadow-xs",
+    "bg-brand text-white hover:bg-brand-hover disabled:bg-brand/60",
   secondary:
-    "bg-white text-ink border border-line hover:bg-surface-3 hover:border-line-strong disabled:bg-surface-3 disabled:text-ink-muted",
+    "bg-white text-ink border border-line-strong hover:bg-surface-3 disabled:bg-surface-3 disabled:text-ink-muted",
   ghost:
-    "bg-transparent text-ink hover:bg-surface-3 disabled:text-ink-muted",
+    "bg-transparent text-ink-secondary hover:bg-surface-3 hover:text-ink disabled:text-ink-muted",
   danger:
-    "bg-danger text-white hover:bg-danger/90 disabled:bg-danger/50 shadow-xs",
+    "bg-white text-danger border border-danger hover:bg-danger-soft disabled:opacity-60",
 };
 
 const SIZE: Record<Size, string> = {
-  sm: "h-8 px-3 text-xs gap-1.5 rounded-md",
-  md: "h-9 px-4 text-sm gap-2 rounded-md",
-  lg: "h-11 px-5 text-base gap-2 rounded-lg",
+  sm: "h-8 px-3 text-[13px] gap-1.5 rounded-sm",
+  md: "h-9 px-4 text-sm gap-2 rounded-sm",
+  lg: "h-10 px-5 text-sm gap-2 rounded-sm",
 };
+
+/** "Approve" becomes "Approving…" style: the label changes, nothing spins. */
+function busyLabel(children: ReactNode): ReactNode {
+  if (typeof children !== "string") return children;
+  return /…$|\.\.\.$/.test(children) ? children : `${children}…`;
+}
 
 export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
   {
@@ -49,15 +54,11 @@ export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
       ref={ref}
       type={type}
       disabled={disabled || loading}
-      className={`inline-flex items-center justify-center font-medium transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:ring-offset-2 ${VARIANT[variant]} ${SIZE[size]} ${className}`}
+      className={`inline-flex items-center justify-center font-medium transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-surface-4 focus-visible:border-ink ${VARIANT[variant]} ${SIZE[size]} ${className}`}
       {...rest}
     >
-      {loading ? (
-        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
-      ) : (
-        leftIcon
-      )}
-      {children}
+      {!loading && leftIcon}
+      {loading ? busyLabel(children) : children}
       {!loading && rightIcon}
     </button>
   );

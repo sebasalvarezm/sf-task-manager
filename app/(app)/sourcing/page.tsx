@@ -1197,7 +1197,7 @@ function SourcingResultDisplay({
                     href={hookAnchor.sourceUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-brand underline hover:no-underline"
+                    className="text-ink underline hover:no-underline"
                   >
                     {hookAnchor.sourceLabel || hookAnchor.sourceUrl}
                   </a>
@@ -1453,7 +1453,7 @@ function SourcingResultDisplay({
                   href={result.archiveUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 mt-2 text-xs text-brand hover:text-brand-hover font-medium"
+                  className="inline-flex items-center gap-1 mt-2 text-xs text-ink underline hover:text-ink-secondary font-medium"
                 >
                   View archived page
                   <ExternalLink className="h-3 w-3" strokeWidth={2} />
@@ -1550,7 +1550,7 @@ function SourcingResultDisplay({
                 href={result.addressSourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-brand hover:text-brand-hover underline underline-offset-2 inline-flex items-center gap-0.5"
+                className="text-ink underline hover:text-ink-secondary underline-offset-2 inline-flex items-center gap-0.5"
               >
                 {result.addressSource ?? "view location"}
                 <ExternalLink className="h-3 w-3" strokeWidth={2} />
@@ -1566,7 +1566,7 @@ function SourcingResultDisplay({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {result.restaurants.map((r, i) => (
                 <Card key={i} padded={false} className="p-5">
-                  <p className="text-xs font-semibold text-brand uppercase tracking-widest mb-2">
+                  <p className="text-xs font-semibold text-ink underline uppercase tracking-widest mb-2">
                     Business Dinner
                   </p>
                   <p className="font-semibold text-ink mb-1">{r.name}</p>
@@ -1608,7 +1608,7 @@ function SourcingResultDisplay({
                   key={i}
                   className="flex items-start gap-2 mb-1.5 last:mb-0"
                 >
-                  <span className="text-brand text-xs mt-0.5 shrink-0 font-mono">
+                  <span className="text-ink underline text-xs mt-0.5 shrink-0 font-mono">
                     {">"}
                   </span>
                   <span className="text-ink-inverse-muted text-xs font-mono leading-relaxed">

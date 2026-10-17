@@ -13,11 +13,11 @@ export function PageHeader({ title, subtitle, actions, className = "" }: Props) 
       className={`flex flex-col gap-3 md:flex-row md:items-start md:justify-between md:gap-6 pb-6 mb-6 border-b border-line ${className}`}
     >
       <div className="min-w-0 md:min-w-[12rem] md:flex-1">
-        <h1 className="text-2xl font-semibold text-ink leading-tight tracking-tight">
+        <h1 className="text-2xl font-normal text-ink leading-tight tracking-tight">
           {title}
         </h1>
         {subtitle && (
-          <p className="text-sm text-ink-muted mt-1.5">{subtitle}</p>
+          <p className="text-sm text-ink-secondary mt-1.5 max-w-[65ch]">{subtitle}</p>
         )}
       </div>
       {actions && (

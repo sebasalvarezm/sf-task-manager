@@ -14,24 +14,18 @@ export function SidebarNavItem({ href, label, Icon, active, unread }: Props) {
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
-      className={`relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 ${
+      className={`relative flex h-9 items-center gap-3 rounded-sm px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-surface-4 ${
         active
-          ? "bg-navy-dark text-white font-medium"
-          : "text-ink-inverse-muted hover:bg-navy-dark/60 hover:text-white"
+          ? "bg-surface-4 text-ink"
+          : "text-ink-secondary hover:bg-surface-3 hover:text-ink"
       }`}
     >
-      {active && (
-        <span
-          aria-hidden
-          className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-r-full bg-brand"
-        />
-      )}
-      <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+      <Icon className="h-5 w-5 shrink-0" strokeWidth={1.5} />
       <span className="truncate">{label}</span>
       {unread && (
         <span
           aria-label="New activity"
-          className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand animate-pulse"
+          className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand"
         />
       )}
     </Link>

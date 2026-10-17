@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, RefreshCw, Sparkles, Copy, Check, MessageSquare } from "lucide-react";
+import { ExternalLink, RefreshCw, Asterisk, Copy, Check, MessageSquare } from "lucide-react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
@@ -262,7 +262,7 @@ export default function InMailQueuePage() {
   return (
     <>
       <PageHeader
-        title="InMail Queue"
+        title="InMail queue"
         subtitle="Contacts who finished the email sequence without replying. InMails are built from the E1 that was actually sent."
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -288,7 +288,7 @@ export default function InMailQueuePage() {
               disabled={!items.some((r) => r.status === "pending" && r.e1_body && r.first_name)}
               onClick={() => void generateAll()}
             >
-              <Sparkles className="mr-1.5 h-4 w-4" /> Generate all pending
+              <Asterisk className="mr-1.5 h-4 w-4" /> Generate all pending
             </Button>
           </div>
         }
@@ -318,7 +318,7 @@ export default function InMailQueuePage() {
               key={key}
               type="button"
               onClick={() => setFilter(key)}
-              className={`rounded-full border px-3 py-1.5 text-sm font-medium ${
+              className={`rounded-sm border px-3 py-1.5 text-sm font-medium ${
                 filter === key ? "border-brand bg-brand text-white" : "border-line bg-white text-ink hover:bg-surface-2"
               }`}
             >
@@ -358,7 +358,7 @@ export default function InMailQueuePage() {
                   <div className="mt-1 text-xs text-ink-muted">
                     E5 sent {row.e5_sent_at ?? "—"}{since !== null ? ` (${since}d ago)` : ""}
                     {row.status === "sent" && sentDays !== null ? (
-                      <span className={sentDays >= 7 ? " font-semibold text-brand" : ""}>
+                      <span className={sentDays >= 7 ? " font-semibold text-ink underline" : ""}>
                         {" · "}{sentDays >= 7 ? "Follow-up due" : `Follow-up in ${7 - sentDays}d`}
                       </span>
                     ) : null}
@@ -378,7 +378,7 @@ export default function InMailQueuePage() {
                       </Button>
                     ) : (
                       <Button size="sm" loading={isBusy} disabled={!canGenerate || !row.e1_body || !row.first_name} onClick={() => void generate(row.who_id)}>
-                        <Sparkles className="mr-1 h-4 w-4" /> Generate
+                        <Asterisk className="mr-1 h-4 w-4" /> Generate
                       </Button>
                     )}
                     {href ? (
@@ -466,7 +466,7 @@ export default function InMailQueuePage() {
                           {STATUS_LABEL[row.status].label}
                         </Badge>
                         {row.status === "sent" && sentDays !== null ? (
-                          <div className={`mt-1 text-xs ${sentDays >= 7 ? "font-semibold text-brand" : "text-ink-muted"}`}>
+                          <div className={`mt-1 text-xs ${sentDays >= 7 ? "font-semibold text-ink underline" : "text-ink-muted"}`}>
                             {sentDays >= 7 ? "Follow-up due" : `Follow-up in ${7 - sentDays}d`}
                           </div>
                         ) : null}
@@ -477,7 +477,7 @@ export default function InMailQueuePage() {
                             href={href}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-brand hover:underline"
+                            className="inline-flex items-center gap-1 text-ink underline hover:text-ink-secondary"
                           >
                             <MessageSquare className="h-4 w-4" />
                             {row.linkedin_url ? "Profile" : "Find in Recruiter"}
