@@ -35,3 +35,6 @@ next-env.d.ts
 .env*
 .nda_review/
 Claude outputs/
+
+# scratch
+_src_snapshot.tgz

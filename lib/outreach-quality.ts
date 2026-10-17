@@ -122,6 +122,7 @@ registerCountry("Netherlands", [
   "the netherlands",
   "nederland",
 ]);
+registerCountry("Belgium", ["be", "bel", "belgique", "belgie", "belgië"]);
 registerCountry("Australia", ["au", "aus"]);
 registerCountry("New Zealand", ["nz", "nzl"]);
 

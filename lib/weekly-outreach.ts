@@ -12,7 +12,7 @@ import {
 import type { RceThreadConfidence } from "./rce-thread-match";
 
 export type WeeklyOutreachType = "E1" | "RCE";
-export type WeeklyOutreachSource = "tasks" | "recheck" | "manual" | "sourcing";
+export type WeeklyOutreachSource = "tasks" | "recheck" | "manual" | "sourcing" | "outreach";
 export type WeeklyOutreachStatus =
   | "queued"
   | "needs_context"

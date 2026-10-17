@@ -1,889 +1,570 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { ExternalLink, RefreshCw, Settings2, Send, SkipForward, RotateCcw, ClipboardList } from "lucide-react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
+import { Button } from "@/app/components/ui/Button";
+import { Alert } from "@/app/components/ui/Alert";
+import { Badge } from "@/app/components/ui/Badge";
 
-// ── Types ────────────────────────────────────────────────────────────────────
+/**
+ * Outreach: the review screen for the next accounts to email.
+ *
+ * The pool is the "GOGOGO" report (E1s in the last year, Valstone record
+ * type, headcount band, core countries). Every account carries the
+ * rules-of-engagement verdict (lib/outreach-rules.ts). Seb reviews the
+ * eligible ones in batches, pushes to Weekly Outreach with one tap or skips
+ * with a reason, and the pool refills from the top. "Check a list" is the old
+ * Re-Contact paste box, now on the same rule.
+ */
 
-type SequenceHistory = {
-  contactId: string | null;
-  contactName: string | null;
-  contactEmail: string | null;
-  startedAt: string | null;
-  endedAt: string | null;
-  status: "complete" | "partial";
-  stepsCompleted: number;
-  firstE1: {
-    taskId: string;
-    subject: string;
-    description: string | null;
-  } | null;
-};
+type RuleStatus = "eligible" | "wait" | "blocked";
+type ReviewStatus = "open" | "pushed" | "skipped";
+type ScreenStatus = "pending" | "software" | "not_software" | "acquired" | "unclear" | "error";
+type Send = { date: string; type: string; by: string | null };
 
-type RecommendedContact = {
-  firstName: string;
-  lastName: string;
-  email: string;
-  title: string;
-  source: "salesforce" | "web_research";
-  sfContactId?: string;
-  unverified?: boolean;
-  previouslyContacted?: boolean;
-};
-
-type QueueItem = {
-  accountId: string;
-  accountName: string;
+type Row = {
+  sf_account_id: string;
+  account_name: string;
   website: string | null;
+  account_url: string | null;
   employees: number | null;
-  bucket: "DUE_2ND_HIT" | "DUE_RESTART";
-  lastSequenceEndDate: string | null;
-  lastContactHit: { name: string | null; email: string | null } | null;
-  sequenceHistory: SequenceHistory[];
-  recommendedContacts: RecommendedContact[];
-  lastSequenceUsed: {
-    sequenceId: string;
-    sequenceName: string;
-    enrolledAt: string | null;
-  } | null;
+  country: string | null;
+  industry: string | null;
+  owner_name: string | null;
+  last_e1_at: string | null;
+  last_e1_by: string | null;
+  sends: Send[];
+  rule_status: RuleStatus;
+  rule_reason: string;
+  eligible_on: string | null;
+  sends_in_window: number;
+  screen_status: ScreenStatus;
+  screen_reason: string | null;
+  review_status: ReviewStatus;
+  skip_reason: string | null;
+  reviewed_at: string | null;
+  pushed_week_start: string | null;
+  refreshed_at: string;
 };
 
-type Sequence = { id: string; name: string; tags: string[] };
-type Mailbox = { id: string; email: string };
-
-type PushResult = {
-  outreach_prospect: {
-    ok: boolean;
-    prospectId?: string;
-    created?: boolean;
-    error?: string;
-  };
-  sequence_state: { ok: boolean; id?: string; error?: string };
-  mailing_patch: { ok: boolean; patched?: boolean; error?: string };
+type Settings = {
+  windowDays: number;
+  maxSendsInWindow: number;
+  inFlightDays: number;
+  lookbackMonths: number;
+  minEmployees: number;
+  maxEmployees: number;
+  countries: string[];
+  excludedUsers: string[];
+  recordType: string;
+  batchSize: number;
 };
 
-const CDM_SEQUENCES = [
-  "[E] - Contractor",
-  "[E] - Structure Design/Analysis",
-  "[E] - Safety & Compliance",
-  "[E] - Bulk Materials",
-  "[E] - Mining",
-  "[E] - Waste",
-  "[E] - Equipment",
-  "[E] - Bulk Liquids",
-  "[D-E] - Carveout - Construction & Materials",
-  "[E] - Forest & Lumber",
-];
+type CheckRow = {
+  input: string;
+  status: "matched" | "multiple" | "not_found";
+  accountId: string | null;
+  accountName: string | null;
+  accountUrl: string | null;
+  owner: string | null;
+  matchCount: number;
+  verdict: { status: RuleStatus; reason: string; eligibleOn: string | null; sendsInWindow: number } | null;
+  lastSend: Send | null;
+};
 
-type GroupName = "CDM" | "Manufacturing" | "Ag" | "Logistics";
-const GROUPS: GroupName[] = ["CDM", "Manufacturing", "Ag", "Logistics"];
+type Tab = "review" | "waiting" | "done" | "check";
 
-// ── Component ────────────────────────────────────────────────────────────────
+const SKIP_REASONS = ["Not software", "Services-heavy", "Acquired", "Too small or too big", "Wrong geography", "Rule exception", "Other"];
+
+const SCREEN_LABEL: Record<ScreenStatus, { label: string; variant: "neutral" | "ok" | "warn" | "danger" | "info" }> = {
+  pending: { label: "Not checked yet", variant: "neutral" },
+  software: { label: "Software", variant: "ok" },
+  not_software: { label: "Not software", variant: "danger" },
+  acquired: { label: "Acquired", variant: "danger" },
+  unclear: { label: "Unclear", variant: "warn" },
+  error: { label: "Check failed", variant: "warn" },
+};
+
+function fmtDate(d: string | null | undefined): string {
+  if (!d) return "—";
+  return new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function hostOf(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function hrefOf(url: string | null): string | null {
+  if (!url) return null;
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
 
 export default function OutreachPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen flex items-center justify-center">
-          <p className="text-gray-400 text-sm">Loading…</p>
-        </div>
-      }
-    >
-      <OutreachPageContent />
+    <Suspense fallback={<div className="min-h-screen bg-navy" />}>
+      <OutreachInner />
     </Suspense>
   );
 }
 
-function OutreachPageContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const [sfConnected, setSfConnected] = useState<boolean | null>(null);
-  const [outreachConnected, setOutreachConnected] = useState<boolean | null>(
-    null
-  );
+function OutreachInner() {
+  const params = useSearchParams();
+  const [tab, setTab] = useState<Tab>(params.get("tab") === "check" ? "check" : "review");
+  const [items, setItems] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"DUE_2ND_HIT" | "DUE_RESTART">(
-    "DUE_2ND_HIT"
-  );
-  const [queue, setQueue] = useState<{
-    due_2nd_hit: QueueItem[];
-    due_restart: QueueItem[];
-  }>({ due_2nd_hit: [], due_restart: [] });
-  const [sfInstanceUrl, setSfInstanceUrl] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [skipFor, setSkipFor] = useState<string | null>(null);
+  const [weekCount, setWeekCount] = useState<number | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shown, setShown] = useState(50);
 
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [sequences, setSequences] = useState<Sequence[]>([]);
-  const [mailboxes, setMailboxes] = useState<Mailbox[]>([]);
-  const [selectedGroup, setSelectedGroup] = useState<GroupName>("CDM");
-
-  // Per-account local UI state
-  const [selectedContact, setSelectedContact] = useState<
-    Record<string, number>
-  >({});
-  const [selectedSequence, setSelectedSequence] = useState<
-    Record<string, string>
-  >({});
-  const [selectedMailbox, setSelectedMailbox] = useState<
-    Record<string, string>
-  >({});
-  const [pushingId, setPushingId] = useState<string | null>(null);
-  const [pushResult, setPushResult] = useState<
-    Record<string, PushResult | null>
-  >({});
-  const [contactsOpen, setContactsOpen] = useState<Record<string, boolean>>(
-    {}
-  );
-
-  // ── Clean redirect params ──────────────────────────────────────────────
-
-  useEffect(() => {
-    if (searchParams.get("outreach_connected") === "true") {
-      router.replace("/outreach");
-    }
-  }, [searchParams, router]);
-
-  // ── Check connections ──────────────────────────────────────────────────
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const [sfRes, orRes] = await Promise.all([
-          fetch("/api/salesforce/status"),
-          fetch("/api/outreach/status"),
-        ]);
-        if (sfRes.ok) {
-          const d = await sfRes.json();
-          setSfConnected(d.connected);
-        } else {
-          // A failed status check means "can't tell": show the connect
-          // prompt rather than "Checking connection…" forever.
-          setSfConnected(false);
-        }
-        if (orRes.ok) {
-          const d = await orRes.json();
-          setOutreachConnected(d.connected);
-        } else {
-          // A failed status check means "can't tell": show the connect
-          // prompt rather than "Checking connection…" forever.
-          setOutreachConnected(false);
-        }
-      } catch {
-        setSfConnected(false);
-        setOutreachConnected(false);
-      }
-    })();
-  }, []);
-
-  // ── Load queue ─────────────────────────────────────────────────────────
-
-  const loadQueue = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
+    try {
+      const [res, weekRes, setRes] = await Promise.all([fetch("/api/outreach/candidates"), fetch("/api/weekly-outreach"), fetch("/api/outreach/settings")]);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not load");
+      setItems(data.items ?? []);
+      const week = await weekRes.json().catch(() => null);
+      setWeekCount(Array.isArray(week?.items) ? week.items.length : null);
+      const set = await setRes.json().catch(() => null);
+      if (set?.settings) {
+        setSettings(set.settings);
+        setShown(set.settings.batchSize ?? 50);
+      }
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function refresh() {
+    setRefreshing(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/outreach/candidates", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Refresh failed");
+      setItems(data.items ?? []);
+      const s = data.summary;
+      setMessage(`Refreshed: ${s.inPool} accounts in the pool, ${s.eligible} eligible now, ${s.waiting} waiting, ${s.blocked} blocked${s.droppedFromPool ? `, ${s.droppedFromPool} left the pool` : ""}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refresh failed");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  function replaceRow(row: Row) {
+    setItems((prev) => prev.map((r) => (r.sf_account_id === row.sf_account_id ? row : r)));
+  }
+
+  async function act(row: Row, action: "push" | "skip" | "reopen", reason?: string) {
+    setBusy((prev) => new Set(prev).add(row.sf_account_id));
     setError(null);
     try {
-      const res = await fetch("/api/outreach/queue");
-      const text = await res.text();
-      let data: {
-        error?: string;
-        due_2nd_hit?: QueueItem[];
-        due_restart?: QueueItem[];
-        sfInstanceUrl?: string | null;
-      } = {};
-      try {
-        data = JSON.parse(text);
-      } catch {
-        // Non-JSON response (likely a 500 HTML error page from Vercel)
-        setError(
-          res.status === 504
-            ? "Loading the queue took too long (the server timed out). Try again in a minute."
-            : `The server had a problem loading the queue (HTTP ${res.status}). Try again in a minute.`,
-        );
-        setLoading(false);
-        return;
-      }
-      if (!res.ok) {
-        setError(data.error || `Failed to load queue (status ${res.status})`);
-        setLoading(false);
-        return;
-      }
-      setQueue({
-        due_2nd_hit: data.due_2nd_hit ?? [],
-        due_restart: data.due_restart ?? [],
-      });
-      setSfInstanceUrl(data.sfInstanceUrl ?? null);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to load queue");
-    }
-    setLoading(false);
-  }, []);
-
-  // ── Load sequences + mailboxes (only if connected) ──────────────────────
-
-  const loadSequencesAndMailboxes = useCallback(async () => {
-    try {
-      const res = await fetch("/api/outreach/sequences");
-      if (res.ok) {
-        const d = await res.json();
-        setSequences(d.sequences ?? []);
-        setMailboxes(d.mailboxes ?? []);
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }, []);
-
-  useEffect(() => {
-    if (sfConnected && outreachConnected) {
-      loadQueue();
-      loadSequencesAndMailboxes();
-    }
-  }, [sfConnected, outreachConnected, loadQueue, loadSequencesAndMailboxes]);
-
-  // ── Push action ────────────────────────────────────────────────────────
-
-  async function handlePush(item: QueueItem) {
-    const contactIdx = selectedContact[item.accountId] ?? 0;
-    const contact = item.recommendedContacts[contactIdx];
-    const sequenceId = selectedSequence[item.accountId];
-    const sebMailbox = mailboxes.find(
-      (m) => m.email === "sebastian@valstonecorp.com"
-    );
-    const mailboxId = sebMailbox?.id ?? mailboxes[0]?.id ?? "";
-
-    if (!contact || !sequenceId || !mailboxId) {
-      alert("Pick a contact and sequence first.");
-      return;
-    }
-
-    // Find the first complete sequence's E1 content for auto-fill
-    const firstCompleteSeq = item.sequenceHistory.find(
-      (h) => h.status === "complete"
-    );
-    const firstE1Subject = firstCompleteSeq?.firstE1?.subject ?? null;
-    const firstE1Description = firstCompleteSeq?.firstE1?.description ?? null;
-
-    setPushingId(item.accountId);
-    setPushResult({ ...pushResult, [item.accountId]: null });
-
-    try {
-      const res = await fetch("/api/outreach/push", {
-        method: "POST",
+      const res = await fetch("/api/outreach/candidates", {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accountName: item.accountName,
-          contact: {
-            firstName: contact.firstName,
-            lastName: contact.lastName,
-            email: contact.email,
-            title: contact.title,
-          },
-          sequenceId,
-          mailboxId,
-          firstE1Subject,
-          firstE1Description,
-        }),
+        body: JSON.stringify({ accountId: row.sf_account_id, action, reason }),
       });
-      const raw = (await res.json().catch(() => null)) as
-        | (PushResult & { error?: string })
-        | null;
-      // An error answer ({ error }) has no step results; turn it into the
-      // same shape so the result pill shows the message instead of crashing.
-      if (!res.ok || !raw || !raw.outreach_prospect) {
-        throw new Error(raw?.error ?? `Outreach push failed (HTTP ${res.status})`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not save");
+      replaceRow(data.item);
+      if (action === "push") {
+        setWeekCount((n) => (n === null ? null : n + 1));
+        setMessage(`${row.account_name} added to Weekly Outreach (week of ${fmtDate(data.weekly?.week_start)}).`);
       }
-      setPushResult({ ...pushResult, [item.accountId]: raw });
-    } catch (e: unknown) {
-      setPushResult({
-        ...pushResult,
-        [item.accountId]: {
-          outreach_prospect: {
-            ok: false,
-            error: e instanceof Error ? e.message : "Network error",
-          },
-          sequence_state: { ok: false, error: "Not attempted" },
-          mailing_patch: { ok: false, error: "Not attempted" },
-        },
+      if (action === "reopen") setWeekCount(null);
+      setSkipFor(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save");
+    } finally {
+      setBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(row.sf_account_id);
+        return next;
       });
     }
-    setPushingId(null);
   }
 
-  // ── Render helpers ─────────────────────────────────────────────────────
-
-  function fmtDate(iso: string | null): string {
-    if (!iso) return "—";
-    try {
-      return new Date(iso).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
-    } catch {
-      return iso;
-    }
-  }
-
-  const activeItems =
-    activeTab === "DUE_2ND_HIT" ? queue.due_2nd_hit : queue.due_restart;
-
-  // ── Connection gate ────────────────────────────────────────────────────
-
-  if (sfConnected === null || outreachConnected === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-400 text-sm">Checking connections…</p>
-      </div>
-    );
-  }
-
-  // ── Main render ────────────────────────────────────────────────────────
+  const eligible = useMemo(() => items.filter((r) => r.review_status === "open" && r.rule_status === "eligible"), [items]);
+  const waiting = useMemo(
+    () => items.filter((r) => r.review_status === "open" && r.rule_status !== "eligible").sort((a, b) => (a.eligible_on ?? "9999") < (b.eligible_on ?? "9999") ? -1 : 1),
+    [items],
+  );
+  const done = useMemo(() => items.filter((r) => r.review_status !== "open").sort((a, b) => ((a.reviewed_at ?? "") < (b.reviewed_at ?? "") ? 1 : -1)), [items]);
+  const pushedThisWeek = useMemo(() => {
+    const now = new Date();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+    const key = monday.toISOString().slice(0, 10);
+    return items.filter((r) => r.review_status === "pushed" && (r.pushed_week_start ?? "") >= key).length;
+  }, [items]);
+  const lastRefresh = items[0]?.refreshed_at ?? null;
 
   return (
     <>
-      <PageHeader title="Outreach Queue" />
-      <PageContent>
-        <div>
-          {/* Connection pills */}
-          <div className="flex flex-wrap gap-2 mb-6">
-            {sfConnected ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                Salesforce connected
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-3 py-1">
-                Salesforce not connected
-              </span>
-            )}
-            {outreachConnected ? (
-              <span className="inline-flex items-center gap-1.5 text-xs">
-                <span className="inline-flex items-center gap-1.5 text-green-600 bg-green-50 border border-green-200 rounded-full px-3 py-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                  Outreach connected
-                </span>
-                <button
-                  onClick={async () => {
-                    if (!window.confirm("Disconnect Outreach? This signs the whole app out of Outreach until you reconnect.")) return;
-                    await fetch("/api/outreach/status", { method: "DELETE" });
-                    setOutreachConnected(false);
-                  }}
-                  className="text-gray-400 hover:text-red-500 underline text-[10px]"
-                >
-                  Disconnect
-                </button>
-              </span>
-            ) : (
-              <a
-                href="/api/outreach/connect"
-                className="inline-flex items-center gap-1.5 text-xs text-brand-orange bg-orange-50 border border-orange-200 rounded-full px-3 py-1 hover:bg-orange-100"
-              >
-                Connect Outreach →
-              </a>
-            )}
+      <PageHeader
+        title="Outreach"
+        subtitle="Accounts from the E1 report that pass the rules of engagement. Push the good ones to Weekly Outreach, skip the rest."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" leftIcon={<Settings2 size={14} />} onClick={() => setSettingsOpen((v) => !v)}>
+              Rules
+            </Button>
+            <Button size="sm" leftIcon={<RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />} loading={refreshing} onClick={() => void refresh()}>
+              Refresh from Salesforce
+            </Button>
           </div>
+        }
+      />
+      <PageContent>
+        {error ? <Alert variant="danger" className="mb-4">{error}</Alert> : null}
+        {message ? <Alert variant="info" className="mb-4">{message}</Alert> : null}
 
-          {!sfConnected || !outreachConnected ? (
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-              <h2 className="text-lg font-semibold text-navy mb-2">
-                Connect both Salesforce and Outreach to get started
-              </h2>
-              <p className="text-sm text-gray-500">
-                The queue pulls sequence history from Salesforce and pushes
-                prospects into Outreach. Both connections are required.
-              </p>
-            </div>
-          ) : (
-            <>
-              {/* Stat strip */}
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 text-center">
-                  <p className="text-xs text-gray-500">Due for 2nd Hit</p>
-                  <p className="text-2xl font-semibold text-navy">
-                    {queue.due_2nd_hit.length}
-                  </p>
-                </div>
-                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 text-center">
-                  <p className="text-xs text-gray-500">Due for Restart (2mo+)</p>
-                  <p className="text-2xl font-semibold text-navy">
-                    {queue.due_restart.length}
-                  </p>
-                </div>
-                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 text-center">
-                  <p className="text-xs text-gray-500">Total</p>
-                  <p className="text-2xl font-semibold text-navy">
-                    {queue.due_2nd_hit.length + queue.due_restart.length}
-                  </p>
-                </div>
-              </div>
+        {settingsOpen && settings ? <SettingsPanel settings={settings} onSaved={(s) => { setSettings(s); setShown(s.batchSize); setSettingsOpen(false); setMessage("Rules saved. Refresh from Salesforce to apply them."); }} /> : null}
 
-              {/* Tabs */}
-              <div className="flex gap-2 mb-4">
-                <button
-                  onClick={() => setActiveTab("DUE_2ND_HIT")}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                    activeTab === "DUE_2ND_HIT"
-                      ? "bg-navy text-white"
-                      : "bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
-                  }`}
-                >
-                  Due for 2nd Hit ({queue.due_2nd_hit.length})
-                </button>
-                <button
-                  onClick={() => setActiveTab("DUE_RESTART")}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                    activeTab === "DUE_RESTART"
-                      ? "bg-navy text-white"
-                      : "bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
-                  }`}
-                >
-                  Due for Restart ({queue.due_restart.length})
-                </button>
-                <button
-                  onClick={loadQueue}
-                  className="ml-auto px-3 py-2 text-xs text-gray-500 border border-gray-200 rounded-full hover:bg-gray-50"
-                >
-                  ↻ Refresh
-                </button>
-              </div>
-
-              {/* Error */}
-              {error && (
-                <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-4 text-sm text-red-700">
-                  {error}
-                </div>
-              )}
-
-              {/* Loading */}
-              {loading && (
-                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-                  <p className="text-gray-400 text-sm">
-                    Loading queue… this may take a minute while we fetch
-                    sequences and contacts.
-                  </p>
-                </div>
-              )}
-
-              {/* Empty state */}
-              {!loading && activeItems.length === 0 && (
-                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-                  <p className="text-gray-400 text-sm">
-                    No accounts in this bucket right now. Nicely done.
-                  </p>
-                </div>
-              )}
-
-              {/* Account list */}
-              <div className="space-y-3">
-                {activeItems.map((item) => {
-                  const isOpen = expandedId === item.accountId;
-                  const contactIdx = selectedContact[item.accountId] ?? 0;
-                  const result = pushResult[item.accountId];
-                  const sequenceId = selectedSequence[item.accountId] ?? "";
-                  const mailboxId =
-                    selectedMailbox[item.accountId] ?? mailboxes[0]?.id ?? "";
-                  const topPick = item.recommendedContacts[0];
-
-                  return (
-                    <div
-                      key={item.accountId}
-                      className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden"
-                    >
-                      {/* Collapsed row */}
-                      <button
-                        onClick={() =>
-                          setExpandedId(isOpen ? null : item.accountId)
-                        }
-                        className="w-full text-left p-5 hover:bg-gray-50 transition-colors"
-                      >
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                              <h3 className="text-base font-semibold text-navy truncate">
-                                {item.accountName}
-                              </h3>
-                              {item.employees != null && (
-                                <span className="text-[10px] text-gray-500 bg-gray-100 border border-gray-200 rounded-full px-2 py-0.5">
-                                  {item.employees} employees
-                                </span>
-                              )}
-                              {sfInstanceUrl && (
-                                <a
-                                  href={`${sfInstanceUrl}/${item.accountId}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="text-[10px] text-blue-600 bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-full px-2 py-0.5 whitespace-nowrap"
-                                >
-                                  Salesforce ↗
-                                </a>
-                              )}
-                              {item.website && (
-                                <a
-                                  href={
-                                    item.website.startsWith("http")
-                                      ? item.website
-                                      : `https://${item.website}`
-                                  }
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="text-[10px] text-gray-400 hover:text-navy truncate"
-                                >
-                                  {item.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
-                                </a>
-                              )}
-                            </div>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
-                              <span>
-                                Ended:{" "}
-                                <span className="text-gray-700 font-medium">
-                                  {fmtDate(item.lastSequenceEndDate)}
-                                </span>
-                              </span>
-                              <span className="text-gray-300">|</span>
-                              <span>
-                                Last hit:{" "}
-                                <span className="text-gray-700">
-                                  {item.lastContactHit?.name ?? "—"}
-                                </span>
-                              </span>
-                              {item.lastSequenceUsed && (
-                                <>
-                                  <span className="text-gray-300">|</span>
-                                  <span>
-                                    Seq:{" "}
-                                    <span className="text-gray-700">
-                                      {item.lastSequenceUsed.sequenceName}
-                                    </span>
-                                  </span>
-                                </>
-                              )}
-                              {topPick && (
-                                <>
-                                  <span className="text-gray-300">|</span>
-                                  <span>
-                                    Next:{" "}
-                                    <span className="text-navy font-medium">
-                                      {topPick.firstName} {topPick.lastName}
-                                    </span>{" "}
-                                    <span className="text-gray-400">
-                                      ({topPick.title})
-                                    </span>
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                          <svg
-                            className={`w-5 h-5 text-gray-400 flex-shrink-0 transition-transform ${
-                              isOpen ? "rotate-180" : ""
-                            }`}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 9l-7 7-7-7"
-                            />
-                          </svg>
-                        </div>
-                      </button>
-
-                      {/* Expanded body */}
-                      {isOpen && (
-                        <div className="px-5 pb-5 border-t border-gray-100 pt-4 space-y-4">
-                          {/* Sequence history */}
-                          <div>
-                            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">
-                              Sequence history
-                            </h4>
-                            <div className="space-y-2">
-                              {item.sequenceHistory.map((h, idx) => {
-                                const isLastContact =
-                                  !!h.contactEmail &&
-                                  !!item.lastContactHit?.email &&
-                                  h.contactEmail.toLowerCase() ===
-                                    item.lastContactHit.email.toLowerCase();
-                                const sequenceLabel =
-                                  isLastContact && item.lastSequenceUsed
-                                    ? item.lastSequenceUsed.sequenceName
-                                    : null;
-                                return (
-                                <div
-                                  key={idx}
-                                  className="flex items-center gap-3 text-sm bg-gray-50 rounded-lg p-3"
-                                >
-                                  <span className="font-medium text-navy">
-                                    {h.contactName ?? "Unknown contact"}
-                                  </span>
-                                  <span className="text-xs text-gray-500">
-                                    {h.contactEmail ?? "—"}
-                                  </span>
-                                  {sequenceLabel && (
-                                    <span className="text-[10px] text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
-                                      via {sequenceLabel}
-                                    </span>
-                                  )}
-                                  <span className="ml-auto flex items-center gap-1">
-                                    {[1, 2, 3, 4, 5].map((n) => (
-                                      <span
-                                        key={n}
-                                        className={`w-6 h-6 text-[10px] flex items-center justify-center rounded-full ${
-                                          n <= h.stepsCompleted
-                                            ? "bg-navy text-white"
-                                            : "bg-gray-200 text-gray-500"
-                                        }`}
-                                      >
-                                        E{n}
-                                      </span>
-                                    ))}
-                                  </span>
-                                  <span className="text-xs text-gray-500 ml-2">
-                                    {fmtDate(h.startedAt)} →{" "}
-                                    {fmtDate(h.endedAt)}
-                                  </span>
-                                </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          {/* Contact recommendations (collapsible) */}
-                          <div>
-                            <button
-                              onClick={() =>
-                                setContactsOpen({
-                                  ...contactsOpen,
-                                  [item.accountId]: !contactsOpen[item.accountId],
-                                })
-                              }
-                              className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase mb-2 hover:text-navy transition-colors"
-                            >
-                              <svg
-                                className={`w-3 h-3 transition-transform ${
-                                  contactsOpen[item.accountId] ? "rotate-90" : ""
-                                }`}
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                              </svg>
-                              Select contact ({item.recommendedContacts.length} available)
-                            </button>
-                            {item.recommendedContacts.length === 0 ? (
-                              <p className="text-sm text-gray-400 italic">
-                                No contacts with email addresses found on this
-                                account in Salesforce.
-                              </p>
-                            ) : !contactsOpen[item.accountId] ? null : (
-                              <div className="space-y-2">
-                                {item.recommendedContacts.map((c, idx) => (
-                                  <label
-                                    key={idx}
-                                    className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${
-                                      contactIdx === idx
-                                        ? "border-navy bg-blue-50"
-                                        : "border-gray-200 hover:bg-gray-50"
-                                    }`}
-                                  >
-                                    <input
-                                      type="radio"
-                                      name={`contact-${item.accountId}`}
-                                      checked={contactIdx === idx}
-                                      onChange={() =>
-                                        setSelectedContact({
-                                          ...selectedContact,
-                                          [item.accountId]: idx,
-                                        })
-                                      }
-                                      className="mt-1"
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-sm font-medium text-navy">
-                                          {c.firstName} {c.lastName}
-                                        </span>
-                                        {c.source === "salesforce" ? (
-                                          <span className="text-[10px] text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">
-                                            ✓ Salesforce
-                                          </span>
-                                        ) : (
-                                          <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
-                                            ⚠ Unverified — web research
-                                          </span>
-                                        )}
-                                        {c.previouslyContacted && (
-                                          <span className="text-[10px] text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
-                                            previously contacted
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="text-xs text-gray-500">
-                                        {c.title || "—"}
-                                      </div>
-                                      <div className="text-xs text-gray-600 mt-0.5">
-                                        {c.email}
-                                      </div>
-                                    </div>
-                                  </label>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Group selector + Sequence picker */}
-                          {item.recommendedContacts.length > 0 && (
-                            <div className="space-y-3">
-                              <div>
-                                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                                  Group
-                                </label>
-                                <div className="flex gap-2">
-                                  {GROUPS.map((g) => (
-                                    <button
-                                      key={g}
-                                      onClick={() => setSelectedGroup(g)}
-                                      className={`px-3 py-1 text-xs rounded-full font-medium transition-colors ${
-                                        selectedGroup === g
-                                          ? "bg-navy text-white"
-                                          : "bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
-                                      }`}
-                                    >
-                                      {g}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                              <div>
-                                <label className="block text-xs font-semibold text-gray-500 uppercase mb-1">
-                                  Outreach sequence
-                                </label>
-                                <select
-                                  value={sequenceId}
-                                  onChange={(e) =>
-                                    setSelectedSequence({
-                                      ...selectedSequence,
-                                      [item.accountId]: e.target.value,
-                                    })
-                                  }
-                                  className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:border-navy focus:outline-none"
-                                >
-                                  <option value="">-- Pick a sequence --</option>
-                                  {(selectedGroup === "CDM"
-                                    ? sequences.filter((s) =>
-                                        CDM_SEQUENCES.includes(s.name)
-                                      )
-                                    : sequences.filter(
-                                        (s) =>
-                                          s.name.startsWith("[E] ") ||
-                                          s.name.startsWith("[D-E] ")
-                                      )
-                                  ).map((s) => (
-                                    <option key={s.id} value={s.id}>
-                                      {s.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                Sending from:{" "}
-                                <span className="font-medium text-gray-700">
-                                  sebastian@valstonecorp.com
-                                </span>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Draft button + result */}
-                          {item.recommendedContacts.length > 0 && (
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-3">
-                                <button
-                                  onClick={() => handlePush(item)}
-                                  disabled={
-                                    pushingId === item.accountId ||
-                                    !sequenceId
-                                  }
-                                  className="px-5 py-2 bg-navy hover:bg-navy-dark disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
-                                >
-                                  {pushingId === item.accountId
-                                    ? "Sending to outbox…"
-                                    : "Send to Outreach Outbox"}
-                                </button>
-                                {result && (
-                                  <div className="flex items-center gap-3 text-xs">
-                                    <ResultPill
-                                      label="Prospect"
-                                      ok={result.outreach_prospect.ok}
-                                      msg={result.outreach_prospect.error}
-                                    />
-                                    <ResultPill
-                                      label="Sequence"
-                                      ok={result.sequence_state.ok}
-                                      msg={result.sequence_state.error}
-                                    />
-                                    <ResultPill
-                                      label="Mailing"
-                                      ok={result.mailing_patch.ok}
-                                      msg={result.mailing_patch.error}
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                              {result?.sequence_state.ok && (
-                                <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                                  Email sent to your Outreach Outbox. Open
-                                  Outreach to review, edit, and send when
-                                  ready.
-                                </p>
-                              )}
-                              {result && !result.mailing_patch.ok && result.mailing_patch.error && (
-                                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 break-all">
-                                  Mailing patch failed: {result.mailing_patch.error}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
+        <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
+          <Stat label="Ready to review" value={eligible.length} />
+          <Stat label="Waiting" value={waiting.length} />
+          <Stat label="In Weekly Outreach" value={weekCount ?? pushedThisWeek} hint="this week · target 70" />
         </div>
+
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {(
+            [
+              ["review", `Review (${eligible.length})`],
+              ["waiting", `Waiting (${waiting.length})`],
+              ["done", `Done (${done.length})`],
+              ["check", "Check a list"],
+            ] as Array<[Tab, string]>
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${tab === key ? "bg-navy text-white" : "bg-surface-3 text-ink hover:bg-line"}`}
+            >
+              {label}
+            </button>
+          ))}
+          {lastRefresh ? <span className="w-full text-xs text-ink-muted sm:ml-auto sm:w-auto">Pool refreshed {new Date(lastRefresh).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span> : null}
+        </div>
+
+        {tab === "check" ? (
+          <CheckList onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
+        ) : loading ? (
+          <p className="text-sm text-ink-muted">Loading…</p>
+        ) : items.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-line bg-white p-10 text-center text-sm text-ink-muted">
+            Nothing here yet. Click Refresh from Salesforce to build the pool from the E1 report.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {(tab === "review" ? eligible.slice(0, shown) : tab === "waiting" ? waiting : done).map((row) => (
+              <CandidateCard
+                key={row.sf_account_id}
+                row={row}
+                busy={busy.has(row.sf_account_id)}
+                skipOpen={skipFor === row.sf_account_id}
+                onSkipToggle={() => setSkipFor((v) => (v === row.sf_account_id ? null : row.sf_account_id))}
+                onPush={() => void act(row, "push")}
+                onSkip={(reason) => void act(row, "skip", reason)}
+                onReopen={() => void act(row, "reopen")}
+              />
+            ))}
+            {tab === "review" && eligible.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-line bg-white p-10 text-center text-sm text-ink-muted">
+                Nothing eligible right now. {waiting.length > 0 ? `${waiting.length} account${waiting.length === 1 ? " is" : "s are"} waiting on the 60-day window.` : ""}
+              </div>
+            ) : null}
+            {tab === "review" && eligible.length > shown ? (
+              <div className="flex justify-center pt-2">
+                <Button variant="secondary" onClick={() => setShown((n) => n + (settings?.batchSize ?? 50))}>
+                  Show next {Math.min(settings?.batchSize ?? 50, eligible.length - shown)} of {eligible.length - shown} more
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        )}
+        <p className="mt-8 text-center text-xs text-ink-muted">
+          Need the old queue with the direct Outreach.io push? <Link href="/outreach/legacy" className="text-brand hover:underline">Open the legacy view</Link>.
+        </p>
       </PageContent>
     </>
   );
 }
 
-function ResultPill({
-  label,
-  ok,
-  msg,
-}: {
-  label: string;
-  ok: boolean;
-  msg?: string;
-}) {
+function Stat({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
   return (
-    <span
-      title={msg ?? ""}
-      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full border ${
-        ok
-          ? "bg-green-50 text-green-700 border-green-200"
-          : "bg-red-50 text-red-700 border-red-200"
-      }`}
-    >
-      {ok ? "✓" : "✗"} {label}
-    </span>
+    <div className="rounded-xl border border-line bg-white px-3 py-3 text-center sm:px-4">
+      <div className="text-[11px] leading-tight text-ink-muted sm:text-xs">{label}</div>
+      <div className="text-2xl font-semibold text-ink">{value}</div>
+      {hint ? <div className="text-[11px] text-ink-muted">{hint}</div> : null}
+    </div>
+  );
+}
+
+function CandidateCard({
+  row,
+  busy,
+  skipOpen,
+  onSkipToggle,
+  onPush,
+  onSkip,
+  onReopen,
+}: {
+  row: Row;
+  busy: boolean;
+  skipOpen: boolean;
+  onSkipToggle: () => void;
+  onPush: () => void;
+  onSkip: (reason: string) => void;
+  onReopen: () => void;
+}) {
+  const screen = SCREEN_LABEL[row.screen_status] ?? SCREEN_LABEL.pending;
+  const ruleVariant = row.rule_status === "eligible" ? "ok" : row.rule_status === "wait" ? "warn" : "danger";
+  const isOpen = row.review_status === "open";
+  const site = hrefOf(row.website);
+  return (
+    <div className="min-w-0 overflow-hidden rounded-xl border border-line bg-white p-3 shadow-sm sm:p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 break-words text-base font-semibold text-ink">{row.account_name}</span>
+        {row.employees !== null ? <Badge variant="neutral" size="sm">{row.employees} employees</Badge> : null}
+        {row.country ? <Badge variant="neutral" size="sm">{row.country}</Badge> : null}
+        <Badge variant={screen.variant} size="sm">{screen.label}</Badge>
+        {row.review_status === "pushed" ? <Badge variant="ok" size="sm">Pushed · week of {fmtDate(row.pushed_week_start)}</Badge> : null}
+        {row.review_status === "skipped" ? <Badge variant="neutral" size="sm">Skipped{row.skip_reason ? ` · ${row.skip_reason}` : ""}</Badge> : null}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+        {site ? (
+          <a href={site} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand hover:underline">
+            {hostOf(row.website)} <ExternalLink size={11} />
+          </a>
+        ) : null}
+        {row.account_url ? (
+          <a href={row.account_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand hover:underline">
+            Salesforce <ExternalLink size={11} />
+          </a>
+        ) : null}
+        {row.industry ? <span>{row.industry}</span> : null}
+        {row.owner_name ? <span>Owner: {row.owner_name}</span> : null}
+      </div>
+      <div className="mt-2 flex flex-wrap items-start gap-2 text-sm">
+        <Badge variant={ruleVariant} size="sm" dot>
+          {row.rule_status === "eligible" ? "Eligible" : row.rule_status === "wait" ? `Wait until ${fmtDate(row.eligible_on)}` : "Blocked"}
+        </Badge>
+        <span className="min-w-0 break-words text-ink">{row.rule_reason}</span>
+      </div>
+      {row.sends.length > 0 ? (
+        <div className="mt-1.5 break-words text-xs text-ink-muted">
+          Sends: {row.sends.slice(0, 5).map((s) => `${s.type} ${fmtDate(s.date)}${s.by ? ` (${s.by.split(" ")[0]})` : ""}`).join(" · ")}
+          {row.sends.length > 5 ? ` · +${row.sends.length - 5} more` : ""}
+        </div>
+      ) : null}
+      {row.screen_reason ? <p className="mt-1.5 text-xs text-ink-muted">{row.screen_reason}</p> : null}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {isOpen ? (
+          <>
+            <Button size="sm" leftIcon={<Send size={14} />} loading={busy} onClick={onPush} className="flex-1 sm:flex-none">
+              {row.rule_status === "eligible" ? "Push to Weekly Outreach" : "Push anyway"}
+            </Button>
+            <Button size="sm" variant="secondary" leftIcon={<SkipForward size={14} />} disabled={busy} onClick={onSkipToggle} className="flex-1 sm:flex-none">
+              Skip
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" variant="ghost" leftIcon={<RotateCcw size={14} />} loading={busy} onClick={onReopen}>
+            Put back in review
+          </Button>
+        )}
+      </div>
+      {skipOpen && isOpen ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {SKIP_REASONS.map((reason) => (
+            <button
+              key={reason}
+              type="button"
+              disabled={busy}
+              onClick={() => onSkip(reason)}
+              className="rounded-full border border-line bg-surface-2 px-3 py-1 text-xs text-ink hover:bg-surface-3"
+            >
+              {reason}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SettingsPanel({ settings, onSaved }: { settings: Settings; onSaved: (s: Settings) => void }) {
+  const [form, setForm] = useState({
+    ...settings,
+    countriesText: settings.countries.join(", "),
+    excludedText: settings.excludedUsers.join(", "),
+  });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const num = (key: keyof Settings) => (e: ChangeEvent<HTMLInputElement>) => setForm((f) => ({ ...f, [key]: Number(e.target.value) }));
+  async function save() {
+    setSaving(true);
+    setErr(null);
+    try {
+      const body = {
+        ...form,
+        countries: form.countriesText.split(",").map((s) => s.trim()).filter(Boolean),
+        excludedUsers: form.excludedText.split(",").map((s) => s.trim()).filter(Boolean),
+      };
+      const res = await fetch("/api/outreach/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not save");
+      onSaved(data.settings);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setSaving(false);
+    }
+  }
+  const field = "w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm text-ink";
+  return (
+    <div className="mb-4 rounded-xl border border-line bg-surface-2 p-4">
+      <div className="mb-3 text-sm font-semibold text-ink">Rules of engagement and pool filters</div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <label className="text-xs text-ink-muted">Window (days)<input type="number" className={field} value={form.windowDays} onChange={num("windowDays")} /></label>
+        <label className="text-xs text-ink-muted">Max sends in window<input type="number" className={field} value={form.maxSendsInWindow} onChange={num("maxSendsInWindow")} /></label>
+        <label className="text-xs text-ink-muted">Sequence in flight (days)<input type="number" className={field} value={form.inFlightDays} onChange={num("inFlightDays")} /></label>
+        <label className="text-xs text-ink-muted">Cards per batch<input type="number" className={field} value={form.batchSize} onChange={num("batchSize")} /></label>
+        <label className="text-xs text-ink-muted">E1 lookback (months)<input type="number" className={field} value={form.lookbackMonths} onChange={num("lookbackMonths")} /></label>
+        <label className="text-xs text-ink-muted">Min employees<input type="number" className={field} value={form.minEmployees} onChange={num("minEmployees")} /></label>
+        <label className="text-xs text-ink-muted">Max employees<input type="number" className={field} value={form.maxEmployees} onChange={num("maxEmployees")} /></label>
+        <label className="text-xs text-ink-muted">Account record type<input type="text" className={field} value={form.recordType} onChange={(e) => setForm((f) => ({ ...f, recordType: e.target.value }))} /></label>
+        <label className="col-span-2 text-xs text-ink-muted">Countries (comma separated)<input type="text" className={field} value={form.countriesText} onChange={(e) => setForm((f) => ({ ...f, countriesText: e.target.value }))} /></label>
+        <label className="col-span-2 text-xs text-ink-muted">Users whose E1s do not create candidates<input type="text" className={field} value={form.excludedText} onChange={(e) => setForm((f) => ({ ...f, excludedText: e.target.value }))} /></label>
+      </div>
+      <p className="mt-2 text-xs text-ink-muted">Sends from every user still count against the window. Sequence starts counted: E1, RCE1, D-E1, D-RCE1, IB-E1, IB-RCE, Fund-E1, Fund-RCE1, LI.</p>
+      {err ? <Alert variant="danger" className="mt-3">{err}</Alert> : null}
+      <div className="mt-3 flex justify-end">
+        <Button size="sm" loading={saving} onClick={() => void save()}>Save rules</Button>
+      </div>
+    </div>
+  );
+}
+
+function CheckList({ onPushed }: { onPushed: () => void }) {
+  const [text, setText] = useState("");
+  const [rows, setRows] = useState<CheckRow[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+
+  async function check() {
+    const names = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    if (names.length === 0) return;
+    setChecking(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/outreach/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ names }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Check failed");
+      setRows(data.rows ?? []);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Check failed");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function push(row: CheckRow) {
+    if (!row.accountId) return;
+    setBusy((p) => new Set(p).add(row.accountId!));
+    try {
+      const res = await fetch("/api/weekly-outreach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outreachType: "E1", accountId: row.accountId, source: "outreach", sourceReference: `Check a list: ${row.input}` }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not push");
+      setRows((prev) => prev.map((r) => (r.accountId === row.accountId ? { ...r, input: `${r.input} ✓` } : r)));
+      onPushed();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not push");
+    } finally {
+      setBusy((p) => {
+        const n = new Set(p);
+        n.delete(row.accountId!);
+        return n;
+      });
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-line bg-white p-3 sm:p-4">
+        <label className="text-sm font-medium text-ink" htmlFor="check-names">Company names, one per line</label>
+        <textarea
+          id="check-names"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={6}
+          placeholder={"Acme Software\nGlaass\nPestBoss"}
+          className="mt-2 w-full rounded-lg border border-line bg-white p-2 text-sm text-ink"
+        />
+        <div className="mt-2 flex justify-end">
+          <Button size="sm" leftIcon={<ClipboardList size={14} />} loading={checking} onClick={() => void check()}>Check against the rules</Button>
+        </div>
+      </div>
+      {err ? <Alert variant="danger">{err}</Alert> : null}
+      {rows.map((row) => {
+        const v = row.verdict;
+        const variant = !v ? "neutral" : v.status === "eligible" ? "ok" : v.status === "wait" ? "warn" : "danger";
+        return (
+          <div key={row.input} className="min-w-0 overflow-hidden rounded-xl border border-line bg-white p-3 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-ink">{row.accountName ?? row.input}</span>
+              {row.status === "not_found" ? <Badge variant="danger" size="sm">No Salesforce match</Badge> : null}
+              {row.status === "multiple" ? <Badge variant="warn" size="sm">{row.matchCount} matches, verify</Badge> : null}
+              {v ? <Badge variant={variant} size="sm" dot>{v.status === "eligible" ? "Eligible" : v.status === "wait" ? `Wait until ${fmtDate(v.eligibleOn)}` : "Blocked"}</Badge> : null}
+              {row.accountUrl ? (
+                <a href={row.accountUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-brand hover:underline">
+                  Salesforce <ExternalLink size={11} />
+                </a>
+              ) : null}
+            </div>
+            {row.accountName && row.accountName !== row.input ? <div className="text-xs text-ink-muted">Pasted as “{row.input}”</div> : null}
+            {v ? <p className="mt-1 text-sm text-ink">{v.reason}</p> : null}
+            {row.accountId ? (
+              <div className="mt-2">
+                <Button size="sm" variant={v?.status === "eligible" ? "primary" : "secondary"} leftIcon={<Send size={14} />} loading={busy.has(row.accountId)} onClick={() => void push(row)}>
+                  {v?.status === "eligible" ? "Push to Weekly Outreach" : "Push anyway"}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }
