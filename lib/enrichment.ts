@@ -1,4 +1,4 @@
-import { getAnthropicClient } from "./anthropic";
+import { getAnthropicClient, MODELS } from "./anthropic";
 
 // What enrichment returns to the frontend
 export type EnrichedCompanyData = {
@@ -131,7 +131,7 @@ Return ONLY valid JSON with these fields (no explanation, no markdown, just JSON
     ];
 
     const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.drafting,
       max_tokens: 1024,
       tools,
       messages: [{ role: "user", content: extractionPrompt }],

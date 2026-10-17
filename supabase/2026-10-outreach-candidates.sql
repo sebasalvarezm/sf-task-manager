@@ -41,3 +41,6 @@ ALTER TABLE outreach_candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE weekly_outreach DROP CONSTRAINT IF EXISTS weekly_outreach_source_check;
 ALTER TABLE weekly_outreach ADD CONSTRAINT weekly_outreach_source_check
   CHECK (source IN ('tasks', 'recheck', 'manual', 'sourcing', 'outreach'));
+
+-- Background job kind for the software / acquisition prescreen.
+ALTER TYPE job_kind ADD VALUE IF NOT EXISTS 'outreach_screen';

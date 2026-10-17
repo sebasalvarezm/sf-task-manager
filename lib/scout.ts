@@ -7,6 +7,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { MODELS } from "./anthropic";
 import { readSharedWaybackCooldown, writeSharedWaybackCooldown } from "./wayback-cooldown";
 import { guardAddress, guardTown } from "./location-guard";
 import fs from "fs";
@@ -349,7 +350,7 @@ function looksLikeJinaError(status: number, text: string): boolean {
   );
 }
 
-async function fetchPageText(
+export async function fetchPageText(
   url: string,
   timeoutMs = 10000,
   retries = 0,
@@ -588,7 +589,7 @@ Text:
 ${text.slice(0, 6000)}`;
 
   const resp = await callClaude(client, 2, {
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 800,
     messages: [{ role: "user", content: prompt }],
   });
@@ -632,7 +633,7 @@ Text:
 ${text.slice(0, 6000)}`;
 
   const resp = await callClaude(client, 2, {
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 800,
     messages: [{ role: "user", content: prompt }],
   });
@@ -676,7 +677,7 @@ export async function detectFoundingYear(
   text: string
 ): Promise<number | null> {
   const resp = await callClaude(client, 2, {
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 50,
     messages: [
       {
@@ -755,7 +756,7 @@ export async function searchFoundingYearWeb(
     ];
 
     const resp = await callClaude(client, 2, {
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 100,
       tools,
       messages: [
@@ -1131,7 +1132,7 @@ export async function findDiscontinued(
   if (oldProducts.length === 0 || currentProducts.length === 0) return null;
 
   const resp = await callClaude(client, 2, {
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 150,
     messages: [
       {
@@ -1440,7 +1441,7 @@ export async function extractAddress(
     ];
 
     const resp = await callClaude(client, 2, {
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 150,
       tools,
       messages: [
@@ -1501,7 +1502,7 @@ If you cannot find any location for this specific company, return exactly: null`
       ];
 
       const resp = await callClaude(client, 2, {
-        model: "claude-sonnet-4-6",
+        model: MODELS.extraction,
         max_tokens: 150,
         tools,
         messages: [
@@ -1648,7 +1649,7 @@ async function askClaudeForAddress(
       : `${text.slice(0, 1500)}\n\n[CONTACT / FOOTER AREA]\n${text.slice(-2500)}`;
 
   const resp = await callClaude(client, 2, {
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 100,
     messages: [
       {
@@ -1730,7 +1731,7 @@ async function runRestaurantSearch(
 
   try {
     const resp = await callClaude(client, 2, {
-      model: "claude-sonnet-4-6",
+      model: MODELS.drafting,
       max_tokens: 1500,
       tools,
       messages: [{ role: "user", content: prompt }],
@@ -2014,7 +2015,7 @@ export async function matchGroup(
     .join("\n\n");
 
   const resp = await callClaude(client, 2, {
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 100,
     messages: [
       {
@@ -2234,7 +2235,7 @@ export async function personalizeOutreach(
     : `\nIf, and only if, this company clearly serves food, beverage, dairy or consumer packaged goods manufacturers, the sentence may add that Valstone also owns QiSoft, a quality and production platform used by food, dairy and paper manufacturers, as the reason the fit is strong. Skip this entirely when the connection is not obvious.\n`;
 
   const resp = await callClaude(client, 2, {
-    model: "claude-sonnet-4-6",
+    model: MODELS.drafting,
     max_tokens: 300,
     messages: [
       {
@@ -2836,7 +2837,7 @@ async function confirmAnchorYear(
 
   try {
     const resp = await callClaude(client, 1, {
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 60,
       messages: [
         {
@@ -2934,7 +2935,7 @@ export async function researchCompanyAnchors(
       : "";
 
     const resp = await callClaudeWithWebSearch(client, 4, {
-      model: "claude-sonnet-4-6",
+      model: MODELS.drafting,
       // Five anchors with URLs and evidence overflow 1200 tokens; a cut-off answer
       // was being discarded as "unreadable" (same fix as the cold research round).
       max_tokens: 2400,
@@ -3100,7 +3101,7 @@ async function researchAnchorsCold(args: {
     alreadyTried: string[]
   ): Promise<CompanyAnchor[]> => {
     const resp = await callClaudeWithWebSearch(client, 5, {
-      model: "claude-sonnet-4-6",
+      model: MODELS.drafting,
       // Five anchors with URLs and evidence overflow 1200 tokens, and a cut-off
       // object is unparseable -- the round's whole result was being discarded
       // as "unreadable" when the research had actually succeeded.
@@ -3251,7 +3252,7 @@ export async function generateEmailHook(
     : "";
 
   const resp = await callClaude(client, 2, {
-    model: "claude-sonnet-4-6",
+    model: MODELS.drafting,
     max_tokens: 400,
     messages: [
       {

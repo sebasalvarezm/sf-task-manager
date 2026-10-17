@@ -23,7 +23,7 @@ import { markAccountResponded, scheduleRceTask, type RespondedOutcome } from "./
 import type { FollowUpOutcome } from "./salesforce-calls";
 import { sfQuery } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
-import { getAnthropicClient } from "./anthropic";
+import { getAnthropicClient, MODELS } from "./anthropic";
 import { escapeSoql, normalizeDomain, rankAccounts } from "./account-match";
 import {
   INBOX_CLASSIFY_SYSTEM,
@@ -92,7 +92,8 @@ type GraphMessage = {
   "@odata.type"?: string;
 };
 
-const CLASSIFY_MODEL = "claude-sonnet-4-6";
+const CLASSIFY_MODEL = MODELS.extraction;
+const DRAFT_MODEL = MODELS.drafting;
 
 export async function listInbox(): Promise<InboxRow[]> {
   const { data, error } = await getSupabaseAdmin()
@@ -486,7 +487,7 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
     if (client) {
       try {
         const response = await client.messages.create({
-          model: CLASSIFY_MODEL,
+          model: DRAFT_MODEL,
           max_tokens: 120,
           system: POSITIVE_DETAIL_SYSTEM,
           messages: [{ role: "user", content: positiveDetailPrompt(row.thread) }],
@@ -502,7 +503,7 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
     const examples = await recentSentReplies();
     try {
       const response = await client.messages.create({
-        model: CLASSIFY_MODEL,
+        model: DRAFT_MODEL,
         max_tokens: 500,
         system: INBOX_DRAFT_SYSTEM,
         messages: [{

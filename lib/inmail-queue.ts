@@ -1,7 +1,7 @@
 import { getValidCredentials } from "./token-manager";
 import { sfQuery } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
-import { getAnthropicClient } from "./anthropic";
+import { getAnthropicClient, MODELS } from "./anthropic";
 import { cleanE1Body } from "./outreach-queue";
 import {
   INMAIL_SYSTEM_PROMPT,
@@ -284,7 +284,7 @@ export async function generateInMailFor(whoId: string): Promise<InMailQueueRow> 
   const client = getAnthropicClient();
   if (!client) throw new Error("AI service not configured (missing ANTHROPIC_API_KEY)");
   const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    model: MODELS.drafting,
     max_tokens: 1200,
     system: INMAIL_SYSTEM_PROMPT,
     messages: [{ role: "user", content: inmailUserPrompt(firstName, row.e1_body) }],

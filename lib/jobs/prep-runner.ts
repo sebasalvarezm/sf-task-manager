@@ -1,4 +1,4 @@
-import { getAnthropicClient } from "@/lib/anthropic";
+import { getAnthropicClient, MODELS } from "@/lib/anthropic";
 import { fetchAccountDetails, fetchRecentAccountActivity } from "@/lib/salesforce-prep";
 
 export type OnePagerContent = {
@@ -229,12 +229,12 @@ Use web search to find 2-3 genuinely relevant recent news items about this exact
 Return ONLY valid JSON: {"recentNews":["item 1", "item 2"]}`;
     const [staticMessage, newsMessage] = await Promise.all([
       anthropic.messages.create({
-        model: "claude-sonnet-4-6",
+        model: MODELS.drafting,
         max_tokens: 3072,
         messages: [{ role: "user", content: staticPrompt }],
       }),
       anthropic.messages.create({
-        model: "claude-sonnet-4-6",
+        model: MODELS.drafting,
         max_tokens: 1536,
         tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
         messages: [{ role: "user", content: newsPrompt }],
@@ -302,7 +302,7 @@ Return ONLY valid JSON, no explanation, no markdown fences. Use this exact struc
   ];
 
   const message = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: MODELS.drafting,
     max_tokens: 4096,
     tools,
     messages: [{ role: "user", content: prompt }],

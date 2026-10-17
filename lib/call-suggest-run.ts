@@ -3,7 +3,7 @@
 // Privacy: the transcript is read from Granola here and sent only to the AI
 // call below. It is not stored or logged.
 
-import { getAnthropicClient } from "./anthropic";
+import { getAnthropicClient, MODELS } from "./anthropic";
 import { fetchCorrectionExamples } from "./call-corrections";
 import { fetchCallHistory, type PastCall } from "./call-history";
 import { buildSuggestionPrompt, parseSuggestion, selectExamples, type SuggestionInput } from "./call-suggest";
@@ -11,7 +11,7 @@ import { getSuggestionForEvent, saveSuggestion, type StoredCallSuggestion } from
 import { getGranolaTranscript, transcriptToText } from "./granola";
 import { getStoredGranolaNoteForEvent } from "./granola-store";
 
-export const SUGGESTION_MODEL = "claude-sonnet-4-6";
+export const SUGGESTION_MODEL = MODELS.drafting;
 
 
 export type SuggestRequest = {

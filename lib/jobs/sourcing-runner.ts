@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicClient } from "@/lib/anthropic";
+import { getAnthropicClient, MODELS } from "@/lib/anthropic";
 import {
   scrapeWithJina,
   isParkedPage,
@@ -333,7 +333,7 @@ async function identifyCompetitors(
   const productList = products.length > 0 ? products.join(", ") : "unknown";
   try {
     const resp = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 500,
       messages: [
         {

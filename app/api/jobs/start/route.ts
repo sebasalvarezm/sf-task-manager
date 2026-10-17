@@ -13,6 +13,7 @@ const VALID_KINDS: ReadonlySet<JobKind> = new Set([
   "trip_search",
   "calls_log",
   "accounts_enrich",
+  "outreach_screen",
 ]);
 
 /** JSON with object keys sorted, so a stored jsonb value (Postgres reorders

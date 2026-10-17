@@ -14,6 +14,7 @@ const VALID_KINDS: readonly JobKind[] = [
   "trip_search",
   "calls_log",
   "accounts_enrich",
+  "outreach_screen",
 ];
 
 export async function POST(req: NextRequest) {

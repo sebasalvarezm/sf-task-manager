@@ -1,3 +1,4 @@
+import { MODELS } from "@/lib/anthropic";
 import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
@@ -83,7 +84,7 @@ ${threadText}
     });
 
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 4096,
       messages: [
         {

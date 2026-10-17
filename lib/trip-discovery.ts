@@ -1,3 +1,4 @@
+import { MODELS } from "@/lib/anthropic";
 import Anthropic from "@anthropic-ai/sdk";
 import { CDMAccount } from "./salesforce-trip";
 import {
@@ -152,7 +153,7 @@ async function searchVertical(
 ): Promise<DiscoveredCompany[]> {
   try {
     const resp = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.drafting,
       max_tokens: 4096,
       tools: WEB_SEARCH_TOOL,
       messages: [
@@ -262,7 +263,7 @@ async function checkOwnershipBatch(
 
   try {
     const resp = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 4096,
       tools: WEB_SEARCH_TOOL,
       messages: [

@@ -47,6 +47,7 @@ const KIND_TO_ROUTE: Record<Job["kind"], string> = {
   trip_search: "/trip",
   calls_log: "/calls",
   accounts_enrich: "/accounts",
+  outreach_screen: "/outreach",
 };
 
 const ROUTE_TO_KINDS: Record<string, Job["kind"][]> = Object.entries(

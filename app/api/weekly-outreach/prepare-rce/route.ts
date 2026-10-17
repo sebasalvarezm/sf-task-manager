@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { fetchContactsForAccounts } from "@/lib/salesforce-contacts";
 import { isAuthenticated } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { getAnthropicClient } from "@/lib/anthropic";
+import { getAnthropicClient, MODELS } from "@/lib/anthropic";
 import {
   createOutlookNewDraft,
   deleteOutlookDraftIfUnsent,
@@ -286,7 +286,7 @@ export async function POST(request: Request) {
         });
 
     const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.drafting,
       max_tokens: 1800,
       messages: [{ role: "user", content: prompt }],
     });

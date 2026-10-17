@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ExternalLink, RefreshCw, Settings2, Send, SkipForward, RotateCcw, ClipboardList } from "lucide-react";
@@ -76,7 +76,7 @@ type CheckRow = {
   lastSend: Send | null;
 };
 
-type Tab = "review" | "waiting" | "done" | "check";
+type Tab = "review" | "waiting" | "filtered" | "done" | "check";
 
 const SKIP_REASONS = ["Not software", "Services-heavy", "Acquired", "Too small or too big", "Wrong geography", "Rule exception", "Other"];
 
@@ -130,6 +130,38 @@ function OutreachInner() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shown, setShown] = useState(50);
+  const [screen, setScreen] = useState<{ pending: number; running: boolean; step: string | null }>({ pending: 0, running: false, step: null });
+
+  const pollScreen = useCallback(async () => {
+    try {
+      const res = await fetch("/api/outreach/screen");
+      const data = await res.json();
+      if (!res.ok) return false;
+      const job = data.job as { status: string; progress?: { step?: string } | null } | null;
+      setScreen({ pending: data.pending ?? 0, running: !!job, step: job?.progress?.step ?? null });
+      return !!job;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // How many checked-and-passed cards are waiting for Seb right now (kept in a ref so callbacks see the latest).
+  const readyRef = useRef(0);
+
+  /** Keep about one batch of checked cards ahead of Seb; otherwise leave the rest unchecked (each check costs a site read and a model call). */
+  const ensureScreened = useCallback(async (batch: number, force = false) => {
+    const running = await pollScreen();
+    if (running) return;
+    if (!force && readyRef.current >= batch) return;
+    try {
+      const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch }) });
+      const data = await res.json();
+      if (res.ok && data.jobId) setScreen((s) => ({ ...s, running: true, step: "Starting…" }));
+      else if (!res.ok && data.error) setError(data.error);
+    } catch {
+      /* the next poll will try again */
+    }
+  }, [pollScreen]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,15 +178,35 @@ function OutreachInner() {
         setShown(set.settings.batchSize ?? 50);
       }
       setError(null);
+      const rows = (data.items ?? []) as Row[];
+      readyRef.current = rows.filter((r) => r.review_status === "open" && r.rule_status === "eligible" && r.screen_status === "software").length;
+      void ensureScreened(set?.settings?.batchSize ?? 50);
     } catch (err) {
       setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped while loading. Pull to refresh or reopen the page.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [ensureScreened]);
   useEffect(() => {
     void load();
   }, [load]);
+
+  // While a check runs, pull fresh verdicts every 12 seconds; when it ends, reload once and top up if needed.
+  useEffect(() => {
+    if (!screen.running) return;
+    const id = window.setInterval(async () => {
+      const running = await pollScreen();
+      try {
+        const res = await fetch("/api/outreach/candidates");
+        const data = await res.json();
+        if (res.ok) setItems(data.items ?? []);
+      } catch {
+        /* keep polling */
+      }
+      if (!running) void ensureScreened(settings?.batchSize ?? 50);
+    }, 12000);
+    return () => window.clearInterval(id);
+  }, [screen.running, pollScreen, ensureScreened, settings?.batchSize]);
 
   async function refresh() {
     setRefreshing(true);
@@ -196,6 +248,7 @@ function OutreachInner() {
       }
       if (action === "reopen") setWeekCount(null);
       setSkipFor(null);
+      if (action !== "reopen") void ensureScreened(settings?.batchSize ?? 50);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save");
     } finally {
@@ -207,7 +260,16 @@ function OutreachInner() {
     }
   }
 
-  const eligible = useMemo(() => items.filter((r) => r.review_status === "open" && r.rule_status === "eligible"), [items]);
+  const eligibleAll = useMemo(() => items.filter((r) => r.review_status === "open" && r.rule_status === "eligible"), [items]);
+  // Checked and passed first, then unclear, then unchecked; within each, oldest last E1 first.
+  const eligible = useMemo(() => {
+    const rank = (r: Row) => (r.screen_status === "software" ? 0 : r.screen_status === "unclear" || r.screen_status === "error" ? 1 : 2);
+    return eligibleAll
+      .filter((r) => r.screen_status !== "not_software" && r.screen_status !== "acquired")
+      .sort((a, b) => rank(a) - rank(b) || ((a.last_e1_at ?? "") < (b.last_e1_at ?? "") ? -1 : 1));
+  }, [eligibleAll]);
+  const filtered = useMemo(() => eligibleAll.filter((r) => r.screen_status === "not_software" || r.screen_status === "acquired"), [eligibleAll]);
+  readyRef.current = eligible.filter((r) => r.screen_status === "software").length;
   const waiting = useMemo(
     () => items.filter((r) => r.review_status === "open" && r.rule_status !== "eligible").sort((a, b) => (a.eligible_on ?? "9999") < (b.eligible_on ?? "9999") ? -1 : 1),
     [items],
@@ -245,7 +307,7 @@ function OutreachInner() {
         {settingsOpen && settings ? <SettingsPanel settings={settings} onSaved={(s) => { setSettings(s); setShown(s.batchSize); setSettingsOpen(false); setMessage("Rules saved. Refresh from Salesforce to apply them."); }} /> : null}
 
         <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
-          <Stat label="Ready to review" value={eligible.length} />
+          <Stat label="Ready to review" value={eligible.filter((r) => r.screen_status === "software").length} hint={`${eligible.length} eligible`} />
           <Stat label="Waiting" value={waiting.length} />
           <Stat label="In Weekly Outreach" value={weekCount ?? pushedThisWeek} hint="this week · target 70" />
         </div>
@@ -255,6 +317,7 @@ function OutreachInner() {
             [
               ["review", `Review (${eligible.length})`],
               ["waiting", `Waiting (${waiting.length})`],
+              ["filtered", `Filtered out (${filtered.length})`],
               ["done", `Done (${done.length})`],
               ["check", "Check a list"],
             ] as Array<[Tab, string]>
@@ -268,7 +331,17 @@ function OutreachInner() {
               {label}
             </button>
           ))}
-          {lastRefresh ? <span className="w-full text-xs text-ink-muted sm:ml-auto sm:w-auto">Pool refreshed {new Date(lastRefresh).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span> : null}
+          {screen.running ? (
+            <span className="w-full text-xs text-brand sm:ml-auto sm:w-auto">
+              <RefreshCw size={11} className="mr-1 inline animate-spin" />
+              Checking websites… {screen.step ?? ""}
+            </span>
+          ) : screen.pending > 0 ? (
+            <button type="button" onClick={() => void ensureScreened(settings?.batchSize ?? 50, true)} className="w-full text-left text-xs text-brand hover:underline sm:ml-auto sm:w-auto">
+              {screen.pending} eligible accounts not checked yet. Check the next {Math.min(screen.pending, settings?.batchSize ?? 50)}
+            </button>
+          ) : null}
+          {lastRefresh ? <span className="w-full text-xs text-ink-muted sm:w-auto">Pool refreshed {new Date(lastRefresh).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span> : null}
         </div>
 
         {tab === "check" ? (
@@ -281,7 +354,7 @@ function OutreachInner() {
           </div>
         ) : (
           <div className="space-y-3">
-            {(tab === "review" ? eligible.slice(0, shown) : tab === "waiting" ? waiting : done).map((row) => (
+            {(tab === "review" ? eligible.slice(0, shown) : tab === "waiting" ? waiting : tab === "filtered" ? filtered : done).map((row) => (
               <CandidateCard
                 key={row.sf_account_id}
                 row={row}
@@ -295,7 +368,7 @@ function OutreachInner() {
             ))}
             {tab === "review" && eligible.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-line bg-white p-10 text-center text-sm text-ink-muted">
-                Nothing eligible right now. {waiting.length > 0 ? `${waiting.length} account${waiting.length === 1 ? " is" : "s are"} waiting on the 60-day window.` : ""}
+                Nothing eligible right now. {waiting.length > 0 ? `${waiting.length} account${waiting.length === 1 ? " is" : "s are"} waiting on the 60-day window.` : ""}{filtered.length > 0 ? ` ${filtered.length} filtered out by the software check.` : ""}
               </div>
             ) : null}
             {tab === "review" && eligible.length > shown ? (
@@ -382,13 +455,13 @@ function CandidateCard({
           {row.sends.length > 5 ? ` · +${row.sends.length - 5} more` : ""}
         </div>
       ) : null}
-      {row.screen_reason ? <p className="mt-1.5 text-xs text-ink-muted">{row.screen_reason}</p> : null}
+      {row.screen_reason ? <p className="mt-1.5 break-words text-xs text-ink-muted"><span className="font-medium text-ink">Check:</span> {row.screen_reason}</p> : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {isOpen ? (
           <>
             <Button size="sm" leftIcon={<Send size={14} />} loading={busy} onClick={onPush} className="flex-1 sm:flex-none">
-              {row.rule_status === "eligible" ? "Push to Weekly Outreach" : "Push anyway"}
+              {row.rule_status === "eligible" && row.screen_status !== "not_software" && row.screen_status !== "acquired" ? "Push to Weekly Outreach" : "Push anyway"}
             </Button>
             <Button size="sm" variant="secondary" leftIcon={<SkipForward size={14} />} disabled={busy} onClick={onSkipToggle} className="flex-1 sm:flex-none">
               Skip

@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicClient } from "@/lib/anthropic";
+import { getAnthropicClient, MODELS } from "@/lib/anthropic";
 
 // Supabase Storage bucket (private). See supabase/setup.sql for setup steps.
 export const DEAL_DOCS_BUCKET = "deal-docs";
@@ -328,7 +328,7 @@ export async function extractMetricsFromPdf(
   // Fetch FX rates in parallel with the extraction call — both are independent.
   const [message, rates] = await Promise.all([
     anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.drafting,
       max_tokens: 1024,
       messages,
     }),
