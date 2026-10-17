@@ -366,8 +366,8 @@ function TasksPageContent() {
 
       {/* Apply actions bar — fixed; accounts for 256px sidebar via md:left-64 (full-width on mobile) */}
       {activeActionCount > 0 && (
-        <div className="fixed bottom-0 left-0 md:left-64 right-0 bg-navy shadow-2xl px-4 md:px-8 py-3 md:py-4 flex items-center justify-between gap-3 z-30">
-          <span className="text-white text-sm">
+        <div className="fixed bottom-0 left-0 md:left-64 right-0 bg-white border-t border-line px-4 md:px-8 py-3 md:py-4 flex items-center justify-between gap-3 z-30">
+          <span className="text-ink text-sm">
             <strong>{activeActionCount}</strong> action
             {activeActionCount !== 1 ? "s" : ""} queued
           </span>
@@ -375,7 +375,6 @@ function TasksPageContent() {
             <Button
               variant="ghost"
               onClick={() => setActions(new Map())}
-              className="text-gray-300 hover:bg-navy-dark hover:text-white"
             >
               Clear all
             </Button>
@@ -395,9 +394,8 @@ function TasksPageContent() {
       {/* Delete Confirmation Modal */}
       {confirmDeleteCount !== null && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-8 max-w-md w-full">
-            <div className="text-4xl mb-4 text-center">⚠️</div>
-            <h2 className="text-lg font-semibold text-ink text-center mb-2">
+          <div className="bg-white rounded-md border border-line p-4 sm:p-8 max-w-md w-full">
+            <h2 className="text-lg font-normal text-ink text-center mb-2">
               Confirm permanent deletion
             </h2>
             <p className="text-sm text-ink-muted text-center mb-6">

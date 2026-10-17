@@ -5,11 +5,11 @@ import { ReactNode } from "react";
 export type PillTone = "hot" | "warm" | "fix" | "info" | "neutral";
 
 const PILL_STYLES: Record<PillTone, string> = {
-  hot: "bg-red-500 text-white",
-  warm: "bg-amber-500 text-white",
-  fix: "bg-red-600 text-white",
-  info: "bg-blue-500 text-white",
-  neutral: "bg-gray-500 text-white",
+  hot: "bg-danger-soft text-danger",
+  warm: "bg-warn-soft text-warn",
+  fix: "bg-danger-soft text-danger",
+  info: "bg-info-soft text-info",
+  neutral: "bg-surface-4 text-ink-secondary",
 };
 
 type Props = {
@@ -32,30 +32,30 @@ export default function ActionCard({
   footerAction,
 }: Props) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 flex flex-col">
+    <div className="bg-white rounded-md border border-line p-5 flex flex-col">
       <div>
         <span
-          className={`inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-sm ${PILL_STYLES[tone]}`}
+          className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-sm ${PILL_STYLES[tone]}`}
         >
           {pill}
         </span>
-        <p className="text-4xl font-semibold text-navy mt-3 tabular-nums">
+        <p className="text-3xl font-normal text-ink mt-3 tabular-nums">
           {value}
         </p>
-        <p className="text-sm font-semibold text-navy mt-1">{title}</p>
+        <p className="text-sm font-medium text-ink mt-1">{title}</p>
         {subtitle && (
-          <p className="text-xs text-gray-500 mt-0.5">{subtitle}</p>
+          <p className="text-xs text-ink-secondary mt-0.5">{subtitle}</p>
         )}
       </div>
 
       {children && (
-        <div className="mt-4 space-y-2 max-h-[240px] overflow-y-auto pr-1">
+        <div className="mt-4 max-h-[240px] overflow-y-auto pr-1">
           {children}
         </div>
       )}
 
       {footerAction && (
-        <div className="mt-3 pt-3 border-t border-gray-100 text-center">
+        <div className="mt-3 pt-3 border-t border-line text-center">
           {footerAction}
         </div>
       )}
@@ -74,14 +74,14 @@ export function ActionRow({
   right?: ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 bg-gray-50 rounded-lg px-3 py-2">
+    <div className="flex items-start justify-between gap-3 border-b border-line last:border-0 px-1 py-2 hover:bg-surface-3 transition-colors">
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-navy truncate">{title}</p>
+        <p className="text-sm font-medium text-ink truncate">{title}</p>
         {subtitle && (
-          <p className="text-xs text-gray-500 truncate mt-0.5">{subtitle}</p>
+          <p className="text-xs text-ink-secondary truncate mt-0.5">{subtitle}</p>
         )}
       </div>
-      {right && <div className="flex-shrink-0 text-xs text-gray-600">{right}</div>}
+      {right && <div className="flex-shrink-0 text-xs text-ink-secondary">{right}</div>}
     </div>
   );
 }

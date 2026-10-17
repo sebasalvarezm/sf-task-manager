@@ -191,20 +191,20 @@ export default function TaskTable({
   function renderBadge(taskId: string) {
     const action = getAction(taskId);
     if (action.actionType === "hard_delete")
-      return <span className="text-xs text-red-600 font-medium">→ Delete</span>;
+      return <span className="text-xs text-danger font-normal">→ Delete</span>;
     if (action.actionType === "complete_reschedule")
-      return <span className="text-xs text-green-600 font-medium">→ RCE in {action.days}d</span>;
+      return <span className="text-xs text-ok font-normal">→ RCE in {action.days}d</span>;
     if (action.actionType === "delay")
-      return <span className="text-xs text-blue-600 font-medium">→ Push {action.days}d</span>;
+      return <span className="text-xs text-info font-normal">→ Push {action.days}d</span>;
     return null;
   }
 
   function getInputBorderClass(taskId: string) {
     const a = getAction(taskId).actionType;
-    if (a === "hard_delete") return "border-red-400 bg-red-50";
-    if (a === "complete_reschedule") return "border-green-400 bg-green-50";
-    if (a === "delay") return "border-blue-400 bg-blue-50";
-    return "border-gray-200 bg-white";
+    if (a === "hard_delete") return "border-danger bg-white";
+    if (a === "complete_reschedule") return "border-line-strong bg-white";
+    if (a === "delay") return "border-line-strong bg-white";
+    return "border-line-strong bg-white";
   }
 
   function isInvalidCode(taskId: string) {
@@ -216,11 +216,11 @@ export default function TaskTable({
     const action = getAction(task.Id);
     return (
       <div className="flex flex-wrap items-center gap-1.5">
-        <button type="button" onClick={() => toggleDelete(task)} className={`min-h-[34px] rounded-md border px-2 text-xs font-semibold ${action.actionType === "hard_delete" ? "border-red-500 bg-red-500 text-white" : "border-red-200 bg-red-50 text-red-700"}`}>Delete</button>
-        <button type="button" onClick={() => bumpDelay(task, 7)} className="min-h-[34px] rounded-md border border-blue-200 bg-blue-50 px-2 text-xs font-semibold text-blue-700">+7d</button>
-        <button type="button" onClick={() => bumpDelay(task, 30)} className="min-h-[34px] rounded-md border border-blue-200 bg-blue-50 px-2 text-xs font-semibold text-blue-700">+30d</button>
-        <button type="button" onClick={() => writeAction(task, "RCE7", "complete_reschedule", 7)} className="min-h-[34px] rounded-md border border-green-200 bg-green-50 px-2 text-xs font-semibold text-green-700">Complete+Recreate</button>
-        {action.actionType !== "none" && <button type="button" onClick={() => clearAction(task)} aria-label="Clear action" className="min-h-[34px] w-8 rounded-md border border-gray-200 text-gray-500">×</button>}
+        <button type="button" onClick={() => toggleDelete(task)} className={`min-h-[34px] rounded-sm border px-2 text-xs font-normal transition-colors ${action.actionType === "hard_delete" ? "border-danger bg-danger-soft text-danger" : "border-danger bg-white text-danger hover:bg-danger-soft"}`}>Delete</button>
+        <button type="button" onClick={() => bumpDelay(task, 7)} className={`min-h-[34px] rounded-sm border px-2 text-xs font-normal transition-colors ${action.actionType === "delay" ? "border-ink bg-surface-4 text-ink" : "border-line-strong bg-white text-ink hover:bg-surface-3"}`}>+7d</button>
+        <button type="button" onClick={() => bumpDelay(task, 30)} className={`min-h-[34px] rounded-sm border px-2 text-xs font-normal transition-colors ${action.actionType === "delay" ? "border-ink bg-surface-4 text-ink" : "border-line-strong bg-white text-ink hover:bg-surface-3"}`}>+30d</button>
+        <button type="button" onClick={() => writeAction(task, "RCE7", "complete_reschedule", 7)} className={`min-h-[34px] rounded-sm border px-2 text-xs font-normal transition-colors ${action.actionType === "complete_reschedule" ? "border-ink bg-surface-4 text-ink" : "border-line-strong bg-white text-ink hover:bg-surface-3"}`}>Complete+Recreate</button>
+        {action.actionType !== "none" && <button type="button" onClick={() => clearAction(task)} aria-label="Clear action" className="min-h-[34px] w-8 rounded-sm border border-line text-ink-secondary hover:bg-surface-3 hover:text-ink transition-colors">×</button>}
       </div>
     );
   }
@@ -230,16 +230,15 @@ export default function TaskTable({
   }
 
   const cellBase = "outline-none";
-  const cellActive = "ring-2 ring-inset ring-blue-400";
+  const cellActive = "ring-2 ring-inset ring-line-strong";
 
   // ── Empty state ───────────────────────────────────────────────────────────────
 
   if (tasks.length === 0) {
     return (
-      <div className="text-center py-16 text-gray-400">
-        <div className="text-5xl mb-4">✓</div>
-        <p className="font-medium">No open tasks for this week</p>
-        <p className="text-sm mt-1">Select a different week to see tasks</p>
+      <div className="text-center py-16 text-ink-secondary">
+        <p className="text-sm">No open tasks for this week</p>
+        <p className="text-sm mt-1 text-ink-muted">Select a different week to see tasks</p>
       </div>
     );
   }
@@ -249,7 +248,7 @@ export default function TaskTable({
   return (
     <>
     {/* ── Desktop: full table (unchanged) ─────────────────────────────────────── */}
-    <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
+    <div className="hidden md:block overflow-x-auto rounded-md border border-line">
       <table
         className="task-table w-full bg-white"
         onKeyDown={handleKeyDown}
@@ -260,17 +259,17 @@ export default function TaskTable({
         <thead>
           <tr>
             <th className="w-8" />
-            <th>Account / Company</th>
+            <th>Account / company</th>
             <th>Salesforce</th>
-            <th>Task Subject</th>
-            <th>Due Date</th>
+            <th>Task subject</th>
+            <th>Due date</th>
             <th className="min-w-[420px]">
               <span className="flex items-center gap-1.5">
-                Next Steps
+                Next steps
                 {/* ⓘ shortcode help tooltip */}
                 <span className="relative inline-block">
                   <button
-                    className="w-4 h-4 rounded-full bg-gray-400 text-white text-xs font-bold flex items-center justify-center hover:bg-gray-500 focus:outline-none leading-none"
+                    className="w-4 h-4 rounded-sm border border-line text-ink-secondary text-[10px] font-normal flex items-center justify-center hover:bg-surface-3 hover:text-ink focus:outline-none leading-none"
                     onMouseEnter={() => setShowTooltip(true)}
                     onMouseLeave={() => setShowTooltip(false)}
                     onClick={() => setShowTooltip((v) => !v)}
@@ -280,23 +279,23 @@ export default function TaskTable({
                     ?
                   </button>
                   {showTooltip && (
-                    <div className="absolute right-6 top-0 z-50 w-72 bg-navy text-white text-xs rounded-lg p-3 shadow-2xl border border-navy-light">
-                      <p className="font-semibold mb-2 text-white">Shortcode reference:</p>
+                    <div className="absolute right-6 top-0 z-50 w-72 bg-white text-ink text-xs rounded-md p-3 shadow-xl border border-line font-normal">
+                      <p className="font-medium mb-2 text-ink">Shortcode reference:</p>
                       <div className="space-y-1.5">
                         <div className="flex gap-2">
-                          <span className="text-ink underline font-mono font-bold w-16 shrink-0">D</span>
-                          <span className="text-gray-300">Hard delete the task permanently</span>
+                          <span className="text-ink font-mono w-16 shrink-0">D</span>
+                          <span className="text-ink-secondary">Hard delete the task permanently</span>
                         </div>
                         <div className="flex gap-2">
-                          <span className="text-ink underline font-mono font-bold w-16 shrink-0">RCE14</span>
-                          <span className="text-gray-300">Mark complete + new task in 14 days</span>
+                          <span className="text-ink font-mono w-16 shrink-0">RCE14</span>
+                          <span className="text-ink-secondary">Mark complete + new task in 14 days</span>
                         </div>
                         <div className="flex gap-2">
-                          <span className="text-ink underline font-mono font-bold w-16 shrink-0">P30</span>
-                          <span className="text-gray-300">Push due date back by 30 days</span>
+                          <span className="text-ink font-mono w-16 shrink-0">P30</span>
+                          <span className="text-ink-secondary">Push due date back by 30 days</span>
                         </div>
                       </div>
-                      <p className="text-gray-500 mt-2 text-xs">Replace the number with any value you want.</p>
+                      <p className="text-ink-muted mt-2 text-xs">Replace the number with any value you want.</p>
                     </div>
                   )}
                 </span>
@@ -306,10 +305,10 @@ export default function TaskTable({
         </thead>
         <tbody>
           {tasks.map((task, rowIdx) => (
-            <tr key={task.Id} className={rowIdx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+            <tr key={task.Id} className="bg-white">
 
               {/* Row number */}
-              <td className="text-center text-xs text-gray-300 font-mono w-8">{rowIdx + 1}</td>
+              <td className="text-center text-xs text-ink-muted font-mono tabular-nums w-8">{rowIdx + 1}</td>
 
               {/* Account Name — col 1 */}
               <td
@@ -318,8 +317,8 @@ export default function TaskTable({
                 onFocus={() => setActiveCell({ row: rowIdx, col: 1 })}
                 className={`${cellBase} cursor-default ${isCellActive(rowIdx, 1) ? cellActive : ""}`}
               >
-                <span className="font-medium text-navy text-sm">
-                  {task.AccountName ?? <span className="text-gray-400 italic text-sm">No account</span>}
+                <span className="font-medium text-ink text-sm">
+                  {task.AccountName ?? <span className="text-ink-muted italic text-sm font-normal">No account</span>}
                 </span>
               </td>
 
@@ -336,12 +335,12 @@ export default function TaskTable({
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 text-ink underline hover:text-ink text-sm font-medium underline-offset-2"
+                    className="inline-flex items-center gap-1 text-ink underline hover:text-ink text-sm font-normal underline-offset-2"
                   >
                     Open ↗
                   </a>
                 ) : (
-                  <span className="text-gray-300 text-sm">—</span>
+                  <span className="text-ink-muted text-sm">—</span>
                 )}
               </td>
 
@@ -352,7 +351,7 @@ export default function TaskTable({
                 onFocus={() => setActiveCell({ row: rowIdx, col: 3 })}
                 className={`${cellBase} cursor-default ${isCellActive(rowIdx, 3) ? cellActive : ""}`}
               >
-                <span className="text-gray-600 text-sm">{task.Subject}</span>
+                <span className="text-ink-secondary text-sm">{task.Subject}</span>
               </td>
 
               {/* Due Date — col 4, hyperlinked to company website */}
@@ -369,15 +368,15 @@ export default function TaskTable({
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="text-sm text-ink underline hover:text-ink underline-offset-2 font-mono"
+                      className="text-sm text-ink underline hover:text-ink underline-offset-2 tabular-nums"
                     >
                       {task.ActivityDate}
                     </a>
                   ) : (
-                    <span className="text-sm text-gray-500 font-mono">{task.ActivityDate}</span>
+                    <span className="text-sm text-ink-secondary tabular-nums">{task.ActivityDate}</span>
                   )
                 ) : (
-                  <span className="text-gray-300 text-sm">—</span>
+                  <span className="text-ink-muted text-sm">—</span>
                 )}
               </td>
 
@@ -407,9 +406,9 @@ export default function TaskTable({
                         if (rowIdx > 0) focusCell(rowIdx - 1, INTERACTIVE_COL);
                       }
                     }}
-                    className={`w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors ${getInputBorderClass(task.Id)}`}
+                    className={`w-full border rounded-sm px-2 py-1 text-sm focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 transition-colors ${getInputBorderClass(task.Id)}`}
                   />
-                  {isInvalidCode(task.Id) && <span className="text-xs font-medium text-red-600" role="alert">Invalid code. Use D, P7, P30, RCE7, RCE12, etc.</span>}
+                  {isInvalidCode(task.Id) && <span className="text-xs font-normal text-danger" role="alert">Invalid code. Use D, P7, P30, RCE7, RCE12, etc.</span>}
                   {renderBadge(task.Id)}
                   {quickActions(task)}
                 </div>
@@ -432,16 +431,16 @@ export default function TaskTable({
         return (
           <div
             key={task.Id}
-            className="rounded-xl border border-gray-200 bg-white shadow-sm p-4"
+            className="rounded-md border border-line bg-white p-4"
           >
             {/* Company name */}
             <div className="flex items-start justify-between gap-2">
-              <span className="font-semibold text-navy text-base leading-snug">
+              <span className="font-medium text-ink text-base leading-snug">
                 {task.AccountName ?? (
-                  <span className="text-gray-400 italic font-normal">No account</span>
+                  <span className="text-ink-muted italic font-normal">No account</span>
                 )}
               </span>
-              <span className="text-xs text-gray-300 font-mono shrink-0 mt-0.5">
+              <span className="text-xs text-ink-muted font-mono tabular-nums shrink-0 mt-0.5">
                 #{rowIdx + 1}
               </span>
             </div>
@@ -454,19 +453,19 @@ export default function TaskTable({
                     href={website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-ink underline hover:text-ink underline-offset-2 font-mono"
+                    className="text-ink underline hover:text-ink underline-offset-2 tabular-nums"
                   >
                     {task.ActivityDate}
                   </a>
                 ) : (
-                  <span className="text-gray-500 font-mono">{task.ActivityDate}</span>
+                  <span className="text-ink-secondary tabular-nums">{task.ActivityDate}</span>
                 ))}
               {task.AccountUrl && (
                 <a
                   href={task.AccountUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-ink underline hover:text-ink font-medium underline-offset-2"
+                  className="inline-flex items-center gap-1 text-ink underline hover:text-ink font-normal underline-offset-2"
                 >
                   Open in Salesforce ↗
                 </a>
@@ -478,10 +477,10 @@ export default function TaskTable({
               <button
                 type="button"
                 onClick={() => toggleDelete(task)}
-                className={`flex-1 min-h-[44px] rounded-lg border text-sm font-semibold transition-colors ${
+                className={`flex-1 min-h-[44px] rounded-sm border text-sm font-normal transition-colors ${
                   action.actionType === "hard_delete"
-                    ? "border-red-500 bg-red-500 text-white"
-                    : "border-red-200 bg-red-50 text-red-700 active:bg-red-100"
+                    ? "border-danger bg-danger-soft text-danger"
+                    : "border-danger bg-white text-danger active:bg-danger-soft"
                 }`}
               >
                 Delete
@@ -489,21 +488,33 @@ export default function TaskTable({
               <button
                 type="button"
                 onClick={() => bumpDelay(task, 7)}
-                className="flex-1 min-h-[44px] rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold active:bg-blue-100 transition-colors"
+                className={`flex-1 min-h-[44px] rounded-sm border text-sm font-normal transition-colors ${
+                  action.actionType === "delay"
+                    ? "border-ink bg-surface-4 text-ink"
+                    : "border-line-strong bg-white text-ink active:bg-surface-3"
+                }`}
               >
                 +7d
               </button>
               <button
                 type="button"
                 onClick={() => bumpDelay(task, 30)}
-                className="flex-1 min-h-[44px] rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold active:bg-blue-100 transition-colors"
+                className={`flex-1 min-h-[44px] rounded-sm border text-sm font-normal transition-colors ${
+                  action.actionType === "delay"
+                    ? "border-ink bg-surface-4 text-ink"
+                    : "border-line-strong bg-white text-ink active:bg-surface-3"
+                }`}
               >
                 +30d
               </button>
               <button
                 type="button"
                 onClick={() => writeAction(task, "RCE7", "complete_reschedule", 7)}
-                className="flex-[2] min-h-[44px] rounded-lg border border-green-200 bg-green-50 px-2 text-green-700 text-sm font-semibold active:bg-green-100 transition-colors"
+                className={`flex-[2] min-h-[44px] rounded-sm border px-2 text-sm font-normal transition-colors ${
+                  action.actionType === "complete_reschedule"
+                    ? "border-ink bg-surface-4 text-ink"
+                    : "border-line-strong bg-white text-ink active:bg-surface-3"
+                }`}
               >
                 Complete+Recreate
               </button>
@@ -512,7 +523,7 @@ export default function TaskTable({
                   type="button"
                   onClick={() => clearAction(task)}
                   aria-label="Clear action"
-                  className="min-h-[44px] w-11 shrink-0 rounded-lg border border-gray-200 bg-white text-gray-400 text-lg active:bg-gray-100 transition-colors"
+                  className="min-h-[44px] w-11 shrink-0 rounded-sm border border-line bg-white text-ink-secondary text-lg active:bg-surface-3 transition-colors"
                 >
                   ×
                 </button>
@@ -526,9 +537,9 @@ export default function TaskTable({
               value={inputValues.get(task.Id) ?? ""}
               placeholder="Or type: D / RCE14 / P30"
               onChange={(e) => handleInputChange(task, e.target.value)}
-              className={`w-full border rounded-lg px-3 min-h-[44px] text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors mt-2 ${getInputBorderClass(task.Id)}`}
+              className={`w-full border rounded-sm px-3 min-h-[44px] text-sm focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 transition-colors mt-2 ${getInputBorderClass(task.Id)}`}
             />
-            {isInvalidCode(task.Id) && <div className="mt-1 text-xs font-medium text-red-600" role="alert">Invalid code. Use D, P7, P30, RCE7, RCE12, etc.</div>}
+            {isInvalidCode(task.Id) && <div className="mt-1 text-xs font-normal text-danger" role="alert">Invalid code. Use D, P7, P30, RCE7, RCE12, etc.</div>}
             <div className="mt-1">{renderBadge(task.Id)}</div>
           </div>
         );

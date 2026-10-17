@@ -236,9 +236,9 @@ export default function CallLoggerTable({
           acceptSuggestion(eventId, field);
         }}
         title={reason ? `${reason}. Click to accept.` : "Click to accept this suggestion"}
-        className="self-start inline-flex items-center gap-1 rounded bg-sky-50 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-sky-700 hover:bg-sky-100"
+        className="self-start inline-flex items-center gap-1 rounded-sm bg-white border border-line px-1.5 py-px text-[11px] font-normal text-ink-secondary hover:bg-surface-3 hover:text-ink transition-colors"
       >
-        Suggested <span aria-hidden="true">·</span> <span className="normal-case tracking-normal">Accept</span>
+        Suggested <span aria-hidden="true">·</span> <span className="text-ink">Accept</span>
       </button>
     );
   }
@@ -411,23 +411,23 @@ export default function CallLoggerTable({
   }
 
   const cellBase = "outline-none";
-  const cellActive = "ring-2 ring-inset ring-blue-400";
+  const cellActive = "ring-2 ring-inset ring-line-strong";
 
   function getTypeBorderClass(callType: string) {
-    if (callType === "C1") return "border-green-400 bg-green-50";
-    if (callType === "RCC") return "border-blue-400 bg-blue-50";
-    return "border-gray-200 bg-white";
+    if (callType === "C1") return "border-line-strong bg-white";
+    if (callType === "RCC") return "border-line-strong bg-white";
+    return "border-line-strong bg-white";
   }
 
   function renderTypeBadge(callType: string) {
     if (callType === "C1")
       return (
-        <span className="text-xs text-green-600 font-medium">→ First Call</span>
+        <span className="text-xs text-ok font-normal">→ First call</span>
       );
     if (callType === "RCC")
       return (
-        <span className="text-xs text-blue-600 font-medium">
-          → Reconnect Call
+        <span className="text-xs text-info font-normal">
+          → Reconnect call
         </span>
       );
     return null;
@@ -436,7 +436,7 @@ export default function CallLoggerTable({
   function renderFollowUpBadge(days: number | null) {
     if (days && days > 0)
       return (
-        <span className="text-xs text-purple-600 font-medium">
+        <span className="text-xs text-ink-secondary font-normal">
           → Follow-up in {days}d
         </span>
       );
@@ -447,10 +447,9 @@ export default function CallLoggerTable({
 
   if (meetings.length === 0) {
     return (
-      <div className="text-center py-16 text-gray-400">
-        <div className="text-5xl mb-4">📅</div>
-        <p className="font-medium">No external meetings found for this week</p>
-        <p className="text-sm mt-1">
+      <div className="text-center py-16 text-ink-secondary">
+        <p className="text-sm">No external meetings found for this week</p>
+        <p className="text-sm mt-1 text-ink-muted">
           All meetings were internal or had no attendees to match
         </p>
       </div>
@@ -460,7 +459,7 @@ export default function CallLoggerTable({
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
+    <div className="overflow-x-auto rounded-md border border-line">
       <table
         className="task-table w-full bg-white"
         onKeyDown={handleKeyDown}
@@ -471,7 +470,7 @@ export default function CallLoggerTable({
         <thead>
           <tr>
             <th className="w-8" />
-            <th className="min-w-[180px]">Meeting Title</th>
+            <th className="min-w-[180px]">Meeting title</th>
             <th>Account</th>
             <th>Salesforce</th>
             <th>Date</th>
@@ -480,7 +479,7 @@ export default function CallLoggerTable({
                 Type
                 <span className="relative inline-block">
                   <button
-                    className="w-4 h-4 rounded-full bg-gray-400 text-white text-xs font-bold flex items-center justify-center hover:bg-gray-500 focus:outline-none leading-none"
+                    className="w-4 h-4 rounded-sm border border-line text-ink-secondary text-[10px] font-normal flex items-center justify-center hover:bg-surface-3 hover:text-ink focus:outline-none leading-none"
                     onMouseEnter={() => setShowTooltip(true)}
                     onMouseLeave={() => setShowTooltip(false)}
                     onClick={() => setShowTooltip((v) => !v)}
@@ -490,29 +489,29 @@ export default function CallLoggerTable({
                     ?
                   </button>
                   {showTooltip && (
-                    <div className="absolute right-6 top-0 z-50 w-64 bg-navy text-white text-xs rounded-lg p-3 shadow-2xl border border-navy-light">
-                      <p className="font-semibold mb-2 text-white">
+                    <div className="absolute right-6 top-0 z-50 w-64 bg-white text-ink text-xs rounded-md p-3 shadow-xl border border-line font-normal">
+                      <p className="font-medium mb-2 text-ink">
                         Type reference:
                       </p>
                       <div className="space-y-1.5">
                         <div className="flex gap-2">
-                          <span className="text-ink underline font-mono font-bold w-10 shrink-0">
+                          <span className="text-ink font-mono w-10 shrink-0">
                             C1
                           </span>
-                          <span className="text-gray-300">
+                          <span className="text-ink-secondary">
                             First Call — logs a completed C1 task
                           </span>
                         </div>
                         <div className="flex gap-2">
-                          <span className="text-ink underline font-mono font-bold w-10 shrink-0">
+                          <span className="text-ink font-mono w-10 shrink-0">
                             RCC
                           </span>
-                          <span className="text-gray-300">
+                          <span className="text-ink-secondary">
                             Reconnect Call — logs a completed RCC task
                           </span>
                         </div>
                       </div>
-                      <p className="text-gray-500 mt-2 text-xs">
+                      <p className="text-ink-muted mt-2 text-xs">
                         Leave blank to skip a meeting.
                       </p>
                     </div>
@@ -549,14 +548,10 @@ export default function CallLoggerTable({
             const followUpRaw = followUpPending
               ? `RCE${suggestion!.followUpDays}`
               : followUpRawValues.get(meeting.eventId) ?? (entry.followUpDays ? `RCE${entry.followUpDays}` : "");
-            const suggestedClass = "border-dashed border-sky-300 bg-white text-gray-400 italic";
+            const suggestedClass = "border-dashed border-line-strong bg-white text-ink-muted italic";
 
-            // Row background: gray for already-logged, alternating for normal
-            const rowBg = meeting.alreadyLogged
-              ? "bg-amber-50/60"
-              : rowIdx % 2 === 0
-                ? "bg-white"
-                : "bg-gray-50/50";
+            // Row background: plain white; already-logged rows read as muted text instead.
+            const rowBg = "bg-white";
 
             return (
               <React.Fragment key={meeting.eventId}>
@@ -565,12 +560,12 @@ export default function CallLoggerTable({
               >
                 {/* Row number + dismiss button */}
                 <td className="text-center w-8 relative group">
-                  <span className="text-xs text-gray-300 font-mono group-hover:hidden">
+                  <span className="text-xs text-ink-muted font-mono tabular-nums group-hover:hidden">
                     {rowIdx + 1}
                   </span>
                   <button
                     onClick={() => onDismiss(meeting.eventId)}
-                    className="hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-500 hover:bg-red-500 hover:text-white transition-colors mx-auto text-xs font-bold leading-none"
+                    className="hidden group-hover:flex items-center justify-center w-5 h-5 rounded-sm border border-line text-ink-secondary hover:bg-surface-3 hover:text-ink transition-colors mx-auto text-xs font-normal leading-none"
                     title="Dismiss this meeting"
                     tabIndex={-1}
                   >
@@ -586,7 +581,7 @@ export default function CallLoggerTable({
                   className={`${cellBase} cursor-default ${isCellActive(rowIdx, 1) ? cellActive : ""}`}
                 >
                   <div className="flex items-center gap-2">
-                    <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-gray-400" : "text-navy"}`}>
+                    <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-ink-muted" : "text-ink"}`}>
                       {meeting.subject}
                     </span>
                     {hasMatch && (
@@ -595,12 +590,12 @@ export default function CallLoggerTable({
                           e.stopPropagation();
                           toggleNotes(meeting.eventId);
                         }}
-                        className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                        className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-normal border transition-colors ${
                           notesOpen.has(meeting.eventId)
-                            ? "bg-brand-orange text-white"
+                            ? "bg-ink text-white border-ink"
                             : entry.notes
-                              ? "bg-orange-100 text-ink underline border border-orange-300"
-                              : "bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                              ? "bg-white text-ink border-line-strong hover:bg-surface-3"
+                              : "bg-white text-ink-secondary border-line hover:bg-surface-3 hover:text-ink"
                         }`}
                         title={
                           notesOpen.has(meeting.eventId)
@@ -628,12 +623,12 @@ export default function CallLoggerTable({
                 >
                   {/* Manual match selected — show linked account */}
                   {isManualMatch ? (
-                    <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-gray-400" : "text-navy"}`}>
+                    <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-ink-muted" : "text-ink"}`}>
                       {manualMatches.get(meeting.eventId)!.accountName}
                       {meeting.alreadyLogged ? (
-                        <span className="block text-xs text-amber-500 font-medium mt-0.5">Likely already logged</span>
+                        <span className="block text-xs text-warn font-normal mt-0.5">Likely already logged</span>
                       ) : (
-                        <span className="block text-xs text-green-500 mt-0.5">Manually linked</span>
+                        <span className="block text-xs text-ok font-normal mt-0.5">Manually linked</span>
                       )}
                     </span>
                   ) : meeting.allMatches.length > 1 ? (
@@ -645,7 +640,7 @@ export default function CallLoggerTable({
                           parseInt(e.target.value)
                         )
                       }
-                      className="text-sm font-medium text-navy border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                      className="text-sm font-medium text-ink border border-line-strong rounded-sm px-1 py-0.5 bg-white focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4"
                     >
                       {meeting.allMatches.map((m, i) => (
                         <option key={m.accountId} value={i}>
@@ -655,11 +650,11 @@ export default function CallLoggerTable({
                     </select>
                   ) : hasMatch && !isManualMatch ? (
                     <div>
-                      <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-gray-400" : "text-navy"}`}>
+                      <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-ink-muted" : "text-ink"}`}>
                         {selectedMatch?.accountName}
                       </span>
                       {meeting.alreadyLogged && (
-                        <span className="block text-xs text-amber-500 font-medium mt-0.5">
+                        <span className="block text-xs text-warn font-normal mt-0.5">
                           Likely already logged
                         </span>
                       )}
@@ -679,32 +674,32 @@ export default function CallLoggerTable({
                               handleAccountSearch(meeting.eventId);
                             }
                           }}
-                          className="flex-1 min-w-0 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                          className="flex-1 min-w-0 border border-line-strong rounded-sm px-2 py-1 text-sm bg-white focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4"
                         />
                         <button
                           onClick={() => handleAccountSearch(meeting.eventId)}
                           disabled={searchLoading.has(meeting.eventId)}
-                          className="shrink-0 bg-navy hover:bg-navy/80 disabled:opacity-50 text-white text-xs font-medium px-2 py-1 rounded transition-colors"
+                          className="shrink-0 bg-white hover:bg-surface-3 disabled:opacity-50 text-ink border border-line-strong text-xs font-medium px-2 py-1 rounded-sm transition-colors"
                         >
                           {searchLoading.has(meeting.eventId) ? "..." : "Search"}
                         </button>
                       </div>
                       {meeting.externalDomains.length > 0 && !searchInputs.has(meeting.eventId) && (
-                        <span className="text-xs text-gray-300">
+                        <span className="text-xs text-ink-muted">
                           {meeting.externalDomains.join(", ")}
                         </span>
                       )}
                       {/* Search results dropdown */}
                       {searchResults.has(meeting.eventId) && (
-                        <div className="border border-gray-200 rounded bg-white shadow-lg max-h-32 overflow-y-auto">
+                        <div className="border border-line rounded-md bg-white shadow-xl max-h-32 overflow-y-auto">
                           {(searchResults.get(meeting.eventId) ?? []).length === 0 ? (
-                            <div className="px-2 py-1.5 text-xs text-gray-400 italic">No accounts found</div>
+                            <div className="px-2 py-1.5 text-xs text-ink-muted italic">No accounts found</div>
                           ) : (
                             (searchResults.get(meeting.eventId) ?? []).map((account) => (
                               <button
                                 key={account.accountId}
                                 onClick={() => handleSelectSearchResult(meeting.eventId, account)}
-                                className="w-full text-left px-2 py-1.5 text-sm hover:bg-blue-50 hover:text-blue-700 border-b border-gray-100 last:border-0 transition-colors"
+                                className="w-full text-left px-2 py-1.5 text-sm text-ink hover:bg-surface-3 border-b border-line last:border-0 transition-colors"
                               >
                                 {account.accountName}
                               </button>
@@ -729,12 +724,12 @@ export default function CallLoggerTable({
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 text-ink underline hover:text-ink text-sm font-medium underline-offset-2"
+                      className="inline-flex items-center gap-1 text-ink underline hover:text-ink text-sm font-normal underline-offset-2"
                     >
                       Open ↗
                     </a>
                   ) : (
-                    <span className="text-gray-300 text-sm">—</span>
+                    <span className="text-ink-muted text-sm">—</span>
                   )}
                 </td>
 
@@ -745,7 +740,7 @@ export default function CallLoggerTable({
                   onFocus={() => setActiveCell({ row: rowIdx, col: 4 })}
                   className={`${cellBase} ${isCellActive(rowIdx, 4) ? cellActive : ""}`}
                 >
-                  <span className={`text-sm font-mono ${meeting.alreadyLogged ? "text-gray-400" : "text-gray-500"}`}>
+                  <span className={`text-sm tabular-nums ${meeting.alreadyLogged ? "text-ink-muted" : "text-ink-secondary"}`}>
                     {meeting.meetingDate}
                   </span>
                 </td>
@@ -782,9 +777,9 @@ export default function CallLoggerTable({
                         }
                       }}
                       title={typePending ? suggestion?.typeReason ?? undefined : undefined}
-                      className={`w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors ${
+                      className={`w-full border rounded-sm px-2 py-1 text-sm focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 transition-colors ${
                         !hasMatch
-                          ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          ? "bg-surface-3 text-ink-muted cursor-not-allowed border-line"
                           : typePending
                             ? suggestedClass
                             : getTypeBorderClass(entry.callType)
@@ -826,12 +821,12 @@ export default function CallLoggerTable({
                       }
                     }}
                     title={commentaryPending ? suggestion!.commentary! : undefined}
-                    className={`w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors ${
+                    className={`w-full border rounded-sm px-2 py-1 text-sm focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 transition-colors ${
                       !hasMatch
-                        ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200"
+                        ? "bg-surface-3 text-ink-muted cursor-not-allowed border-line"
                         : commentaryPending
                           ? suggestedClass
-                          : "border-gray-200 bg-white"
+                          : "border-line-strong bg-white"
                     }`}
                   />
                   {commentaryPending ? (
@@ -877,14 +872,14 @@ export default function CallLoggerTable({
                           ? suggestion.followUpReason
                           : undefined
                       }
-                      className={`w-full border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange transition-colors ${
+                      className={`w-full border rounded-sm px-2 py-1 text-sm focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 transition-colors ${
                         !hasMatch
-                          ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200"
+                          ? "bg-surface-3 text-ink-muted cursor-not-allowed border-line"
                           : followUpPending
                             ? suggestedClass
                             : entry.followUpDays
-                              ? "border-purple-400 bg-purple-50"
-                              : "border-gray-200 bg-white"
+                              ? "border-line-strong bg-white"
+                              : "border-line-strong bg-white"
                       }`}
                     />
                     {followUpPending
@@ -899,14 +894,14 @@ export default function CallLoggerTable({
                 <tr className={rowBg}>
                   <td />
                   <td colSpan={7} className="pb-3 pt-0 px-2">
-                    <div className="border border-orange-200 rounded-lg bg-orange-50/50 p-3">
+                    <div className="border border-line rounded-md bg-white p-3">
                       {(() => {
                         const granola = granolaNotes?.get(meeting.eventId);
                         if (!granola) return null;
                         const t = transcripts.get(meeting.eventId);
                         return (
                           <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                            <span className="rounded bg-white px-1.5 py-0.5 font-semibold text-navy border border-orange-200">
+                            <span className="rounded-sm bg-white px-1.5 py-0.5 font-normal text-ink border border-line">
                               From Granola
                             </span>
                             {granola.webUrl ? (
@@ -922,7 +917,7 @@ export default function CallLoggerTable({
                             <button
                               type="button"
                               onClick={() => void toggleTranscript(meeting.eventId, granola.noteId)}
-                              className="font-medium text-navy underline-offset-2"
+                              className="font-normal text-ink underline underline-offset-2"
                               aria-expanded={Boolean(t?.open)}
                             >
                               {t?.open ? "Hide transcript" : "Show transcript"}
@@ -934,24 +929,24 @@ export default function CallLoggerTable({
                         const t = transcripts.get(meeting.eventId);
                         if (!t?.open) return null;
                         return (
-                          <div className="mb-3 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-white px-3 py-2 text-xs leading-5 text-gray-700">
+                          <div className="mb-3 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md border border-line bg-surface-3 px-3 py-2 text-xs leading-5 text-ink-secondary">
                             {t.loading
                               ? "Loading transcript from Granola…"
                               : t.error
-                                ? <span className="text-red-600">{t.error}</span>
+                                ? <span className="text-danger">{t.error}</span>
                                 : t.text || "Granola has no transcript for this call."}
                           </div>
                         );
                       })()}
-                      <label className="text-xs font-medium text-gray-500 mb-1.5 block">
-                        Granola Meeting Notes — will be saved as &quot;{entry.callType || "C1/RCC"} Notes&quot; in Salesforce
+                      <label className="text-xs font-normal text-ink-secondary mb-1.5 block">
+                        Granola meeting notes — will be saved as &quot;{entry.callType || "C1/RCC"} Notes&quot; in Salesforce
                       </label>
                       <textarea
                         value={entry.notes}
                         onChange={(e) => handleNotesChange(meeting.eventId, e.target.value)}
                         placeholder="Paste your Granola meeting notes here..."
                         rows={6}
-                        className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white resize-y"
+                        className="w-full border border-line-strong rounded-sm px-3 py-2 text-sm focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 bg-white resize-y"
                       />
                       {entry.notes && (
                         <div className="flex items-center justify-between gap-3 mt-1.5">
@@ -959,7 +954,7 @@ export default function CallLoggerTable({
                             type="button"
                             onClick={() => suggestFromNotes(meeting)}
                             disabled={suggesting.has(meeting.eventId)}
-                            className="rounded-md bg-navy px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                            className="rounded-sm bg-white border border-line-strong hover:bg-surface-3 px-3 py-1.5 text-xs font-medium text-ink disabled:opacity-50 transition-colors"
                           >
                             {suggesting.has(meeting.eventId)
                               ? "Reviewing notes…"
@@ -967,13 +962,13 @@ export default function CallLoggerTable({
                                 ? "Suggest again"
                                 : "Suggest call log"}
                           </button>
-                          <span className="text-xs text-gray-400">
+                          <span className="text-xs text-ink-muted tabular-nums">
                             {entry.notes.length} characters
                           </span>
                         </div>
                       )}
                       {suggestErrors.get(meeting.eventId) && (
-                        <p className="mt-1 text-xs text-red-600">{suggestErrors.get(meeting.eventId)}</p>
+                        <p className="mt-1 text-xs text-danger">{suggestErrors.get(meeting.eventId)}</p>
                       )}
                     </div>
                   </td>

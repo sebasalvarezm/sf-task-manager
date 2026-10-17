@@ -23,7 +23,7 @@ export function Spinner({
 }: Props) {
   const spinner = (
     <Loader2
-      className={`animate-spin text-brand ${SIZE[size]} ${className}`}
+      className={`animate-spin text-ink-muted ${SIZE[size]} ${className}`}
       strokeWidth={2}
     />
   );

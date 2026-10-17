@@ -13,24 +13,23 @@ function hourLabel(h: number): string {
 }
 
 // Map a reply rate (0..1) + volume to a Tailwind bg class.
-// Below the volume threshold: neutral gray. Above: blue scale.
+// Below the volume threshold: neutral. Above: one hue (--info) at four
+// opacity steps; text flips to white only at the top step.
 function cellClass(
   sent: number,
   rate: number,
   peakRate: number,
   minSends: number
 ): string {
-  if (sent === 0) return "bg-gray-50";
-  if (sent < minSends) return "bg-gray-100";
-  if (peakRate <= 0) return "bg-blue-50";
+  if (sent === 0) return "bg-surface-3 text-ink-secondary";
+  if (sent < minSends) return "bg-surface-4 text-ink-secondary";
+  if (peakRate <= 0) return "bg-info/15 text-ink";
 
   const ratio = rate / peakRate; // 0..1
-  if (ratio >= 0.9) return "bg-blue-600 text-white";
-  if (ratio >= 0.7) return "bg-blue-500 text-white";
-  if (ratio >= 0.5) return "bg-blue-400 text-white";
-  if (ratio >= 0.3) return "bg-blue-300";
-  if (ratio >= 0.1) return "bg-blue-200";
-  return "bg-blue-100";
+  if (ratio >= 0.75) return "bg-info/85 text-white";
+  if (ratio >= 0.5) return "bg-info/60 text-ink";
+  if (ratio >= 0.25) return "bg-info/35 text-ink";
+  return "bg-info/15 text-ink";
 }
 
 type Props = {
@@ -44,12 +43,12 @@ export default function Heatmap({ data, minSendsForRate = 5 }: Props) {
   return (
     <div className="w-full">
       {data.peak && (
-        <p className="text-sm font-semibold text-green-600 mb-3">
+        <p className="text-sm text-ink mb-3 tabular-nums">
           Peak: {DAY_LABELS[data.peak.dow]} {hourLabel(data.peak.hour)} —{" "}
           {(data.peak.rate * 100).toFixed(1)}% open rate ({data.peak.sent} sent)
         </p>
       )}
-      <p className="text-xs text-gray-500 mb-3">
+      <p className="text-[13px] text-ink-secondary mb-3">
         Cell color = open rate · Number = open % · Hover for details · Cells with &lt;{minSendsForRate} sends are neutral
       </p>
 
@@ -57,9 +56,9 @@ export default function Heatmap({ data, minSendsForRate = 5 }: Props) {
         <table className="w-full text-xs border-separate" style={{ borderSpacing: "2px" }}>
           <thead>
             <tr>
-              <th className="w-12 text-left text-gray-500 font-medium px-1">Hour</th>
+              <th className="w-12 text-left text-ink-secondary font-normal px-1">Hour</th>
               {DAY_LABELS.map((d) => (
-                <th key={d} className="text-gray-500 font-medium px-1 py-1">
+                <th key={d} className="text-ink-secondary font-normal px-1 py-1">
                   {d}
                 </th>
               ))}
@@ -68,7 +67,7 @@ export default function Heatmap({ data, minSendsForRate = 5 }: Props) {
           <tbody>
             {HOURS.map((h) => (
               <tr key={h}>
-                <td className="text-gray-500 font-medium pr-2 text-right whitespace-nowrap">
+                <td className="text-ink-secondary font-normal pr-2 text-right whitespace-nowrap tabular-nums">
                   {hourLabel(h)}
                 </td>
                 {DAY_LABELS.map((_, dow) => {
@@ -80,7 +79,7 @@ export default function Heatmap({ data, minSendsForRate = 5 }: Props) {
                     <td
                       key={dow}
                       title={title}
-                      className={`text-center font-medium rounded transition-colors cursor-default ${cls}`}
+                      className={`text-center font-normal tabular-nums rounded-sm transition-colors cursor-default ${cls}`}
                       style={{ height: "28px", minWidth: "54px" }}
                     >
                       {showLabel ? `${(c.rate * 100).toFixed(0)}%` : ""}
@@ -93,7 +92,7 @@ export default function Heatmap({ data, minSendsForRate = 5 }: Props) {
         </table>
       </div>
 
-      <p className="text-xs text-gray-400 mt-3">
+      <p className="text-[13px] text-ink-muted mt-3 tabular-nums">
         {data.totalSent.toLocaleString()} sends · {data.totalOpened.toLocaleString()} opened · times shown in Eastern Time
       </p>
     </div>

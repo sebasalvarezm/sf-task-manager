@@ -200,18 +200,29 @@ type EngagementResponse = {
 };
 
 // ── Colors ───────────────────────────────────────────────────────────────────
-const BLUE = "#6FA8F0";
-const GREEN = "#8DD178";
-const ORANGE = "#F2B84B";
-const TEAL = "#5EC4C4";
-const NAVY = "#1B2A4A";
+// Charts use the neutral scale plus at most two hues (DESIGN.md §3): --info
+// blue and a dusty violet. Third/fourth series fall back to neutral greys.
+const BLUE = "#3B5BDB"; // --info
+const GREEN = "#7A6FA8"; // dusty violet
+const ORANGE = "#8B8985"; // neutral: --text-tertiary
+const TEAL = "#C9C6BF"; // neutral: --border-strong
+const NAVY = "#1A1A1A"; // ink, used for bar labels
+const LINE = "#E3E1DC"; // hairline gridlines
+const TICK = { fontSize: 12, fill: "#5F5E5A" };
+const BAR_RADIUS: [number, number, number, number] = [2, 2, 0, 0];
+const TOOLTIP_STYLE = {
+  borderRadius: 6,
+  border: `1px solid ${LINE}`,
+  boxShadow: "none",
+  fontSize: 12,
+  color: NAVY,
+};
+const TOOLTIP_CURSOR = { fill: "#F7F6F3" };
 
-// Outreach quality: clean reuses BLUE, which already means "outreach" on this
-// page, so the tie is semantic. FLAGGED is a muted burnt red — deliberately not
-// the hotter --danger #DC2626, which shouts next to these pastels. Validated as
-// a pair: CVD ΔE 27.7 (deutan), normal-vision ΔE 32.1, both well clear.
+// Outreach quality: FLAGGED is the semantic --negative (a flagged email is a
+// value judgement); CLEAN is a neutral track so the chart stays one hue.
 const FLAGGED = "#B5441F";
-const CLEAN = BLUE;
+const CLEAN = "#C9C6BF";
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
@@ -637,7 +648,7 @@ export default function StatsPage() {
             {outreachConnected !== null && (
               <span
                 className={
-                  "inline-flex items-center gap-1.5 text-xs rounded-md px-3 h-9 border " +
+                  "inline-flex items-center gap-1.5 text-xs rounded-sm px-3 h-9 border " +
                   (outreachConnected
                     ? "text-ok bg-ok-soft border-ok/20"
                     : "text-warn bg-warn-soft border-warn/20")
@@ -673,48 +684,43 @@ export default function StatsPage() {
             }}
           />
           <div className="flex items-center gap-3">
-            <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+            <div className="flex gap-0.5 bg-surface-4 rounded-sm p-0.5 w-fit">
               {(["small_ma", "cdm"] as StatsTeam[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTeam(t)}
                   className={
                     team === t
-                      ? "px-3 py-1.5 text-sm font-medium rounded-md bg-navy text-white"
-                      : "px-3 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:bg-gray-200"
+                      ? "px-3 py-1.5 text-sm font-normal rounded-sm bg-navy text-white"
+                      : "px-3 py-1.5 text-sm font-normal rounded-sm text-ink-secondary hover:bg-surface-3 hover:text-ink"
                   }
                 >
                   {TEAM_CONFIG[t].label}
                 </button>
               ))}
             </div>
-            <button
-              onClick={handleRefresh}
-              className="text-sm font-medium text-navy bg-white border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50"
-            >
+            <Button variant="primary" size="md" onClick={handleRefresh}>
               Refresh
-            </button>
+            </Button>
             <CdmTeamBadge team={team} />
           </div>
         </div>
-        <p className="text-sm text-gray-500 mb-8">
-          Showing <span className="font-medium text-navy">{range.label}</span>
+        <p className="text-sm text-ink-secondary mb-8">
+          Showing <span className="text-ink">{range.label}</span>
         </p>
 
         {sfConnected === false && (
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 text-center mb-6">
-            <p className="text-sm text-amber-700">
-              Salesforce is not connected. Connect to see stats.
-            </p>
-          </div>
+          <p className="text-sm text-ink-secondary mb-6">
+            Salesforce is not connected. Connect to see stats.
+          </p>
         )}
 
         {/* ── ACTIVITY SUMMARY ─────────────────────────────────────────────── */}
-        <SectionHeader title="Activity Summary" color="bg-blue-500" />
+        <SectionHeader title="Activity summary" color="bg-blue-500" />
 
         {sfConnected === true && statsLoading && !data && <LoadingSpinner />}
         {sfConnected === true && statsError && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700 mb-6">
+          <div className="bg-danger-soft border border-danger/20 rounded-md p-4 text-sm text-danger mb-6">
             {statsError}
           </div>
         )}
@@ -723,12 +729,12 @@ export default function StatsPage() {
           <>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-10">
               <KpiCard
-                label="Total Outreach"
+                label="Total outreach"
                 sublabel={`${fmtNumber(data.kpis.e1)} E1 · ${fmtNumber(data.kpis.rce1)} RCE1 · ${fmtNumber(data.kpis.de1)} D-E1`}
                 value={fmtNumber(data.kpis.totalOutreach)}
               />
               <KpiCard
-                label="Total Calls"
+                label="Total calls"
                 sublabel="C1 + RCC"
                 value={fmtNumber(data.kpis.totalCalls)}
               />
@@ -736,15 +742,14 @@ export default function StatsPage() {
                 label="Conversion"
                 sublabel={`${fmtNumber(data.conversion.team.c1)} calls / ${fmtNumber(data.conversion.team.outreach)} outreach`}
                 value={fmtPct(data.conversion.team.rate)}
-                accent="text-green-600"
               />
               <KpiCard
-                label="F2F This Year"
+                label="F2F this year"
                 sublabel={`${fmtNumber(data.kpis.totalF2F)} in selected range`}
                 value={fmtNumber(data.kpis.f2fThisYear)}
               />
               <KpiCard
-                label="Total Open BRO"
+                label="Total open BRO"
                 sublabel="All stages combined"
                 value={fmtMoney(data.kpis.totalOpenBRO)}
               />
@@ -752,17 +757,17 @@ export default function StatsPage() {
 
             {range.weeks > 1 && (
               <div className="mb-10">
-                <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">
-                  Weekly Averages
+                <h3 className="text-[13px] text-ink-secondary mb-3">
+                  Weekly averages
                 </h3>
                 <div className="grid grid-cols-2 gap-4">
                   <KpiCard
-                    label="Avg Outreach / Week"
+                    label="Avg outreach / week"
                     sublabel={`over ${range.weeks} weeks`}
                     value={(data.kpis.totalOutreach / range.weeks).toFixed(1)}
                   />
                   <KpiCard
-                    label="Avg Calls / Week"
+                    label="Avg calls / week"
                     sublabel={`over ${range.weeks} weeks`}
                     value={(data.kpis.totalCalls / range.weeks).toFixed(1)}
                   />
@@ -771,7 +776,7 @@ export default function StatsPage() {
             )}
 
             {/* ── ACTION ITEMS ───────────────────────────────────────────── */}
-            <SectionHeader title="Action Items" color="bg-red-500" />
+            <SectionHeader title="Action items" color="bg-red-500" />
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-10">
               <ActionCard
@@ -805,7 +810,7 @@ export default function StatsPage() {
                       }
                       subtitle={`${m.company || "—"} · sent ${daysAgo(m.sentAt)}`}
                       right={
-                        <span className="text-amber-600 font-semibold">
+                        <span className="text-ink tabular-nums">
                           {m.openCount} opens
                         </span>
                       }
@@ -815,20 +820,20 @@ export default function StatsPage() {
             </div>
 
             {/* ── TEAM BREAKDOWN ─────────────────────────────────────────── */}
-            <SectionHeader title="Team Breakdown" color="bg-navy" />
+            <SectionHeader title="Team breakdown" color="bg-navy" />
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-              <ChartCard title="Outreach by Person">
+              <ChartCard title="Outreach by person">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={outreachByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-                    <Tooltip />
+                    <CartesianGrid stroke={LINE} vertical={false} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                    <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                     <Bar
                       dataKey="Outreach"
                       fill={BLUE}
-                      radius={[4, 4, 0, 0]}
+                      radius={BAR_RADIUS}
                       cursor="pointer"
                       onClick={(d) =>
                         openOwnerDrill(
@@ -844,29 +849,29 @@ export default function StatsPage() {
                 </ResponsiveContainer>
               </ChartCard>
 
-              <ChartCard title={showTrend ? "Outreach Trend" : "E1 / RCE1 / D-E1"}>
+              <ChartCard title={showTrend ? "Outreach trend" : "E1 / RCE1 / D-E1"}>
                 {showTrend ? (
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={trendData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                      <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-                      <Tooltip />
-                      <Bar dataKey="Outreach" fill={BLUE} radius={[4, 4, 0, 0]} />
+                      <CartesianGrid stroke={LINE} vertical={false} />
+                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                      <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
+                      <Bar dataKey="Outreach" fill={BLUE} radius={BAR_RADIUS} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={e1VsRce1Data} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                      <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-                      <Tooltip />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <CartesianGrid stroke={LINE} vertical={false} />
+                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                      <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
+                      <Legend wrapperStyle={{ fontSize: 12, color: "#5F5E5A" }} iconType="square" iconSize={8} />
                       <Bar
                         dataKey="E1"
                         fill={BLUE}
-                        radius={[4, 4, 0, 0]}
+                        radius={BAR_RADIUS}
                         cursor="pointer"
                         onClick={(d) =>
                           openOwnerDrill(
@@ -879,7 +884,7 @@ export default function StatsPage() {
                       <Bar
                         dataKey="RCE1"
                         fill={GREEN}
-                        radius={[4, 4, 0, 0]}
+                        radius={BAR_RADIUS}
                         cursor="pointer"
                         onClick={(d) =>
                           openOwnerDrill(
@@ -892,7 +897,7 @@ export default function StatsPage() {
                       <Bar
                         dataKey="D-E1"
                         fill={ORANGE}
-                        radius={[4, 4, 0, 0]}
+                        radius={BAR_RADIUS}
                         cursor="pointer"
                         onClick={(d) =>
                           openOwnerDrill(
@@ -909,18 +914,18 @@ export default function StatsPage() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-              <ChartCard title="Calls + F2F by Person">
+              <ChartCard title="Calls + F2F by person">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={callsF2FByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
-                    <Tooltip />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <CartesianGrid stroke={LINE} vertical={false} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                    <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
+                    <Legend wrapperStyle={{ fontSize: 12, color: "#5F5E5A" }} iconType="square" iconSize={8} />
                     <Bar
                       dataKey="C1"
                       fill={BLUE}
-                      radius={[4, 4, 0, 0]}
+                      radius={BAR_RADIUS}
                       cursor="pointer"
                       onClick={(d) =>
                         openOwnerDrill(
@@ -933,7 +938,7 @@ export default function StatsPage() {
                     <Bar
                       dataKey="RCC"
                       fill={TEAL}
-                      radius={[4, 4, 0, 0]}
+                      radius={BAR_RADIUS}
                       cursor="pointer"
                       onClick={(d) =>
                         openOwnerDrill(
@@ -946,7 +951,7 @@ export default function StatsPage() {
                     <Bar
                       dataKey="F2F"
                       fill={ORANGE}
-                      radius={[4, 4, 0, 0]}
+                      radius={BAR_RADIUS}
                       cursor="pointer"
                       onClick={(d) =>
                         openOwnerDrill(
@@ -960,7 +965,7 @@ export default function StatsPage() {
                 </ResponsiveContainer>
               </ChartCard>
 
-              <ChartCard title="C1 to Outreach">
+              <ChartCard title="C1 to outreach">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart
                     data={data.conversion.byPerson.map((p) => ({
@@ -969,14 +974,14 @@ export default function StatsPage() {
                     }))}
                     margin={{ top: 24, right: 16, left: 0, bottom: 5 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}%`} />
-                    <Tooltip formatter={(v) => `${v}%`} />
+                    <CartesianGrid stroke={LINE} vertical={false} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                    <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => `${v}%`} />
                     <Bar
                       dataKey="Rate"
                       fill={GREEN}
-                      radius={[4, 4, 0, 0]}
+                      radius={BAR_RADIUS}
                       cursor="pointer"
                       onClick={(d) =>
                         openOwnerDrill(
@@ -1000,12 +1005,12 @@ export default function StatsPage() {
               <>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
                   <ChartCard
-                    title="BS Meter"
+                    title="BS meter"
                     actions={
                       <button
                         type="button"
                         onClick={() => setRulesOpen(true)}
-                        className="text-xs text-ink-muted hover:text-ink transition-colors"
+                        className="text-xs text-ink-secondary hover:text-ink transition-colors"
                       >
                         Rules
                       </button>
@@ -1039,6 +1044,7 @@ export default function StatsPage() {
                                 ))}
                               </Pie>
                               <Tooltip
+                                contentStyle={TOOLTIP_STYLE}
                                 formatter={(v: number, n) => [
                                   `${fmtNumber(v)} ${v === 1 ? "email" : "emails"}`,
                                   n,
@@ -1049,7 +1055,7 @@ export default function StatsPage() {
 
                           {/* Hero number, centred in the donut hole. */}
                           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                            <span className="text-3xl font-semibold tabular-nums text-navy">
+                            <span className="text-2xl font-normal tabular-nums text-ink">
                               {fmtPct(quality.totals.rate)}
                             </span>
                             <span className="mt-0.5 text-xs text-ink-muted">
@@ -1083,9 +1089,7 @@ export default function StatsPage() {
 
                         {quality.totals.bs > 0 && (
                           <p className="mt-3 border-t border-line pt-3 text-center text-xs text-ink-muted">
-                            <span className="uppercase tracking-wide">
-                              Reasons cited
-                            </span>
+                            <span>Reasons cited</span>
                             <span className="mt-1 block tabular-nums text-ink-secondary">
                               {(
                                 ["geography", "founded", "employees"] as QualityFlagKey[]
@@ -1101,7 +1105,7 @@ export default function StatsPage() {
                         )}
 
                         {!quality.foundedFieldAvailable && (
-                          <p className="mt-3 text-center text-xs text-warn">
+                          <p className="mt-3 text-center text-xs text-ink-secondary">
                             Year founded is unavailable in Salesforce — scored on
                             geography and headcount only.
                           </p>
@@ -1124,10 +1128,12 @@ export default function StatsPage() {
                         data={qualityBucketData}
                         margin={{ top: 24, right: 16, left: 0, bottom: 5 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                        <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
+                        <CartesianGrid stroke={LINE} vertical={false} />
+                        <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                        <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                         <Tooltip
+                          contentStyle={TOOLTIP_STYLE}
+                          cursor={TOOLTIP_CURSOR}
                           formatter={(v: number, n) => [fmtNumber(v), n]}
                           labelFormatter={(label, payload) => {
                             const row = payload?.[0]?.payload as
@@ -1139,7 +1145,7 @@ export default function StatsPage() {
                             )}`;
                           }}
                         />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Legend wrapperStyle={{ fontSize: 12, color: "#5F5E5A" }} iconType="square" iconSize={8} />
                         {/*
                           No white stroke between these two stacked segments.
                           A healthy team's flagged share is ~1% of a 200-email
@@ -1163,7 +1169,7 @@ export default function StatsPage() {
                           stackId="q"
                           fill={FLAGGED}
                           minPointSize={3}
-                          radius={[4, 4, 0, 0]}
+                          radius={BAR_RADIUS}
                           cursor="pointer"
                           onClick={(d) => openQualityBucket(d as BucketClick)}
                         >
@@ -1225,7 +1231,7 @@ export default function StatsPage() {
                               </Table.Cell>
                               <Table.Cell
                                 className={`text-right tabular-nums ${
-                                  p.bs > 0 ? "font-medium text-danger" : "text-ink-muted"
+                                  p.bs > 0 ? "text-danger" : "text-ink-muted"
                                 }`}
                               >
                                 {fmtPct(p.rate)}
@@ -1241,24 +1247,24 @@ export default function StatsPage() {
             )}
 
             {/* ── BEST SEND TIMES ────────────────────────────────────────── */}
-            <SectionHeader title="Best Send Times (ET)" color="bg-green-500" />
+            <SectionHeader title="Best send times (ET)" color="bg-green-500" />
 
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 mb-10">
+            <div className="bg-white rounded-md border border-line p-5 mb-10">
               {!outreachConnected ? (
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-ink-secondary">
                   Connect Outreach.io to see the send-times heatmap.
                 </p>
               ) : engagementLoading && !engagement ? (
-                <p className="text-sm text-gray-500">Loading engagement data…</p>
+                <p className="text-sm text-ink-secondary">Loading engagement data…</p>
               ) : engagementError ? (
-                <p className="text-sm text-red-700">{engagementError}</p>
+                <p className="text-sm text-danger">{engagementError}</p>
               ) : engagement && engagement.totals.mailings === 0 ? (
                 <div>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-ink-secondary">
                     No sends in this range yet. Try a wider range.
                   </p>
                   {engagement.debug && (
-                    <pre className="text-xs text-gray-400 mt-3 bg-gray-50 rounded p-2 overflow-x-auto whitespace-pre-wrap">
+                    <pre className="text-xs text-ink-muted mt-3 bg-surface-3 rounded-sm p-2 overflow-x-auto whitespace-pre-wrap">
                       {[
                         `Outreach returned ${engagement.debug.rawCount} raw mailings, ${engagement.debug.withDeliveredAt} with deliveredAt, ${engagement.debug.withProspectId} with prospectId.`,
                         `Requested: ${engagement.debug.requestedRange.start} → ${engagement.debug.requestedRange.end}`,
@@ -1278,23 +1284,23 @@ export default function StatsPage() {
 
             {/* ── BRO PIPELINE ───────────────────────────────────────────── */}
             <SectionHeader
-              title="BRO Pipeline"
+              title="BRO pipeline"
               color="bg-purple-500"
               subtitle="current open snapshot"
             />
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-              <ChartCard title="Open BRO by Originator">
+              <ChartCard title="Open BRO by originator">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={originatorData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => fmtMoney(Number(v))} />
-                    <Tooltip formatter={(v) => fmtMoney(Number(v))} />
+                    <CartesianGrid stroke={LINE} vertical={false} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                    <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => fmtMoney(Number(v))} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => fmtMoney(Number(v))} />
                     <Bar
                       dataKey="Amount"
                       fill={BLUE}
-                      radius={[4, 4, 0, 0]}
+                      radius={BAR_RADIUS}
                       cursor="pointer"
                       onClick={(d) => {
                         const name = (d as { name?: string })?.name;
@@ -1324,17 +1330,17 @@ export default function StatsPage() {
                 </ResponsiveContainer>
               </ChartCard>
 
-              <ChartCard title="All BRO by Stage">
+              <ChartCard title="All BRO by stage">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={stageData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => fmtMoney(Number(v))} />
-                    <Tooltip formatter={(v) => fmtMoney(Number(v))} />
+                    <CartesianGrid stroke={LINE} vertical={false} />
+                    <XAxis dataKey="name" tick={{ ...TICK, fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => fmtMoney(Number(v))} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => fmtMoney(Number(v))} />
                     <Bar
                       dataKey="Amount"
                       fill={BLUE}
-                      radius={[4, 4, 0, 0]}
+                      radius={BAR_RADIUS}
                       cursor="pointer"
                       onClick={(d) => {
                         const stage = (d as { name?: string })?.name;
@@ -1402,9 +1408,10 @@ export default function StatsPage() {
 
 // ── Small presentational components ──────────────────────────────────────────
 
+// `color` is kept for API compatibility; section headings carry no coloured
+// bar (DESIGN.md §6: headings sit outside the card, regular weight).
 function SectionHeader({
   title,
-  color,
   subtitle,
 }: {
   title: string;
@@ -1412,15 +1419,10 @@ function SectionHeader({
   subtitle?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 mb-4">
-      <span className={`inline-block w-1 h-5 rounded-full ${color}`} />
-      <h2 className="text-xs font-semibold uppercase tracking-widest text-navy">
-        {title}
-      </h2>
+    <div className="flex items-baseline gap-2 mb-4">
+      <h2 className="text-lg font-normal text-ink">{title}</h2>
       {subtitle && (
-        <span className="text-xs text-gray-400 font-normal normal-case tracking-normal">
-          · {subtitle}
-        </span>
+        <span className="text-[13px] text-ink-secondary">· {subtitle}</span>
       )}
     </div>
   );
@@ -1429,7 +1431,7 @@ function SectionHeader({
 function LoadingSpinner() {
   return (
     <div className="flex justify-center py-12">
-      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-orange" />
+      <div className="animate-spin rounded-full h-8 w-8 border-2 border-line border-t-ink" />
     </div>
   );
 }
@@ -1446,12 +1448,12 @@ function KpiCard({
   accent?: string;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-      <p className="text-xs text-gray-500 uppercase tracking-wide">{label}</p>
-      <p className={`text-3xl font-semibold mt-2 tabular-nums ${accent ?? "text-navy"}`}>
+    <div className="bg-white rounded-md border border-line p-5">
+      <p className="text-[13px] text-ink-secondary">{label}</p>
+      <p className={`text-2xl font-normal mt-2 tabular-nums ${accent ?? "text-ink"}`}>
         {value}
       </p>
-      <p className="text-xs text-gray-400 mt-1">{sublabel}</p>
+      <p className="text-[13px] text-ink-muted mt-1">{sublabel}</p>
     </div>
   );
 }
@@ -1466,9 +1468,9 @@ function ChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+    <div className="bg-white rounded-md border border-line p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
-        <h3 className="text-sm font-semibold text-navy">{title}</h3>
+        <h3 className="text-[15px] font-medium text-ink">{title}</h3>
         {actions}
       </div>
       {children}
@@ -1480,19 +1482,19 @@ function CdmTeamBadge({ team }: { team: StatsTeam }) {
   const cfg = TEAM_CONFIG[team];
   return (
     <div className="relative group inline-block">
-      <span className="inline-flex items-center gap-2 text-xs font-medium text-navy bg-white border border-gray-200 rounded-sm px-3 py-1.5 cursor-help select-none">
-        <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-        {cfg.label} Team
-        <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <span className="inline-flex items-center gap-2 text-xs font-normal text-ink bg-white border border-line-strong rounded-sm px-3 py-1.5 cursor-help select-none">
+        <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" />
+        {cfg.label} team
+        <svg className="w-3 h-3 text-ink-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       </span>
-      <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl border border-gray-200 shadow-lg p-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-20 pointer-events-none">
-        <p className="text-xs font-semibold text-navy mb-2 uppercase tracking-wide">Team Members</p>
-        <ul className="text-sm text-gray-700 space-y-1">
+      <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-md border border-line shadow-xl p-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-opacity z-20 pointer-events-none">
+        <p className="text-xs text-ink-secondary mb-2">Team members</p>
+        <ul className="text-sm text-ink space-y-1">
           {cfg.ownerNames.map((n) => (
             <li key={n} className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-navy" />
+              <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" />
               {n}
             </li>
           ))}
@@ -1725,7 +1727,7 @@ function DrillModal({
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1 text-info hover:underline whitespace-nowrap"
       >
-        See Memo
+        See memo
         {state.hasAttachments && <span className="text-xs">📎</span>}
         {dateStr && (
           <span className="text-xs text-ink-muted">· {dateStr}</span>
@@ -1987,7 +1989,7 @@ function DrillModal({
     return (
       <div className="py-1">
         <div className="mb-2 flex items-center gap-3">
-          <h4 className="text-xs font-semibold uppercase tracking-widest text-ink-muted">
+          <h4 className="text-[13px] text-ink-secondary">
             Key metrics
           </h4>
           {status === "failed" && (
@@ -2098,7 +2100,7 @@ function DrillModal({
             )}
             {isOpps && <Table.HeadCell>Memo</Table.HeadCell>}
             {isOpps && <Table.HeadCell>File</Table.HeadCell>}
-            {!isOpps && <Table.HeadCell>Last Activity</Table.HeadCell>}
+            {!isOpps && <Table.HeadCell>Last activity</Table.HeadCell>}
           </Table.HeadRow>
         </Table.Head>
         <Table.Body>
@@ -2110,9 +2112,7 @@ function DrillModal({
             return (
               <Fragment key={(r.opportunityId ?? r.accountId ?? "") + i}>
                 <Table.Row
-                  className={
-                    starred ? "bg-yellow-100 hover:bg-yellow-200" : ""
-                  }
+                  className={starred ? "bg-surface-3" : ""}
                 >
                   <Table.Cell className="font-medium text-ink">
                     <div className="flex items-start gap-2">
@@ -2126,15 +2126,13 @@ function DrillModal({
                           title={
                             starred ? "Unstar this lead" : "Star this lead"
                           }
-                          className="mt-0.5 shrink-0 text-ink-muted hover:text-yellow-500 transition-colors"
+                          className="mt-0.5 shrink-0 text-ink-muted hover:text-ink transition-colors"
                         >
                           <Star
                             className={`h-3.5 w-3.5 ${
-                              starred
-                                ? "fill-yellow-400 text-yellow-500"
-                                : ""
+                              starred ? "fill-ink text-ink" : ""
                             }`}
-                            strokeWidth={2}
+                            strokeWidth={1.5}
                           />
                         </button>
                       )}
@@ -2239,7 +2237,7 @@ function DrillModal({
       if (next) onNavigate?.(next);
     };
     const arrowCls =
-      "shrink-0 rounded-md p-0.5 text-ink-muted hover:text-ink hover:bg-surface-3 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors";
+      "shrink-0 rounded-sm p-0.5 text-ink-muted hover:text-ink hover:bg-surface-3 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors";
     return (
       <span className="flex items-center gap-1.5">
         <button
@@ -2292,7 +2290,7 @@ function DrillModal({
           {grouped.map(({ stage, rows: stageRows }) => (
             <div key={stage}>
               <div className="flex items-baseline justify-between mb-2">
-                <h3 className="text-xs font-semibold uppercase tracking-widest text-ink">
+                <h3 className="text-[15px] font-medium text-ink">
                   {stage}
                 </h3>
                 <span className="text-xs text-ink-muted">

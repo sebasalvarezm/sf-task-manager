@@ -10,7 +10,6 @@ import {
   ExternalLink,
   Copy,
   Check,
-  Info,
 } from "lucide-react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
@@ -433,7 +432,7 @@ function SourcingPageContent() {
       />
       <PageContent>
         {/* Single / Bulk mode toggle */}
-        <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit mb-4">
+        <div className="flex gap-1 bg-surface-4 rounded-sm p-1 w-fit mb-4">
           {(["single", "bulk"] as const).map((m) => (
             <button
               key={m}
@@ -444,8 +443,8 @@ function SourcingPageContent() {
               }}
               className={
                 mode === m
-                  ? "px-4 py-1.5 text-sm font-medium rounded-md bg-navy text-white"
-                  : "px-4 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:bg-gray-200"
+                  ? "px-4 py-1.5 text-sm font-medium rounded-sm bg-navy text-white"
+                  : "px-4 py-1.5 text-sm font-medium rounded-sm text-ink-secondary hover:bg-surface-3 hover:text-ink"
               }
             >
               {m === "single" ? "Single" : "Bulk"}
@@ -457,7 +456,7 @@ function SourcingPageContent() {
         {mode === "single" && (
         <Card>
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-ink">Company URL</label>
+            <label className="text-sm font-normal text-ink-secondary">Company URL</label>
             <div className="flex gap-2">
               <Input
                 type="text"
@@ -493,7 +492,7 @@ function SourcingPageContent() {
         {mode === "bulk" && (
         <Card>
           <form onSubmit={handleBulkSubmit} className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-ink">
+            <label className="text-sm font-normal text-ink-secondary">
               Paste companies — one per line (URL or Salesforce account name)
             </label>
             <textarea
@@ -510,7 +509,7 @@ function SourcingPageContent() {
               placeholder={"acme.com\nGlobex Corporation\ninitech.io"}
               disabled={submitting}
               rows={7}
-              className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-muted/60 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand/20 resize-y font-mono"
+              className="w-full rounded-sm border border-line-strong bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-muted/60 focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 resize-y font-mono"
             />
             {(() => {
               const parsed = parseBulkEntries(bulkText);
@@ -546,9 +545,8 @@ function SourcingPageContent() {
 
         {/* Cache banner — only when this view was loaded from a previous run */}
         {selectedJob && isCachedView && cachedAgeDays != null && (
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-info/20 bg-info-soft px-4 py-3">
-            <div className="flex items-center gap-2 text-sm text-info">
-              <Info className="h-4 w-4 shrink-0" strokeWidth={2} />
+          <div className="flex items-center justify-between gap-3 rounded-md border border-line bg-white px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-ink-secondary">
               <span>
                 Loaded from a previous run —{" "}
                 {cachedAgeDays === 0
@@ -595,8 +593,8 @@ function SourcingPageContent() {
 
         {/* Search past runs */}
         <div>
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-ink-muted mb-3">
-            Find a Past Run
+          <h2 className="text-base font-normal text-ink mb-3">
+            Find a past run
           </h2>
           <form onSubmit={handleSearch} className="flex gap-2">
             <Input
@@ -646,8 +644,8 @@ function SourcingPageContent() {
         {/* Recent jobs list */}
         {sourcingJobs.length > 0 && (
           <div>
-            <h2 className="text-xs font-semibold uppercase tracking-widest text-ink-muted mb-3">
-              Recent Sourcing Runs
+            <h2 className="text-base font-normal text-ink mb-3">
+              Recent sourcing runs
             </h2>
             <div className="space-y-2">
               {sourcingJobs.slice(0, 10).map((job) => (
@@ -690,10 +688,10 @@ function SourcingJobRow({
     <button
       type="button"
       onClick={onClick}
-      className={`w-full text-left rounded-lg border bg-white px-4 py-3 transition-all hover:shadow-sm ${
+      className={`w-full text-left rounded-md border px-4 py-3 transition-colors ${
         selected
-          ? "border-brand shadow-xs ring-1 ring-brand/20"
-          : "border-line hover:border-line-strong"
+          ? "border-line border-l-2 border-l-ink bg-surface-3"
+          : "border-line bg-white hover:bg-surface-3"
       }`}
     >
       <div className="flex items-center gap-3">
@@ -747,7 +745,7 @@ function SearchMatchRow({
     <button
       type="button"
       onClick={onClick}
-      className="w-full text-left rounded-lg border border-line bg-white px-4 py-3 transition-all hover:border-line-strong hover:shadow-sm"
+      className="w-full text-left rounded-md border border-line bg-white px-4 py-3 transition-colors hover:bg-surface-3"
     >
       <div className="flex items-center gap-3">
         <Search className="h-4 w-4 text-ink-muted shrink-0" strokeWidth={2} />
@@ -784,7 +782,6 @@ function JobResultPanel({
     return (
       <Card>
         <div className="flex items-center gap-3">
-          <Loader2 className="h-5 w-5 text-info animate-spin" strokeWidth={2} />
           <div>
             <p className="text-sm font-medium text-ink">Queued</p>
             <p className="text-xs text-ink-muted">
@@ -801,7 +798,6 @@ function JobResultPanel({
     return (
       <Card>
         <div className="flex items-center gap-3">
-          <Loader2 className="h-5 w-5 text-info animate-spin" strokeWidth={2} />
           <div className="flex-1">
             <p className="text-sm font-medium text-ink">
               Running{job.progress?.step ? ` · ${job.progress.step}` : ""}
@@ -811,7 +807,7 @@ function JobResultPanel({
               background. The bell will light up when it's done.
             </p>
             {typeof job.progress?.pct === "number" && job.progress.pct > 0 && (
-              <div className="mt-2 h-1.5 w-full bg-surface-3 rounded-full overflow-hidden">
+              <div className="mt-2 h-1.5 w-full bg-surface-4 rounded-sm overflow-hidden">
                 <div
                   className="h-full bg-info transition-all"
                   style={{ width: `${Math.min(100, job.progress.pct)}%` }}
@@ -837,10 +833,7 @@ function JobResultPanel({
   if (job.result === undefined || detailLoading) {
     return (
       <Card>
-        <div className="flex items-center gap-3">
-          <Loader2 className="h-4 w-4 animate-spin text-ink-muted" strokeWidth={2} />
-          <span className="text-sm text-ink-muted">Loading results…</span>
-        </div>
+        <p className="text-sm text-ink-secondary">Loading results…</p>
       </Card>
     );
   }
@@ -919,8 +912,8 @@ function BulkResultList({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-ink-muted">
-          Batch Results
+        <h2 className="text-base font-normal text-ink">
+          Batch results
         </h2>
         <span className="text-xs text-ink-muted">
           {okCount} of {items.length} sourced
@@ -937,13 +930,13 @@ function BulkResultList({
         return (
           <div
             key={`${item.input}-${i}`}
-            className="rounded-lg border border-line bg-white overflow-hidden"
+            className="rounded-md border border-line bg-white overflow-hidden"
           >
             <button
               type="button"
               onClick={() => hasResult && toggle(i)}
               className={`w-full text-left px-4 py-3 flex items-center gap-3 ${
-                hasResult ? "hover:bg-surface-2 cursor-pointer" : "cursor-default"
+                hasResult ? "hover:bg-surface-3 cursor-pointer" : "cursor-default"
               }`}
             >
               <div className="shrink-0">
@@ -966,7 +959,7 @@ function BulkResultList({
                     )}
                     {item.result?.portfolioMatch?.matched &&
                       item.result.portfolioMatch.group && (
-                        <Badge variant="brand">
+                        <Badge variant="neutral">
                           {item.result.portfolioMatch.group}
                         </Badge>
                       )}
@@ -1148,13 +1141,13 @@ function SourcingResultDisplay({
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div className="min-w-0 max-w-full">
-          <h2 className="text-xl font-semibold text-ink break-all">{domain}</h2>
+          <h2 className="text-xl font-normal text-ink break-all">{domain}</h2>
           <div className="flex flex-wrap items-center gap-2 mt-1">
             {result.foundingYear && (
               <Badge variant="neutral">Founded {result.foundingYear}</Badge>
             )}
             {result.portfolioMatch.matched && result.portfolioMatch.group && (
-              <Badge variant="brand">
+              <Badge variant="neutral">
                 Portfolio:{" "}
                 {result.portfolioMatch.mainGroup
                   ? `${result.portfolioMatch.mainGroup} → ${result.portfolioMatch.group}`
@@ -1178,9 +1171,8 @@ function SourcingResultDisplay({
       {/* Email Opening Hook — full width, above the 3-col grid */}
       {emailHook && (
         <Card padded={false} className="p-5">
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            Email Opening Hook
+          <h3 className="text-sm font-medium text-ink mb-3 pb-2 border-b border-line">
+            Email opening hook
           </h3>
           <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap">
             {emailHook}
@@ -1191,7 +1183,7 @@ function SourcingResultDisplay({
           {hookAnchor ? (
             <div className="mt-3 pt-3 border-t border-line space-y-1 text-xs">
               <p className="text-ink-muted">
-                <span className="font-semibold text-ink">Source: </span>
+                <span className="font-normal text-ink">Source: </span>
                 {hookAnchor.sourceUrl ? (
                   <a
                     href={hookAnchor.sourceUrl}
@@ -1211,7 +1203,7 @@ function SourcingResultDisplay({
                     : ""}
               </p>
               <p className="text-ink-muted">
-                <span className="font-semibold text-ink">Confidence: </span>
+                <span className="font-normal text-ink">Confidence: </span>
                 {hookAnchor.factConfidence ?? "low"} on the fact
                 {hookAnchor.dateConfidence
                   ? `, ${hookAnchor.dateConfidence} on the date`
@@ -1233,7 +1225,7 @@ function SourcingResultDisplay({
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
               size="sm"
-              variant={copiedHook ? "secondary" : "primary"}
+              variant="secondary"
               onClick={copyHook}
               leftIcon={
                 copiedHook ? (
@@ -1243,21 +1235,17 @@ function SourcingResultDisplay({
                 )
               }
             >
-              {copiedHook ? "Copied" : "Copy Hook"}
+              {copiedHook ? "Copied" : "Copy hook"}
             </Button>
             {jobId && (
               <Button
                 size="sm"
-                variant="secondary"
+                variant="ghost"
                 onClick={runRehook}
+                loading={rehooking}
                 disabled={rehooking}
-                leftIcon={
-                  rehooking ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                  ) : undefined
-                }
               >
-                {rehooking ? "Researching..." : "Deep research this hook"}
+                Deep research this hook
               </Button>
             )}
           </div>
@@ -1287,9 +1275,8 @@ function SourcingResultDisplay({
           homepage paraphrase would look finished and mislead. */}
       {!emailHook && (
         <Card padded={false} className="p-5">
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" />
-            Email Opening Hook
+          <h3 className="text-sm font-medium text-ink mb-3 pb-2 border-b border-line">
+            Email opening hook
           </h3>
           <p className="text-sm text-ink leading-relaxed">
             No hook was written for this company. Nothing specific and
@@ -1308,14 +1295,10 @@ function SourcingResultDisplay({
                 size="sm"
                 variant="secondary"
                 onClick={runRehook}
+                loading={rehooking}
                 disabled={rehooking}
-                leftIcon={
-                  rehooking ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                  ) : undefined
-                }
               >
-                {rehooking ? "Researching..." : "Try deep research again"}
+                Try deep research again
               </Button>
             )}
           </div>
@@ -1339,25 +1322,24 @@ function SourcingResultDisplay({
       {/* Prepackaged Email 1 — full outreach draft assembled from the template */}
       {prepackaged && (
         <Card padded={false} className="p-5">
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            Prepackaged Email 1
+          <h3 className="text-sm font-medium text-ink mb-3 pb-2 border-b border-line flex items-center gap-2">
+            Prepackaged email 1
             {prepackaged.templateSubgroup && (
-              <span className="ml-auto normal-case tracking-normal font-normal text-ink-muted">
+              <span className="ml-auto text-xs font-normal text-ink-muted">
                 Template: {prepackaged.templateSubgroup}
               </span>
             )}
           </h3>
 
           {prepackaged.skipped ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            <p className="text-sm text-ink-secondary">
               No email draft was prepackaged. {prepackaged.skipReason}
-            </div>
+            </p>
           ) : (
             <>
               {prepackaged.warnings.length > 0 && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 mb-3 text-sm text-amber-700">
-                  <p className="font-medium mb-1">Check before sending:</p>
+                <div className="rounded-md border border-line bg-white px-4 py-3 mb-3 text-sm text-ink-secondary">
+                  <p className="font-medium text-warn mb-1">Check before sending:</p>
                   <ul className="list-disc pl-5 space-y-0.5">
                     {prepackaged.warnings.map((w, i) => (
                       <li key={i}>{w}</li>
@@ -1366,8 +1348,8 @@ function SourcingResultDisplay({
                 </div>
               )}
               {prepackaged.subject && (
-                <div className="mb-3 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2">
-                  <span className="text-xs font-semibold text-ink-muted uppercase tracking-wide shrink-0">
+                <div className="mb-3 flex items-center gap-2 rounded-sm bg-surface-3 px-3 py-2">
+                  <span className="text-xs font-normal text-ink-secondary shrink-0">
                     Subject
                   </span>
                   <span className="text-sm text-ink flex-1 min-w-0 truncate">
@@ -1395,7 +1377,7 @@ function SourcingResultDisplay({
               </p>
               <Button
                 size="sm"
-                variant={copiedEmail ? "secondary" : "primary"}
+                variant="secondary"
                 onClick={copyEmail}
                 leftIcon={
                   copiedEmail ? (
@@ -1406,7 +1388,7 @@ function SourcingResultDisplay({
                 }
                 className="mt-3"
               >
-                {copiedEmail ? "Copied" : "Copy Email"}
+                {copiedEmail ? "Copied" : "Copy email"}
               </Button>
             </>
           )}
@@ -1416,9 +1398,8 @@ function SourcingResultDisplay({
       {/* Top 3 cards: Products / Discontinued / Outreach */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card padded={false} className="p-5">
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            Current Products
+          <h3 className="text-sm font-medium text-ink mb-3 pb-2 border-b border-line">
+            Current products
           </h3>
           {result.products.length === 0 ? (
             <p className="text-sm text-ink-muted">No named products found.</p>
@@ -1434,13 +1415,12 @@ function SourcingResultDisplay({
         </Card>
 
         <Card padded={false} className="p-5">
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            Discontinued / Historical
+          <h3 className="text-sm font-medium text-ink mb-3 pb-2 border-b border-line">
+            Discontinued / historical
           </h3>
           {result.discontinued ? (
             <div>
-              <p className="text-sm font-semibold text-ink">
+              <p className="text-sm font-medium text-ink">
                 {result.discontinued}
               </p>
               {result.discontinuedNote && (
@@ -1453,7 +1433,7 @@ function SourcingResultDisplay({
                   href={result.archiveUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 mt-2 text-xs text-ink underline hover:text-ink-secondary font-medium"
+                  className="inline-flex items-center gap-1 mt-2 text-xs text-ink underline underline-offset-2 hover:text-ink-secondary font-normal"
                 >
                   View archived page
                   <ExternalLink className="h-3 w-3" strokeWidth={2} />
@@ -1479,7 +1459,7 @@ function SourcingResultDisplay({
                 // Archived products were harvested even though no single one
                 // stood out as discontinued. Showing them beats discarding them.
                 <div className="mt-3">
-                  <p className="text-xs font-semibold text-ink">
+                  <p className="text-xs font-normal text-ink-secondary">
                     Products found on archived pages
                   </p>
                   <ul className="mt-1 space-y-0.5">
@@ -1496,9 +1476,8 @@ function SourcingResultDisplay({
         </Card>
 
         <Card padded={false} className="p-5">
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-3 pb-2 border-b border-line flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            Outreach Paragraph
+          <h3 className="text-sm font-medium text-ink mb-3 pb-2 border-b border-line">
+            Outreach paragraph
           </h3>
           {result.outreachParagraph ? (
             <div>
@@ -1507,7 +1486,7 @@ function SourcingResultDisplay({
               </p>
               <Button
                 size="sm"
-                variant={copied ? "secondary" : "primary"}
+                variant="secondary"
                 onClick={copy}
                 leftIcon={
                   copied ? (
@@ -1534,10 +1513,9 @@ function SourcingResultDisplay({
       {/* Restaurants — render whenever we have a location OR any suggestions */}
       {(result.address || result.restaurants.length > 0) && (
         <div>
-          <h3 className="text-xs font-semibold text-ink uppercase tracking-widest mb-1 flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand" />
-            Nearby Restaurants
-            <span className="text-ink-muted normal-case tracking-normal font-normal">
+          <h3 className="text-base font-normal text-ink mb-1 flex flex-wrap items-baseline gap-2">
+            Nearby restaurants
+            <span className="text-sm text-ink-muted">
               — {result.address ?? "this company's area"}
             </span>
           </h3>
@@ -1566,10 +1544,10 @@ function SourcingResultDisplay({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {result.restaurants.map((r, i) => (
                 <Card key={i} padded={false} className="p-5">
-                  <p className="text-xs font-semibold text-ink underline uppercase tracking-widest mb-2">
-                    Business Dinner
+                  <p className="text-xs text-ink-muted mb-2">
+                    Business dinner
                   </p>
-                  <p className="font-semibold text-ink mb-1">{r.name}</p>
+                  <p className="text-sm font-medium text-ink mb-1">{r.name}</p>
                   <p className="text-sm text-ink-secondary">{r.description}</p>
                 </Card>
               ))}
@@ -1592,26 +1570,26 @@ function SourcingResultDisplay({
         <div>
           <button
             onClick={() => setLogsOpen((v) => !v)}
-            className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-ink-muted hover:text-ink transition-colors"
+            className="flex items-center gap-2 text-sm text-ink-secondary hover:text-ink transition-colors"
           >
             <span
-              className={`inline-block transition-transform ${logsOpen ? "rotate-90" : ""}`}
+              className={`inline-block text-xs transition-transform ${logsOpen ? "rotate-90" : ""}`}
             >
               ▶
             </span>
-            Analysis Log ({result.logs.length} steps)
+            Analysis log ({result.logs.length} steps)
           </button>
           {logsOpen && (
-            <div className="mt-3 bg-navy-dark rounded-lg border border-navy-light p-4 max-h-64 overflow-auto">
+            <div className="mt-3 bg-surface-3 rounded-md border border-line p-4 max-h-64 overflow-auto">
               {result.logs.map((log, i) => (
                 <div
                   key={i}
                   className="flex items-start gap-2 mb-1.5 last:mb-0"
                 >
-                  <span className="text-ink underline text-xs mt-0.5 shrink-0 font-mono">
+                  <span className="text-ink-muted text-xs mt-0.5 shrink-0 font-mono">
                     {">"}
                   </span>
-                  <span className="text-ink-inverse-muted text-xs font-mono leading-relaxed">
+                  <span className="text-ink-secondary text-xs font-mono leading-relaxed">
                     {log}
                   </span>
                 </div>

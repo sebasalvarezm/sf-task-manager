@@ -659,7 +659,7 @@ function CallsPageContent() {
             {msConnected === true ? (
               <button
                 onClick={handleMsDisconnect}
-                className="inline-flex items-center gap-2 text-sm text-ok bg-ok-soft border border-ok/20 rounded-md px-3 h-9 hover:bg-ok-soft/70 transition-colors"
+                className="inline-flex items-center gap-2 text-sm text-ok bg-ok-soft border border-ok/20 rounded-sm px-3 h-9 hover:bg-ok-soft/70 transition-colors"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-ok" />
                 Outlook
@@ -667,7 +667,7 @@ function CallsPageContent() {
             ) : msConnected === false ? (
               <a
                 href="/api/microsoft/connect"
-                className="inline-flex items-center gap-2 bg-info hover:bg-info/90 text-white text-sm font-medium px-4 h-9 rounded-md transition-colors"
+                className="inline-flex items-center gap-2 bg-white text-ink border border-line-strong hover:bg-surface-3 text-sm font-medium px-4 h-9 rounded-sm transition-colors"
               >
                 Connect Outlook
               </a>
@@ -683,22 +683,22 @@ function CallsPageContent() {
         {/* Loading */}
         {(sfConnected === null || msConnected === null) && (
           <div className="flex justify-center items-center py-24">
-            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-orange" />
+            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-ink-muted" />
           </div>
         )}
 
         {/* Connection prompts */}
         {sfConnected === false && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center mb-6">
-            <p className="text-amber-800 font-medium mb-2">
+          <div className="bg-white border border-line rounded-md p-6 text-center mb-6">
+            <p className="text-ink font-medium mb-2">
               Salesforce is not connected.
             </p>
-            <p className="text-amber-600 text-sm mb-4">
+            <p className="text-ink-secondary text-sm mb-4">
               Connect Salesforce to match calendar events to accounts.
             </p>
             <a
               href="/api/salesforce/connect"
-              className="inline-block bg-brand-orange hover:bg-brand-orange-hover text-white text-sm font-semibold px-6 py-2 rounded-lg transition-colors"
+              className="inline-block bg-white text-ink border border-line-strong hover:bg-surface-3 text-sm font-medium px-6 py-2 rounded-sm transition-colors"
             >
               Connect Salesforce
             </a>
@@ -706,16 +706,16 @@ function CallsPageContent() {
         )}
 
         {msConnected === false && sfConnected !== false && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 text-center mb-6">
-            <p className="text-blue-800 font-medium mb-2">
+          <div className="bg-white border border-line rounded-md p-6 text-center mb-6">
+            <p className="text-ink font-medium mb-2">
               Outlook is not connected.
             </p>
-            <p className="text-blue-600 text-sm mb-4">
+            <p className="text-ink-secondary text-sm mb-4">
               Connect your Microsoft account so the app can read your calendar.
             </p>
             <a
               href="/api/microsoft/connect"
-              className="inline-block bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-6 py-2 rounded-lg transition-colors"
+              className="inline-block bg-white text-ink border border-line-strong hover:bg-surface-3 text-sm font-medium px-6 py-2 rounded-sm transition-colors"
             >
               Connect Outlook
             </a>
@@ -728,10 +728,10 @@ function CallsPageContent() {
             {/* Controls bar */}
             <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
               <div>
-                <h2 className="text-xl font-semibold text-navy">
-                  Call Logger
+                <h2 className="text-lg font-normal text-ink">
+                  Call logger
                 </h2>
-                <p className="text-sm text-gray-400 mt-0.5">
+                <p className="text-sm text-ink-secondary mt-0.5">
                   Analyze your Outlook calendar and log calls to Salesforce
                 </p>
               </div>
@@ -754,14 +754,14 @@ function CallsPageContent() {
                 <button
                   onClick={handleAnalyze}
                   disabled={analyzing}
-                  className="whitespace-nowrap bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg transition-colors text-sm"
+                  className="whitespace-nowrap bg-ink hover:bg-navy-light disabled:opacity-50 text-white font-medium px-4 h-9 rounded-sm transition-colors text-sm"
                 >
-                  {analyzing ? "Analyzing..." : "Analyze Week"}
+                  {analyzing ? "Analyzing..." : "Analyze week"}
                 </button>
                 <button
                   onClick={() => void handleGranolaSync()}
                   disabled={granolaSyncing || !selectedWeek}
-                  className="whitespace-nowrap bg-white hover:bg-gray-50 disabled:opacity-50 text-navy border border-gray-200 font-semibold px-4 py-2 rounded-lg transition-colors text-sm"
+                  className="whitespace-nowrap bg-white hover:bg-surface-3 disabled:opacity-50 text-ink border border-line-strong font-medium px-4 h-9 rounded-sm transition-colors text-sm"
                   title="Pull this week's Granola notes into the matching rows. Also runs every 30 minutes."
                 >
                   {granolaSyncing ? "Syncing…" : "Sync from Granola"}
@@ -773,24 +773,24 @@ function CallsPageContent() {
             {(granolaSync?.lastSyncAt || granolaSyncMessage) && (
               <div className="-mt-3 mb-4 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs" aria-live="polite">
                 {granolaSync?.lastError ? (
-                  <span className="text-red-600">
+                  <span className="text-danger">
                     Granola sync failed {granolaSync.lastSyncAt ? syncTime(granolaSync.lastSyncAt) : ""}: {granolaSync.lastError}
                     {granolaSync.lastSuccessAt ? (
-                      <span className="text-gray-400"> (last good sync {syncTime(granolaSync.lastSuccessAt)})</span>
+                      <span className="text-ink-muted"> (last good sync {syncTime(granolaSync.lastSuccessAt)})</span>
                     ) : null}
                   </span>
                 ) : granolaSync?.lastSuccessAt ? (
-                  <span className="text-gray-400">Granola last synced {syncTime(granolaSync.lastSuccessAt)}</span>
+                  <span className="text-ink-muted">Granola last synced {syncTime(granolaSync.lastSuccessAt)}</span>
                 ) : null}
                 {granolaSyncMessage && !granolaSync?.lastError ? (
-                  <span className="text-gray-500">{granolaSyncMessage}</span>
+                  <span className="text-ink-secondary">{granolaSyncMessage}</span>
                 ) : null}
               </div>
             )}
 
             {/* Error */}
             {analyzeError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-sm text-red-700">
+              <div className="bg-white border border-danger rounded-md p-4 mb-4 text-sm text-danger">
                 {analyzeError}
               </div>
             )}
@@ -798,8 +798,8 @@ function CallsPageContent() {
             {/* Loading spinner */}
             {analyzing && (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-orange" />
-                <p className="text-sm text-gray-400">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ink-muted" />
+                <p className="text-sm text-ink-secondary">
                   Fetching calendar events and matching to Salesforce...
                 </p>
               </div>
@@ -808,11 +808,11 @@ function CallsPageContent() {
             {/* Results table */}
             {!analyzing && hasAnalyzed && (
               <>
-                <div className="text-sm text-gray-400 mb-3">
+                <div className="text-sm text-ink-secondary mb-3">
                   {meetings.length} external meeting
                   {meetings.length !== 1 ? "s" : ""} found
                   {dismissedIds.size > 0 && (
-                    <span className="ml-2 text-gray-300">
+                    <span className="ml-2 text-ink-muted">
                       ({dismissedIds.size} dismissed)
                     </span>
                   )}
@@ -835,10 +835,9 @@ function CallsPageContent() {
 
             {/* Prompt to analyze if not yet done */}
             {!analyzing && !hasAnalyzed && !analyzeError && (
-              <div className="text-center py-16 text-gray-400">
-                <div className="text-5xl mb-4">📅</div>
-                <p className="font-medium">Select a week and click "Analyze Week"</p>
-                <p className="text-sm mt-1">
+              <div className="text-center py-16 text-ink-secondary">
+                <p className="text-sm">Select a week and click "Analyze week"</p>
+                <p className="text-sm mt-1 text-ink-muted">
                   We'll pull your Outlook calendar and match meetings to Salesforce accounts
                 </p>
               </div>
@@ -847,10 +846,10 @@ function CallsPageContent() {
             {/* Submit result banner */}
             {submitResult && (
               <div
-                className={`mt-4 rounded-lg p-4 text-sm ${
+                className={`mt-4 rounded-md border p-4 text-sm bg-white ${
                   submitResult.failCount === 0
-                    ? "bg-green-50 border border-green-200 text-green-700"
-                    : "bg-amber-50 border border-amber-200 text-amber-700"
+                    ? "border-ok text-ink"
+                    : "border-warn text-ink"
                 }`}
               >
                 {submitResult.successCount > 0 && (
@@ -906,7 +905,7 @@ function CallsPageContent() {
                   </span>
                 )}
                 <button
-                  className="ml-4 underline text-xs opacity-70 hover:opacity-100"
+                  className="ml-4 underline underline-offset-2 text-xs text-ink-secondary hover:text-ink"
                   onClick={() => setSubmitResult(null)}
                 >
                   Dismiss
@@ -916,12 +915,12 @@ function CallsPageContent() {
 
             {/* Submit bar (sticky footer) */}
             {actionableCount > 0 && (
-              <div className="fixed bottom-0 left-0 right-0 bg-navy shadow-2xl px-8 py-4 flex items-center justify-between">
-                <span className="text-white text-sm">
-                  <strong>{actionableCount}</strong> call
+              <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-line px-8 py-4 flex items-center justify-between">
+                <span className="text-ink text-sm">
+                  <span className="font-medium tabular-nums">{actionableCount}</span> call
                   {actionableCount !== 1 ? "s" : ""} ready to log
                   {rowsWithUnaccepted > 0 && (
-                    <span className="ml-2 text-xs text-gray-300">
+                    <span className="ml-2 text-xs text-ink-secondary">
                       ({rowsWithUnaccepted} with suggestions not accepted yet: those fields log empty)
                     </span>
                   )}
@@ -931,14 +930,14 @@ function CallsPageContent() {
                     onClick={() => {
                       setEntries(new Map());
                     }}
-                    className="text-gray-300 hover:text-white text-sm px-4 py-2"
+                    className="text-ink-secondary hover:bg-surface-3 hover:text-ink text-sm px-4 h-9 rounded-sm transition-colors"
                   >
                     Clear all
                   </button>
                   <button
                     onClick={handleSubmit}
                     disabled={submitting}
-                    className="bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold px-6 py-2 rounded-lg transition-colors text-sm"
+                    className="bg-brand hover:bg-brand-hover disabled:opacity-50 text-white font-medium px-5 h-9 rounded-sm transition-colors text-sm"
                   >
                     {submitting
                       ? "Submitting..."
@@ -947,7 +946,7 @@ function CallsPageContent() {
                   {submitting && (
                     <button
                       onClick={handleCancelSubmit}
-                      className="text-gray-300 hover:text-red-400 text-xs underline-offset-2 transition-colors"
+                      className="text-ink-secondary hover:bg-surface-3 hover:text-ink text-xs px-3 h-9 rounded-sm transition-colors"
                     >
                       Cancel
                     </button>

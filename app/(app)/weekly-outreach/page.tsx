@@ -14,6 +14,7 @@ import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
 import { Alert } from "@/app/components/ui/Alert";
+import { Badge } from "@/app/components/ui/Badge";
 import { useJobs } from "@/app/hooks/useJobs";
 import type {
   WeeklyOutreachItem,
@@ -133,11 +134,9 @@ function isE1ReadyForSourcing(
 }
 
 function sentRowTone(item: WeeklyOutreachItem): string {
-  if (item.status !== "sent") return "bg-white hover:bg-brand-soft/30";
-  if (item.outreach_type === "RCE" && item.rce_second_sent !== true) {
-    return "bg-emerald-50 hover:bg-emerald-100/70";
-  }
-  return "bg-emerald-100 hover:bg-emerald-200/70";
+  // Rows stay white; a sent row only reads in secondary grey. Status is text, not fill.
+  if (item.status !== "sent") return "bg-white hover:bg-surface-3";
+  return "bg-white text-ink-secondary hover:bg-surface-3";
 }
 
 /** Plain-English note explaining how the Outlook chain above the draft was chosen. */
@@ -1530,7 +1529,7 @@ export default function WeeklyOutreachPage() {
               if (event.target.value) setWeekStart(weekStartFromPicker(event.target.value));
             }}
             aria-label="Weekly Outreach week"
-            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+            className="h-9 rounded-sm border border-line-strong bg-white px-3 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4"
           />
         }
       />
@@ -1541,56 +1540,65 @@ export default function WeeklyOutreachPage() {
           </Alert>
         )}
         {message && (
-          <Alert variant="ok" onDismiss={() => setMessage(null)}>
-            {message}
-          </Alert>
+          <p className="flex items-start justify-between gap-3 text-sm text-ink-secondary" role="status">
+            <span className="min-w-0 flex-1">{message}</span>
+            <button
+              type="button"
+              onClick={() => setMessage(null)}
+              className="shrink-0 text-ink-muted hover:text-ink"
+              aria-label="Dismiss"
+            >
+              Dismiss
+            </button>
+          </p>
         )}
         {outlookReconnectRequired && (
           <Alert variant="info" onDismiss={() => setOutlookReconnectRequired(false)}>
             Outlook needs one permission refresh before it can create editable reply drafts.{" "}
-            <a className="font-semibold underline" href="/api/microsoft/connect">
+            <a className="text-ink underline underline-offset-2" href="/api/microsoft/connect">
               Reconnect Outlook
             </a>
           </Alert>
         )}
 
-        <div className="mb-4 rounded-xl border border-line bg-white p-4 shadow-sm">
+        <div className="rounded-md border border-line bg-white p-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold text-ink">{counts.total}</span>
-                <span className="text-sm font-semibold text-ink-muted">/ {WEEKLY_GOAL}</span>
-                <span className="text-sm text-ink-muted">
+                <span className="text-2xl font-normal tabular-nums text-ink">{counts.total}</span>
+                <span className="text-sm tabular-nums text-ink-secondary">/ {WEEKLY_GOAL}</span>
+                <span className="text-sm text-ink-secondary">
                   {counts.total >= WEEKLY_GOAL
                     ? `${counts.total - WEEKLY_GOAL} above goal`
                     : `${WEEKLY_GOAL - counts.total} remaining`}
                 </span>
               </div>
-              <div className="mt-2 h-2 max-w-xl overflow-hidden rounded-full bg-surface-3">
+              <div className="mt-2 h-1.5 max-w-xl overflow-hidden rounded-sm bg-surface-4">
                 <div
-                  className={`h-full rounded-full transition-all ${
-                    counts.total >= WEEKLY_GOAL ? "bg-ok" : "bg-brand"
+                  className={`h-full rounded-sm transition-all ${
+                    counts.total >= WEEKLY_GOAL ? "bg-ok" : "bg-info"
                   }`}
                   style={{ width: `${goalPercent}%` }}
                 />
               </div>
             </div>
-            <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+            <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+              <Button className="w-full sm:w-auto" variant="ghost" onClick={copyCsv} disabled={items.length === 0}>
+                Copy CSV
+              </Button>
+              <Button className="w-full sm:w-auto" variant="ghost" onClick={downloadExcel} disabled={items.length === 0}>
+                Download Excel
+              </Button>
               <Button
+                variant="secondary"
                 onClick={prepareAllRces}
                 disabled={pasting || preparingRces.size > 0 || counts.rceToDraft === 0}
                 className="w-full sm:w-auto"
               >
-                Prepare RCE Drafts ({counts.rceToDraft})
+                Prepare RCE drafts ({counts.rceToDraft})
               </Button>
               <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={pasting || saving || e1ToSourceCount === 0}>
-                Prepare E1 Sourcing Batch ({e1ToSourceCount})
-              </Button>
-              <Button className="w-full sm:w-auto" variant="secondary" onClick={downloadExcel} disabled={items.length === 0}>
-                Download Excel
-              </Button>
-              <Button className="w-full sm:w-auto" variant="secondary" onClick={copyCsv} disabled={items.length === 0}>
-                Copy CSV
+                Prepare E1 sourcing batch ({e1ToSourceCount})
               </Button>
             </div>
           </div>
@@ -1598,10 +1606,10 @@ export default function WeeklyOutreachPage() {
 
         <div className="space-y-3 md:hidden">
           {visibleDraftRows[0] ? (
-            <div className="rounded-xl border border-line bg-white p-4 shadow-sm">
+            <div className="rounded-md border border-line bg-white p-4">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-ink">Add to this week</h2>
-                <span className="text-xs text-ink-muted">Salesforce autofill</span>
+                <h2 className="text-sm text-ink">Add to this week</h2>
+                <span className="text-xs text-ink-secondary">Salesforce autofill</span>
               </div>
               <div className="mb-3 grid grid-cols-2 gap-2">
                 {(["E1", "RCE"] as WeeklyOutreachType[]).map((type) => (
@@ -1614,10 +1622,10 @@ export default function WeeklyOutreachPage() {
                         error: null,
                       })
                     }
-                    className={`h-11 rounded-lg border text-sm font-semibold ${
+                    className={`h-11 rounded-sm border text-sm font-medium ${
                       visibleDraftRows[0].outreachType === type
-                        ? "border-brand bg-brand text-white"
-                        : "border-line bg-white text-ink"
+                        ? "border-navy bg-navy text-white"
+                        : "border-line-strong bg-white text-ink"
                     }`}
                   >
                     {type}
@@ -1649,7 +1657,7 @@ export default function WeeklyOutreachPage() {
                     }
                   }}
                   disabled={visibleDraftRows[0].saving}
-                  className="h-12 w-full rounded-lg border border-line bg-white px-3 text-base focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
+                  className="h-12 w-full rounded-sm border border-line-strong bg-white px-3 text-base focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4"
                   placeholder="Search Salesforce company"
                 />
                 {visibleDraftRows[0].searching || visibleDraftRows[0].saving ? (
@@ -1658,17 +1666,17 @@ export default function WeeklyOutreachPage() {
                   </span>
                 ) : null}
                 {visibleDraftRows[0].results.length > 0 ? (
-                  <div className="absolute left-0 right-0 top-12 z-40 max-h-64 overflow-y-auto rounded-b-lg border border-line bg-white shadow-xl">
+                  <div className="absolute left-0 right-0 top-12 z-40 max-h-64 overflow-y-auto rounded-b-md border border-line bg-white shadow-xl">
                     {visibleDraftRows[0].results.map((account) => (
                       <button
                         key={account.accountId}
                         type="button"
                         onClick={() => void addAccountFromRow(visibleDraftRows[0], account)}
-                        className="block w-full border-b border-line px-3 py-3 text-left last:border-0"
+                        className="block w-full border-b border-line px-3 py-3 text-left last:border-0 hover:bg-surface-3"
                       >
-                        <span className="block font-medium text-ink">{account.accountName}</span>
+                        <span className="block text-sm font-medium text-ink">{account.accountName}</span>
                         {account.website ? (
-                          <span className="text-xs text-ink-muted">{account.website}</span>
+                          <span className="text-xs text-ink-secondary">{account.website}</span>
                         ) : null}
                       </button>
                     ))}
@@ -1682,19 +1690,22 @@ export default function WeeklyOutreachPage() {
           ) : null}
 
           {items.map((item, index) => (
-            <div key={item.id} className={`rounded-xl border border-line p-4 shadow-sm ${sentRowTone(item)}`}>
+            <div key={item.id} className={`rounded-md border border-line p-4 ${sentRowTone(item)}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="rounded bg-brand-soft px-2 py-1 text-xs font-bold text-ink underline">
-                      {item.outreach_type}
-                    </span>
-                    <span className="text-xs text-ink-muted">#{index + 1}</span>
+                    <Badge>{item.outreach_type}</Badge>
+                    <span className="text-xs tabular-nums text-ink-secondary">#{index + 1}</span>
+                    {item.status === "sent" ? (
+                      <span className="text-xs text-ink-secondary">
+                        {item.outreach_type === "RCE" && item.rce_second_sent ? "Complete" : "Sent"}
+                      </span>
+                    ) : null}
                   </div>
-                  <h3 className="mt-2 break-words text-base font-semibold text-ink">
+                  <h3 className="mt-2 break-words text-base font-medium text-ink">
                     {item.account_name}
                   </h3>
-                  <p className="mt-1 text-xs text-ink-muted">
+                  <p className="mt-1 text-xs text-ink-secondary">
                     {[item.industry, item.country, item.city].filter(Boolean).join(" · ") ||
                       "Salesforce details unavailable"}
                   </p>
@@ -1711,7 +1722,7 @@ export default function WeeklyOutreachPage() {
                           : undefined,
                     });
                   }}
-                  className="h-9 rounded-md border border-line bg-white px-2 text-xs"
+                  className="h-9 rounded-sm border border-line-strong bg-white px-2 text-xs text-ink"
                 >
                   {STATUSES.map((status) => (
                     <option key={status.value} value={status.value}>
@@ -1721,22 +1732,22 @@ export default function WeeklyOutreachPage() {
                 </select>
               </div>
 
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-lg bg-surface-2 p-2">
-                  <span className="block text-ink-muted">Tier</span>
-                  <span className="font-medium text-ink">{item.tier || "—"}</span>
+              <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="block text-ink-secondary">Tier</span>
+                  <span className="text-sm text-ink">{item.tier || "—"}</span>
                 </div>
-                <div className="rounded-lg bg-surface-2 p-2">
-                  <span className="block text-ink-muted">Subgroup / Sequence</span>
-                  <span className="break-words font-medium text-ink">{item.group_name || "—"}</span>
+                <div>
+                  <span className="block text-ink-secondary">Subgroup / Sequence</span>
+                  <span className="break-words text-sm text-ink">{item.group_name || "—"}</span>
                 </div>
               </div>
 
               {item.outreach_type === "RCE" && !item.draft ? (
-                <label className="mt-3 flex min-h-12 items-center justify-between gap-3 rounded-lg border border-line bg-surface-2 px-3 py-2">
+                <label className="mt-3 flex min-h-12 items-center justify-between gap-3 rounded-sm border border-line px-3 py-2">
                   <span>
-                    <span className="block text-sm font-semibold text-ink">Draft this RCE</span>
-                    <span className="block text-xs text-ink-muted">
+                    <span className="block text-sm text-ink">Draft this RCE</span>
+                    <span className="block text-xs text-ink-secondary">
                       {item.rce_draft_enabled === false
                         ? "Skipped when you prepare the batch"
                         : "Included in the next draft batch"}
@@ -1749,14 +1760,14 @@ export default function WeeklyOutreachPage() {
                     onChange={(event) =>
                       void updateRow(item, { rceDraftEnabled: event.target.checked })
                     }
-                    className="h-6 w-6 rounded border-line text-ink underline focus:ring-brand"
+                    className="h-6 w-6 rounded-sm border-line-strong accent-ink"
                     aria-label={`Draft reconnect for ${item.account_name}`}
                   />
                 </label>
               ) : null}
 
               <details className="mt-3 border-t border-line pt-3">
-                <summary className="cursor-pointer text-sm font-medium text-ink underline">
+                <summary className="cursor-pointer text-sm text-ink underline underline-offset-2">
                   Edit Salesforce fields
                 </summary>
                 <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1768,7 +1779,7 @@ export default function WeeklyOutreachPage() {
                     ["Subgroup / Sequence", "groupName", item.group_name],
                   ] as const).map(([label, field, value]) => (
                     <label key={field} className={field === "industry" || field === "groupName" ? "col-span-2" : ""}>
-                      <span className="mb-1 block text-[11px] font-medium text-ink-muted">{label}</span>
+                      <span className="mb-1 block text-xs text-ink-secondary">{label}</span>
                       <input
                         key={cellKey(item.id, `m-${field}`, value)}
                         defaultValue={value ?? ""}
@@ -1777,7 +1788,7 @@ export default function WeeklyOutreachPage() {
                           releaseCell(item.id, `m-${field}`);
                           void updateRow(item, { [field]: event.target.value || null });
                         }}
-                        className="h-10 w-full rounded-md border border-line px-2 text-sm"
+                        className="h-10 w-full rounded-sm border border-line-strong px-2 text-sm text-ink"
                       />
                     </label>
                   ))}
@@ -1787,7 +1798,7 @@ export default function WeeklyOutreachPage() {
               <textarea
                 defaultValue={item.notes ?? ""}
                 onBlur={(event) => updateRow(item, { notes: event.target.value || null })}
-                className="mt-3 min-h-20 w-full rounded-lg border border-line p-3 text-sm"
+                className="mt-3 min-h-20 w-full rounded-sm border border-line-strong p-3 text-sm text-ink"
                 placeholder="Trip, angle, reminder…"
               />
 
@@ -1795,11 +1806,12 @@ export default function WeeklyOutreachPage() {
                 {item.outreach_type === "RCE" ? (
                   item.status === "sent" ? (
                     item.rce_second_sent ? (
-                      <div className="col-span-2 rounded-lg bg-emerald-200/60 px-3 py-2 text-center text-sm font-semibold text-emerald-900">
+                      <div className="col-span-2 px-3 py-2 text-center text-sm text-ink-secondary">
                         Reconnect complete
                       </div>
                     ) : (
                       <Button
+                        variant="secondary"
                         className="col-span-2 w-full"
                         onClick={() => void openFollowUp(item)}
                         title={
@@ -1814,15 +1826,16 @@ export default function WeeklyOutreachPage() {
                       </Button>
                     )
                   ) : item.draft ? (
-                    <Button className="col-span-2 w-full" onClick={() => openRceReview(item)}>
+                    <Button variant="secondary" className="col-span-2 w-full" onClick={() => openRceReview(item)}>
                       Review reconnect
                     </Button>
                   ) : item.rce_draft_enabled === false ? (
-                    <div className="col-span-2 rounded-lg bg-surface-2 px-3 py-2 text-center text-sm font-medium text-ink-muted">
+                    <div className="col-span-2 px-3 py-2 text-center text-sm text-ink-secondary">
                       RCE draft skipped
                     </div>
                   ) : (
                     <Button
+                      variant="secondary"
                       className="col-span-2 w-full"
                       loading={preparingRces.has(item.id)}
                       onClick={() => void prepareRce(item)}
@@ -1832,7 +1845,7 @@ export default function WeeklyOutreachPage() {
                   )
                 ) : item.sourcing_job_id ? (
                   <Link
-                    className="col-span-2 flex h-10 items-center justify-center rounded-md bg-brand font-medium text-white"
+                    className="col-span-2 flex h-10 items-center justify-center rounded-sm border border-line-strong bg-white text-sm font-medium text-ink hover:bg-surface-3"
                     href={`/sourcing?jobId=${item.sourcing_job_id}`}
                   >
                     Open in Sourcing
@@ -1842,14 +1855,14 @@ export default function WeeklyOutreachPage() {
                   type="button"
                   onClick={() => void moveRowToNextWeek(item)}
                   disabled={movingRows.has(item.id)}
-                  className="py-2 text-sm font-semibold text-ink underline disabled:opacity-50"
+                  className="py-2 text-sm text-ink underline underline-offset-2 disabled:opacity-50"
                 >
                   {movingRows.has(item.id) ? "Moving…" : "Move to next week"}
                 </button>
                 <button
                   type="button"
                   onClick={() => removeRow(item)}
-                  className="py-2 text-sm font-medium text-danger"
+                  className="py-2 text-sm text-danger"
                 >
                   Remove from week
                 </button>
@@ -1858,16 +1871,16 @@ export default function WeeklyOutreachPage() {
           ))}
         </div>
 
-        <div className="hidden border border-line bg-white shadow-sm md:block">
-          <div className="flex items-center justify-between border-b border-line bg-surface-2 px-3 py-2">
+        <div className="hidden rounded-md border border-line bg-white md:block">
+          <div className="flex items-center justify-between border-b border-line px-4 py-3">
             <div>
-              <span className="text-sm font-semibold text-ink">Week of {weekLabel(weekStart)}</span>
-              <span className="ml-2 text-xs text-ink-muted">
+              <span className="text-sm text-ink">Week of {weekLabel(weekStart)}</span>
+              <span className="ml-2 text-xs text-ink-secondary">
                 Paste Excel Type + Company columns into the first empty row.
               </span>
             </div>
-            <div className="flex items-center gap-2 text-xs text-ink-muted">
-              <span className={`h-2 w-2 rounded-full ${refreshing ? "bg-warning" : "bg-ok"}`} />
+            <div className="flex items-center gap-2 text-xs text-ink-secondary">
+              <span className={`h-2 w-2 rounded-full ${refreshing ? "bg-warn" : "bg-ok"}`} />
               {loading
                 ? "Loading…"
                 : pasting
@@ -1879,22 +1892,22 @@ export default function WeeklyOutreachPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1580px] border-collapse text-xs">
-              <thead className="sticky top-0 z-10 bg-surface-3 text-left font-semibold text-ink-muted">
+            <table className="w-full min-w-[1580px] border-collapse text-sm">
+              <thead className="sticky top-0 z-10 bg-white text-left text-xs font-normal text-ink-secondary">
                 <tr>
-                  <th className="w-10 border-b border-r border-line px-2 py-2 text-center">#</th>
-                  <th className="w-24 border-b border-r border-line px-2 py-2">Type</th>
-                  <th className="min-w-60 border-b border-r border-line px-2 py-2">Company</th>
-                  <th className="min-w-40 border-b border-r border-line px-2 py-2">Industry</th>
-                  <th className="min-w-32 border-b border-r border-line px-2 py-2">Country</th>
-                  <th className="min-w-28 border-b border-r border-line px-2 py-2">City</th>
-                  <th className="w-24 border-b border-r border-line px-2 py-2">Tier</th>
-                  <th className="min-w-48 border-b border-r border-line px-2 py-2">Subgroup / Sequence</th>
-                  <th className="w-24 border-b border-r border-line px-2 py-2">Source</th>
-                  <th className="w-32 border-b border-r border-line px-2 py-2">Status</th>
-                  <th className="w-36 border-b border-r border-line px-2 py-2">Draft RCE?</th>
-                  <th className="min-w-52 border-b border-r border-line px-2 py-2">Trip / Notes</th>
-                  <th className="w-32 border-b border-line px-2 py-2 text-center">Next week</th>
+                  <th className="w-10 border-b border-line px-2 py-2 text-center font-normal">#</th>
+                  <th className="w-24 border-b border-line px-2 py-2 font-normal">Type</th>
+                  <th className="min-w-60 border-b border-line px-2 py-2 font-normal">Company</th>
+                  <th className="min-w-40 border-b border-line px-2 py-2 font-normal">Industry</th>
+                  <th className="min-w-32 border-b border-line px-2 py-2 font-normal">Country</th>
+                  <th className="min-w-28 border-b border-line px-2 py-2 font-normal">City</th>
+                  <th className="w-24 border-b border-line px-2 py-2 font-normal">Tier</th>
+                  <th className="min-w-48 border-b border-line px-2 py-2 font-normal">Subgroup / Sequence</th>
+                  <th className="w-24 border-b border-line px-2 py-2 font-normal">Source</th>
+                  <th className="w-32 border-b border-line px-2 py-2 font-normal">Status</th>
+                  <th className="w-36 border-b border-line px-2 py-2 font-normal">Draft RCE?</th>
+                  <th className="min-w-52 border-b border-line px-2 py-2 font-normal">Trip / Notes</th>
+                  <th className="w-32 border-b border-line px-2 py-2 text-center font-normal">Next week</th>
                 </tr>
               </thead>
               <tbody>
@@ -1902,21 +1915,21 @@ export default function WeeklyOutreachPage() {
                   <tr
                     key={item.id}
                     aria-selected={selectedRowId === item.id}
-                    className={`h-10 ${
-                      selectedRowId === item.id ? "bg-brand-soft/70" : sentRowTone(item)
+                    className={`h-11 ${
+                      selectedRowId === item.id ? "bg-surface-4" : sentRowTone(item)
                     }`}
                   >
-                    <td className="border-b border-r border-line bg-surface-2 px-2 text-center text-ink-muted">
+                    <td className="border-b border-line px-2 text-center text-xs tabular-nums text-ink-muted">
                       <button
                         type="button"
                         onClick={() => setSelectedRowId(item.id)}
-                        className="h-10 w-full font-medium focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        className="h-11 w-full focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink"
                         aria-label={`Select row ${index + 1}, ${item.account_name}`}
                       >
                         {index + 1}
                       </button>
                     </td>
-                    <td className="border-b border-r border-line p-0">
+                    <td className="border-b border-line p-0">
                       <select
                         ref={registerGridCell(index, 0)}
                         value={item.outreach_type}
@@ -1924,14 +1937,14 @@ export default function WeeklyOutreachPage() {
                         onChange={(event) =>
                           updateRow(item, { outreachType: event.target.value as WeeklyOutreachType })
                         }
-                        className="h-10 w-full border-0 bg-transparent px-2 font-semibold text-ink underline focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        className="h-11 w-full border-0 bg-transparent px-2 text-ink focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink"
                       >
                         <option value="E1">E1</option>
                         <option value="RCE">RCE</option>
                       </select>
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <div className="flex h-10 items-center">
+                    <td className="border-b border-line p-0">
+                      <div className="flex h-11 items-center">
                         <input
                           ref={registerGridCell(index, 1)}
                           defaultValue={item.account_name}
@@ -1941,37 +1954,37 @@ export default function WeeklyOutreachPage() {
                               void updateRow(item, { accountName: event.target.value });
                             }
                           }}
-                          className="h-10 min-w-0 flex-1 border-0 bg-transparent px-2 font-medium text-ink focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                          className="h-11 min-w-0 flex-1 border-0 bg-transparent px-2 font-medium text-ink focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink"
                         />
                         <button
                           type="button"
                           onClick={() => void removeRow(item)}
-                          className="h-10 shrink-0 border-l border-line px-2 text-[11px] font-semibold text-danger hover:bg-danger-soft"
+                          className="h-11 shrink-0 border-l border-line px-2 text-xs text-danger hover:bg-surface-3"
                           aria-label={`Remove ${item.account_name} from this week`}
                         >
                           Remove
                         </button>
                       </div>
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <input key={cellKey(item.id, "industry", item.industry)} ref={registerGridCell(index, 2)} defaultValue={item.industry ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 2)} onFocus={() => freezeCell(item.id, "industry", item.industry)} onBlur={(event) => { releaseCell(item.id, "industry"); void updateRow(item, { industry: event.target.value || null }); }} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input key={cellKey(item.id, "industry", item.industry)} ref={registerGridCell(index, 2)} defaultValue={item.industry ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 2)} onFocus={() => freezeCell(item.id, "industry", item.industry)} onBlur={(event) => { releaseCell(item.id, "industry"); void updateRow(item, { industry: event.target.value || null }); }} className="h-11 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <input key={cellKey(item.id, "country", item.country)} ref={registerGridCell(index, 3)} defaultValue={item.country ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 3)} onFocus={() => freezeCell(item.id, "country", item.country)} onBlur={(event) => { releaseCell(item.id, "country"); void updateRow(item, { country: event.target.value || null }); }} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input key={cellKey(item.id, "country", item.country)} ref={registerGridCell(index, 3)} defaultValue={item.country ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 3)} onFocus={() => freezeCell(item.id, "country", item.country)} onBlur={(event) => { releaseCell(item.id, "country"); void updateRow(item, { country: event.target.value || null }); }} className="h-11 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <input key={cellKey(item.id, "city", item.city)} ref={registerGridCell(index, 4)} defaultValue={item.city ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 4)} onFocus={() => freezeCell(item.id, "city", item.city)} onBlur={(event) => { releaseCell(item.id, "city"); void updateRow(item, { city: event.target.value || null }); }} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input key={cellKey(item.id, "city", item.city)} ref={registerGridCell(index, 4)} defaultValue={item.city ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 4)} onFocus={() => freezeCell(item.id, "city", item.city)} onBlur={(event) => { releaseCell(item.id, "city"); void updateRow(item, { city: event.target.value || null }); }} className="h-11 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <input key={cellKey(item.id, "tier", item.tier)} ref={registerGridCell(index, 5)} defaultValue={item.tier ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 5)} onFocus={() => freezeCell(item.id, "tier", item.tier)} onBlur={(event) => { releaseCell(item.id, "tier"); void updateRow(item, { tier: event.target.value || null }); }} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input key={cellKey(item.id, "tier", item.tier)} ref={registerGridCell(index, 5)} defaultValue={item.tier ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 5)} onFocus={() => freezeCell(item.id, "tier", item.tier)} onBlur={(event) => { releaseCell(item.id, "tier"); void updateRow(item, { tier: event.target.value || null }); }} className="h-11 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <input key={cellKey(item.id, "group_name", item.group_name)} ref={registerGridCell(index, 6)} defaultValue={item.group_name ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 6)} onFocus={() => freezeCell(item.id, "group_name", item.group_name)} onBlur={(event) => { releaseCell(item.id, "group_name"); void updateRow(item, { groupName: event.target.value || null }); }} className="h-10 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input key={cellKey(item.id, "group_name", item.group_name)} ref={registerGridCell(index, 6)} defaultValue={item.group_name ?? ""} onKeyDown={(event) => handleGridNavigation(event, index, 6)} onFocus={() => freezeCell(item.id, "group_name", item.group_name)} onBlur={(event) => { releaseCell(item.id, "group_name"); void updateRow(item, { groupName: event.target.value || null }); }} className="h-11 w-full border-0 bg-transparent px-2 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(index, 7)} readOnly value={item.source} onKeyDown={(event) => handleGridNavigation(event, index, 7)} className="h-10 w-full border-0 bg-surface-2 px-2 capitalize text-ink-muted focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input ref={registerGridCell(index, 7)} readOnly value={item.source} onKeyDown={(event) => handleGridNavigation(event, index, 7)} className="h-11 w-full border-0 bg-transparent px-2 capitalize text-ink-secondary focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
-                    <td className="border-b border-r border-line px-1">
+                    <td className="border-b border-line px-1">
                       <select
                         ref={registerGridCell(index, 8)}
                         value={item.status}
@@ -1986,7 +1999,7 @@ export default function WeeklyOutreachPage() {
                                 : undefined,
                           });
                         }}
-                        className="h-8 w-full border-0 bg-transparent px-1 text-xs focus:outline-none focus:ring-1 focus:ring-brand"
+                        className="h-8 w-full border-0 bg-transparent px-1 text-sm focus:outline-none focus:ring-1 focus:ring-ink"
                       >
                         {STATUSES.map((status) => (
                           <option key={status.value} value={status.value}>
@@ -1995,15 +2008,15 @@ export default function WeeklyOutreachPage() {
                         ))}
                       </select>
                       {item.sourcing_job_id ? (
-                        <Link className="px-1 text-[10px] text-ink underline" href={`/sourcing?jobId=${item.sourcing_job_id}`}>
+                        <Link className="px-1 text-xs text-ink underline underline-offset-2" href={`/sourcing?jobId=${item.sourcing_job_id}`}>
                           Open sourcing
                         </Link>
                       ) : null}
                     </td>
-                    <td className="border-b border-r border-line p-0">
+                    <td className="border-b border-line p-0">
                       {item.outreach_type === "RCE" && item.status === "sent" ? (
                         item.rce_second_sent ? (
-                          <span className="flex h-10 items-center px-2 font-semibold text-emerald-800">
+                          <span className="flex h-11 items-center px-2 text-ink-secondary">
                             Complete
                           </span>
                         ) : (
@@ -2012,7 +2025,7 @@ export default function WeeklyOutreachPage() {
                             type="button"
                             onKeyDown={(event) => handleGridNavigation(event, index, 9)}
                             onClick={() => void openFollowUp(item)}
-                            className="h-10 w-full px-2 text-left font-semibold text-emerald-800 hover:bg-emerald-100"
+                            className="h-11 w-full px-2 text-left text-ink underline underline-offset-2 hover:bg-surface-3"
                             title={
                               item.rce_follow_up_trackable
                                 ? "Preview and send the short follow-up into the same Outlook thread"
@@ -2025,7 +2038,7 @@ export default function WeeklyOutreachPage() {
                           </button>
                         )
                       ) : item.outreach_type === "RCE" && !item.draft ? (
-                        <div className="flex h-10 items-center gap-2 px-2">
+                        <div className="flex h-11 items-center gap-2 px-2">
                           <input
                             ref={registerGridCell(index, 9)}
                             type="checkbox"
@@ -2037,17 +2050,17 @@ export default function WeeklyOutreachPage() {
                                 rceDraftEnabled: event.target.checked,
                               })
                             }
-                            className="h-4 w-4 shrink-0 rounded border-line text-ink underline focus:ring-brand"
+                            className="h-4 w-4 shrink-0 rounded-sm border-line-strong accent-ink"
                             aria-label={`Draft reconnect for ${item.account_name}`}
                           />
                           {item.rce_draft_enabled === false ? (
-                            <span className="text-xs font-medium text-ink-muted">Skipped</span>
+                            <span className="text-xs text-ink-secondary">Skipped</span>
                           ) : (
                             <button
                               type="button"
                               onClick={() => void prepareRce(item)}
                               disabled={preparingRces.has(item.id)}
-                              className="min-w-0 flex-1 text-left font-medium text-ink underline hover:text-ink-secondary disabled:opacity-50"
+                              className="min-w-0 flex-1 text-left text-ink underline underline-offset-2 hover:text-ink-secondary disabled:opacity-50"
                             >
                               {preparingRces.has(item.id) ? "Preparing…" : "Prepare"}
                             </button>
@@ -2059,17 +2072,17 @@ export default function WeeklyOutreachPage() {
                           type="button"
                           onKeyDown={(event) => handleGridNavigation(event, index, 9)}
                           onClick={() => openRceReview(item)}
-                          className="h-10 w-full px-2 text-left font-medium text-ink underline hover:bg-brand-soft"
+                          className="h-11 w-full px-2 text-left text-ink underline underline-offset-2 hover:bg-surface-3"
                         >
                           Review
                         </button>
                       ) : (
-                        <button ref={registerGridCell(index, 9)} type="button" onKeyDown={(event) => handleGridNavigation(event, index, 9)} className="h-10 w-full px-2 text-left text-ink-muted">
+                        <button ref={registerGridCell(index, 9)} type="button" onKeyDown={(event) => handleGridNavigation(event, index, 9)} className="h-11 w-full px-2 text-left text-ink-muted">
                           {item.outreach_type === "E1" ? (item.sourcing_job_id ? "In Sourcing" : "—") : "—"}
                         </button>
                       )}
                     </td>
-                    <td className="border-b border-r border-line p-0">
+                    <td className="border-b border-line p-0">
                       <input
                         ref={registerGridCell(index, 10)}
                         defaultValue={item.notes ?? ""}
@@ -2077,7 +2090,7 @@ export default function WeeklyOutreachPage() {
                         onBlur={(event) =>
                           updateRow(item, { notes: event.target.value || null })
                         }
-                        className="h-10 w-full border-0 bg-transparent px-2 text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        className="h-11 w-full border-0 bg-transparent px-2 focus:bg-white focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink"
                         placeholder="Trip, angle, reminder…"
                       />
                     </td>
@@ -2086,7 +2099,7 @@ export default function WeeklyOutreachPage() {
                         type="button"
                         onClick={() => void moveRowToNextWeek(item)}
                         disabled={movingRows.has(item.id)}
-                        className="whitespace-nowrap font-semibold text-ink underline hover:text-ink-secondary disabled:opacity-50"
+                        className="whitespace-nowrap text-ink underline underline-offset-2 hover:text-ink-secondary disabled:opacity-50"
                         aria-label={`Move ${item.account_name} to next week`}
                       >
                         {movingRows.has(item.id) ? "Moving…" : "Move →"}
@@ -2096,11 +2109,11 @@ export default function WeeklyOutreachPage() {
                 ))}
 
                 {visibleDraftRows.map((row, draftIndex) => (
-                  <tr key={row.key} className="h-10 bg-white">
-                    <td className="border-b border-r border-line bg-surface-2 px-2 text-center text-ink-muted">
+                  <tr key={row.key} className="h-11 bg-white hover:bg-surface-3">
+                    <td className="border-b border-line px-2 text-center text-xs tabular-nums text-ink-muted">
                       {items.length + draftIndex + 1}
                     </td>
-                    <td className="border-b border-r border-line p-0">
+                    <td className="border-b border-line p-0">
                       <select
                         ref={registerGridCell(items.length + draftIndex, 0)}
                         value={row.outreachType}
@@ -2125,14 +2138,14 @@ export default function WeeklyOutreachPage() {
                           );
                         }}
                         disabled={row.saving}
-                        className="h-10 w-full border-0 bg-transparent px-2 text-xs font-semibold text-ink underline focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                        className="h-11 w-full border-0 bg-transparent px-2 text-ink focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink"
                       >
                         <option value="">—</option>
                         <option value="E1">E1</option>
                         <option value="RCE">RCE</option>
                       </select>
                     </td>
-                    <td className="relative border-b border-r border-line p-0">
+                    <td className="relative border-b border-line p-0">
                       <input
                         ref={(element) => {
                           const gridKey = `${items.length + draftIndex}:1`;
@@ -2157,42 +2170,42 @@ export default function WeeklyOutreachPage() {
                           handleCompanyKeyDown(event, row, items.length + draftIndex)
                         }
                         disabled={row.saving}
-                        className={`h-10 w-full border-0 bg-transparent px-2 text-xs focus:bg-white focus:outline-none focus:ring-1 focus:ring-inset ${
-                          row.error ? "focus:ring-danger" : "focus:ring-brand"
+                        className={`h-11 w-full border-0 bg-transparent px-2 focus:bg-white focus:outline-none focus:ring-1 focus:ring-inset ${
+                          row.error ? "focus:ring-danger" : "focus:ring-ink"
                         }`}
                         placeholder={draftIndex === 0 ? "Company name or website URL…" : ""}
                       />
                       {row.searching || row.saving ? (
-                        <span className="absolute right-2 top-3 text-[10px] text-ink-muted">
+                        <span className="absolute right-2 top-3.5 text-xs text-ink-muted">
                           {row.saving ? "Saving…" : "Searching…"}
                         </span>
                       ) : null}
                       {row.results.length > 0 ? (
-                        <div className="absolute left-0 right-0 top-10 z-40 max-h-52 overflow-y-auto border border-line bg-white shadow-xl">
+                        <div className="absolute left-0 right-0 top-11 z-40 max-h-52 overflow-y-auto rounded-md border border-line bg-white shadow-xl">
                           {row.results.map((account) => (
                             <button
                               key={account.accountId}
                               type="button"
                               onMouseDown={(event) => event.preventDefault()}
                               onClick={() => void addAccountFromRow(row, account)}
-                              className="block w-full border-b border-line px-3 py-2 text-left hover:bg-brand-soft"
+                              className="block w-full border-b border-line px-3 py-2 text-left last:border-0 hover:bg-surface-3"
                             >
                               <span className="font-medium text-ink">{account.accountName}</span>
                               {account.website ? (
-                                <span className="ml-2 text-[10px] text-ink-muted">{account.website}</span>
+                                <span className="ml-2 text-xs text-ink-secondary">{account.website}</span>
                               ) : null}
                             </button>
                           ))}
                         </div>
                       ) : null}
                       {row.error ? (
-                        <div className="absolute left-0 top-10 z-30 min-w-full whitespace-nowrap border border-danger/30 bg-danger-soft px-2 py-1 text-[10px] text-danger shadow">
+                        <div className="absolute left-0 top-11 z-30 min-w-full whitespace-nowrap rounded-sm border border-danger/30 bg-danger-soft px-2 py-1 text-xs text-danger">
                           {row.error}
                         </div>
                       ) : null}
                     </td>
                     {Array.from({ length: 5 }, (_, emptyIndex) => (
-                      <td key={emptyIndex} className="border-b border-r border-line p-0">
+                      <td key={emptyIndex} className="border-b border-line p-0">
                         <input
                           ref={registerGridCell(items.length + draftIndex, emptyIndex + 2)}
                           readOnly
@@ -2203,21 +2216,21 @@ export default function WeeklyOutreachPage() {
                               emptyIndex + 2,
                             )
                           }
-                          className="h-10 w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand"
+                          className="h-11 w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink"
                         />
                       </td>
                     ))}
-                    <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(items.length + draftIndex, 7)} readOnly value="Manual" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 7)} className="h-10 w-full border-0 bg-surface-2 px-2 text-ink-muted focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input ref={registerGridCell(items.length + draftIndex, 7)} readOnly value="Manual" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 7)} className="h-11 w-full border-0 bg-transparent px-2 text-ink-secondary focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(items.length + draftIndex, 8)} readOnly value="Queued" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 8)} className="h-10 w-full border-0 bg-transparent px-2 text-ink-muted focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input ref={registerGridCell(items.length + draftIndex, 8)} readOnly value="Queued" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 8)} className="h-11 w-full border-0 bg-transparent px-2 text-ink-secondary focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <button ref={registerGridCell(items.length + draftIndex, 9)} type="button" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 9)} className="h-10 w-full focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" aria-label="Empty draft cell" />
+                    <td className="border-b border-line p-0">
+                      <button ref={registerGridCell(items.length + draftIndex, 9)} type="button" onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 9)} className="h-11 w-full focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" aria-label="Empty draft cell" />
                     </td>
-                    <td className="border-b border-r border-line p-0">
-                      <input ref={registerGridCell(items.length + draftIndex, 10)} readOnly onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 10)} className="h-10 w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand" />
+                    <td className="border-b border-line p-0">
+                      <input ref={registerGridCell(items.length + draftIndex, 10)} readOnly onKeyDown={(event) => handleGridNavigation(event, items.length + draftIndex, 10)} className="h-11 w-full border-0 bg-transparent focus:outline-none focus:ring-1 focus:ring-inset focus:ring-ink" />
                     </td>
                     <td className="border-b border-line" />
                   </tr>
@@ -2227,7 +2240,7 @@ export default function WeeklyOutreachPage() {
           </div>
         </div>
 
-        <p className="mt-3 text-xs text-ink-muted">
+        <p className="text-xs text-ink-secondary">
           Entries from Open Tasks and Re-Contact are added to the bottom automatically. The sheet keeps five empty rows after the weekly target and continues expanding beyond 30. On desktop, Shift + Space selects a saved row and Ctrl + - removes it.
         </p>
 
@@ -2240,7 +2253,7 @@ export default function WeeklyOutreachPage() {
             }}
           >
             <div
-              className="flex h-[100dvh] w-full flex-col bg-white shadow-2xl sm:h-auto sm:max-h-[95vh] sm:max-w-2xl sm:rounded-2xl"
+              className="flex h-[100dvh] w-full flex-col border border-line bg-white sm:h-auto sm:max-h-[95vh] sm:max-w-2xl sm:rounded-lg"
               style={sheetStyle}
               role="dialog"
               aria-modal="true"
@@ -2248,10 +2261,10 @@ export default function WeeklyOutreachPage() {
             >
               <div className="flex items-start justify-between border-b border-line px-4 py-3 sm:px-6 sm:py-4">
                 <div className="min-w-0">
-                  <h2 id="rce-followup-title" className="truncate text-lg font-semibold text-ink">
+                  <h2 id="rce-followup-title" className="truncate text-lg font-normal text-ink">
                     Follow-up · {followUpItem.account_name}
                   </h2>
-                  <p className="mt-1 text-sm text-ink-muted">
+                  <p className="mt-1 text-sm text-ink-secondary">
                     {followUpNotTracked
                       ? "The first email was not sent from this tool, so its Outlook thread is unknown."
                       : followUpPreview
@@ -2266,7 +2279,7 @@ export default function WeeklyOutreachPage() {
                 <button
                   type="button"
                   onClick={closeFollowUp}
-                  className="ml-4 rounded-lg px-2 py-1 text-sm text-ink-muted hover:bg-surface-2"
+                  className="ml-4 rounded-sm px-2 py-1 text-sm text-ink-secondary hover:bg-surface-3"
                 >
                   Close
                 </button>
@@ -2280,19 +2293,19 @@ export default function WeeklyOutreachPage() {
                     Send the follow-up from Outlook yourself, then mark the row complete below.
                   </p>
                 ) : followUpLoading ? (
-                  <p className="text-sm text-ink-muted">Reading the thread…</p>
+                  <p className="text-sm text-ink-secondary">Reading the thread…</p>
                 ) : followUpPreview ? (
                   <>
                     {followUpPreview.replyDetected ? (
-                      <div className="mb-4 rounded-xl border border-danger/40 bg-danger/5 p-4 text-sm text-ink">
-                        <p className="font-semibold text-danger">
+                      <div className="mb-4 rounded-md border border-danger p-4 text-sm text-ink">
+                        <p className="text-danger">
                           {followUpPreview.replyDetected.from} already replied on{" "}
                           {format(new Date(followUpPreview.replyDetected.at), "MMM d")}.
                         </p>
                         {followUpPreview.replyDetected.preview ? (
-                          <p className="mt-1 text-ink-muted">“{followUpPreview.replyDetected.preview}”</p>
+                          <p className="mt-1 text-ink-secondary">“{followUpPreview.replyDetected.preview}”</p>
                         ) : null}
-                        <label className="mt-3 flex items-center gap-2 text-xs text-ink-muted">
+                        <label className="mt-3 flex items-center gap-2 text-xs text-ink-secondary">
                           <input
                             type="checkbox"
                             checked={followUpIgnoreReply}
@@ -2306,7 +2319,7 @@ export default function WeeklyOutreachPage() {
                         No reply in the thread since your first email.
                       </p>
                     ) : (
-                      <p className="mb-3 text-xs text-warning">
+                      <p className="mb-3 text-xs text-warn">
                         Could not read the thread to check for a reply
                         {followUpPreview.threadError ? ` (${followUpPreview.threadError})` : ""}. Check your inbox before sending.
                       </p>
@@ -2317,30 +2330,30 @@ export default function WeeklyOutreachPage() {
                       </Alert>
                     ) : null}
                     {followUpPreview.firstNamePlaceholder ? (
-                      <p className="mb-2 text-xs text-warning">
+                      <p className="mb-2 text-xs text-warn">
                         The first name could not be determined. Replace [First name] before sending.
                       </p>
                     ) : null}
                     <textarea
                       value={followUpBody}
                       onChange={(event) => setFollowUpBody(event.target.value)}
-                      className="min-h-40 w-full flex-1 resize-none rounded-xl border border-line p-4 text-base leading-6 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 sm:min-h-44 sm:flex-none sm:resize-y sm:text-[15px]"
+                      className="min-h-40 w-full flex-1 resize-none rounded-sm border border-line-strong p-4 text-base leading-6 text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 sm:min-h-44 sm:flex-none sm:resize-y sm:text-[15px]"
                     />
-                    <p className="mt-2 hidden text-xs text-ink-muted sm:block">
+                    <p className="mt-2 hidden text-xs text-ink-secondary sm:block">
                       Sends this exact text as a reply in the same Outlook thread, to the same people. Outlook adds your signature.
                     </p>
                   </>
                 ) : null}
               </div>
 
-              <div className="relative flex items-center justify-between gap-2 border-t border-line bg-surface-2 p-3 sm:p-4 sm:px-6">
+              <div className="relative flex items-center justify-between gap-2 border-t border-line p-3 sm:p-4 sm:px-6">
                 {/* Phone: "..." menu + one primary button. Laptop: everything inline. */}
                 <div className="flex items-center gap-2 sm:hidden">
                   <button
                     type="button"
                     aria-label="More actions"
                     onClick={() => setFollowUpMenuOpen((open) => !open)}
-                    className="flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-white text-xl text-ink"
+                    className="flex h-11 w-11 items-center justify-center rounded-sm border border-line-strong bg-white text-xl text-ink"
                   >
                     ⋯
                   </button>
@@ -2351,7 +2364,7 @@ export default function WeeklyOutreachPage() {
                   ) : null}
                 </div>
                 {followUpMenuOpen ? (
-                  <div className="absolute bottom-full left-3 z-10 mb-2 w-56 overflow-hidden rounded-xl border border-line bg-white shadow-xl sm:hidden">
+                  <div className="absolute bottom-full left-3 z-10 mb-2 w-56 overflow-hidden rounded-md border border-line bg-white shadow-xl sm:hidden">
                     <button
                       type="button"
                       className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2"
@@ -2435,7 +2448,7 @@ export default function WeeklyOutreachPage() {
             }}
           >
             <div
-              className="flex h-[100dvh] w-full flex-col bg-white shadow-2xl sm:h-auto sm:max-h-[95vh] sm:max-w-3xl sm:rounded-2xl"
+              className="flex h-[100dvh] w-full flex-col border border-line bg-white sm:h-auto sm:max-h-[95vh] sm:max-w-3xl sm:rounded-lg"
               style={sheetStyle}
               role="dialog"
               aria-modal="true"
@@ -2444,29 +2457,29 @@ export default function WeeklyOutreachPage() {
               {/* Header: one line on phones (company · position · next), full detail on laptops. */}
               <div className="flex items-start justify-between gap-2 border-b border-line px-4 py-3 sm:px-6 sm:py-4">
                 <div className="min-w-0 flex-1">
-                  <span className="hidden text-xs font-bold uppercase tracking-wide text-ink underline sm:block">RCE review</span>
+                  <span className="hidden text-[11px] font-medium uppercase tracking-[0.04em] text-ink-secondary sm:block">RCE review</span>
                   <div className="flex items-center gap-2">
-                    <h2 id="rce-review-title" className="truncate text-lg font-semibold text-ink sm:mt-1 sm:text-xl">
+                    <h2 id="rce-review-title" className="truncate text-lg font-normal text-ink sm:mt-1 sm:text-xl">
                       {reviewingRce.account_name}
                     </h2>
                     {reviewPosition ? (
-                      <span className="shrink-0 rounded-sm bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
+                      <span className="shrink-0 rounded-sm bg-surface-4 px-2 py-0.5 text-[11px] font-medium tabular-nums text-ink-secondary">
                         {reviewPosition.current} of {reviewPosition.total}
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-1 hidden truncate text-sm text-ink-muted sm:block">
+                  <p className="mt-1 hidden truncate text-sm text-ink-secondary sm:block">
                     {reviewingRce.takeover
                       ? `New email: ${reviewingRce.outlook_reply_subject || "(subject pending)"}`
                       : reviewingRce.outlook_reply_subject || "No Outlook chain attached"}
                   </p>
                   {reviewingRce.outlook_draft_ready && reviewingRce.outlook_reply_to && reviewingRce.outlook_reply_to.length > 0 ? (
                     <p className="mt-0.5 truncate text-xs text-ink">
-                      <span className="font-semibold">To:</span>{" "}
+                      <span className="text-ink-secondary">To:</span>{" "}
                       {reviewingRce.outlook_reply_to.map((r) => (r.name ? `${r.name} <${r.email}>` : r.email)).join(", ")}
                     </p>
                   ) : reviewingRce.outlook_draft_ready && !reviewingRce.takeover ? (
-                    <p className="mt-0.5 text-xs text-warning">
+                    <p className="mt-0.5 text-xs text-warn">
                       Recipient unknown (prepared before the To check existed). Check the To line in Outlook before sending, or dismiss and prepare again.
                     </p>
                   ) : null}
@@ -2474,7 +2487,7 @@ export default function WeeklyOutreachPage() {
                     className={`mt-1 hidden text-xs leading-5 sm:block ${
                       reviewingRce.outlook_reply_confidence === "domain" || reviewingRce.takeover
                         ? "text-ok"
-                        : "text-warning"
+                        : "text-warn"
                     }`}
                   >
                     {replyMatchNote(reviewingRce)}
@@ -2482,10 +2495,10 @@ export default function WeeklyOutreachPage() {
                   {/* Phone: status chip + a toggle for the long explanation. */}
                   <div className="mt-1 flex items-center gap-2 sm:hidden">
                     <span
-                      className={`truncate rounded-sm px-2 py-0.5 text-[11px] font-semibold ${
+                      className={`truncate rounded-sm px-2 py-0.5 text-[11px] font-medium ${
                         reviewingRce.outlook_draft_ready
-                          ? "bg-ok/10 text-ok"
-                          : "bg-warning/10 text-warning"
+                          ? "bg-ok-soft text-ok"
+                          : "bg-warn-soft text-warn"
                       }`}
                     >
                       {reviewingRce.takeover
@@ -2497,7 +2510,7 @@ export default function WeeklyOutreachPage() {
                     <button
                       type="button"
                       onClick={() => setReviewContextOpen((open) => !open)}
-                      className="shrink-0 text-[11px] font-semibold text-ink underline"
+                      className="shrink-0 text-[11px] text-ink underline underline-offset-2"
                     >
                       {reviewContextOpen ? "Hide context" : "Why this draft"}
                     </button>
@@ -2508,7 +2521,7 @@ export default function WeeklyOutreachPage() {
                     <button
                       type="button"
                       onClick={() => void goToNextRceReview(nextPendingRceReview)}
-                      className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-3 text-lg text-ink-muted sm:hidden"
+                      className="flex h-10 w-10 items-center justify-center rounded-sm bg-surface-4 text-lg text-ink-secondary hover:text-ink sm:hidden"
                       aria-label="Skip to next draft"
                       title="Skip to the next draft without marking this one"
                     >
@@ -2518,7 +2531,7 @@ export default function WeeklyOutreachPage() {
                   <button
                     type="button"
                     onClick={() => void closeRceReview()}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xl text-ink-muted"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-sm bg-surface-4 text-xl text-ink-secondary hover:text-ink"
                     aria-label="Close reconnect review"
                   >
                     ×
@@ -2533,15 +2546,15 @@ export default function WeeklyOutreachPage() {
                     className={`mb-2 text-xs leading-5 sm:hidden ${
                       reviewingRce.outlook_reply_confidence === "domain" || reviewingRce.takeover
                         ? "text-ok"
-                        : "text-warning"
+                        : "text-warn"
                     }`}
                   >
                     {replyMatchNote(reviewingRce)}
                   </p>
-                  <section className="rounded-xl border border-info/20 bg-info-soft p-4">
+                  <section className="rounded-md border border-line bg-white p-4">
                     <div className="flex items-center justify-between gap-3">
-                      <h3 className="text-sm font-semibold text-ink">Where the conversation left off</h3>
-                      <span className="shrink-0 text-[11px] text-ink-muted">Under 30 seconds</span>
+                      <h3 className="text-sm font-medium text-ink">Where the conversation left off</h3>
+                      <span className="shrink-0 text-[11px] text-ink-secondary">Under 30 seconds</span>
                     </div>
                     <p className="mt-2 text-sm leading-6 text-ink">
                       {reviewingRce.context_summary || "No relationship summary was available."}
@@ -2551,10 +2564,10 @@ export default function WeeklyOutreachPage() {
 
                 <section className="flex min-h-0 flex-1 flex-col sm:mt-4 sm:block">
                   <div className="mb-2 hidden items-center justify-between gap-3 sm:flex">
-                    <label htmlFor="rce-review-draft" className="text-sm font-semibold text-ink">
+                    <label htmlFor="rce-review-draft" className="text-sm text-ink">
                       Reconnect email
                     </label>
-                    <span className={`text-xs ${reviewingRce.outlook_draft_ready ? "text-ok" : "text-warning"}`}>
+                    <span className={`text-xs ${reviewingRce.outlook_draft_ready ? "text-ok" : "text-warn"}`}>
                       {reviewingRce.outlook_draft_ready
                         ? reviewingRce.takeover
                           ? "Connected to a new Outlook draft"
@@ -2567,11 +2580,11 @@ export default function WeeklyOutreachPage() {
                     aria-label="Reconnect email"
                     value={reviewDraft}
                     onChange={(event) => handleReviewDraftChange(event.target.value)}
-                    className="min-h-48 w-full flex-1 resize-none rounded-xl border border-line p-4 text-base leading-7 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 sm:min-h-64 sm:flex-none sm:resize-y sm:text-[15px] sm:leading-6"
+                    className="min-h-48 w-full flex-1 resize-none rounded-sm border border-line-strong p-4 text-base leading-7 text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 sm:min-h-64 sm:flex-none sm:resize-y sm:text-[15px] sm:leading-6"
                   />
                   <p className="mt-2 flex min-h-5 items-center gap-2 text-xs" aria-live="polite">
                     {autoSave.state === "saving" ? (
-                      <span className="text-ink-muted">Saving…</span>
+                      <span className="text-ink-secondary">Saving…</span>
                     ) : autoSave.state === "saved" ? (
                       <span className="text-ok">
                         {reviewingRce.outlook_draft_ready ? "Saved to Outlook" : "Saved"}
@@ -2583,7 +2596,7 @@ export default function WeeklyOutreachPage() {
                         </span>
                         <button
                           type="button"
-                          className="shrink-0 font-semibold text-ink underline underline-offset-2"
+                          className="shrink-0 text-ink underline underline-offset-2"
                           onClick={() => void saveDraftNow()}
                         >
                           Retry
@@ -2591,7 +2604,7 @@ export default function WeeklyOutreachPage() {
                       </>
                     ) : null}
                   </p>
-                  <p className="mt-1 hidden text-xs text-ink-muted sm:block">
+                  <p className="mt-1 hidden text-xs text-ink-secondary sm:block">
                     {reviewingRce.outlook_draft_ready
                       ? reviewingRce.takeover
                         ? `Edits save to Outlook automatically. Approve and Send sends this exact text as a new email to ${reviewingRce.takeover.contactEmail ?? "the contact"}.`
@@ -2608,17 +2621,17 @@ export default function WeeklyOutreachPage() {
                 <p
                   role="alert"
                   title={sheetError}
-                  className="truncate border-t border-line bg-danger/5 px-3 py-2 text-xs text-danger sm:hidden"
+                  className="truncate border-t border-line bg-danger-soft px-3 py-2 text-xs text-danger sm:hidden"
                 >
                   {sheetError}
                 </p>
               ) : null}
-              <div className="relative flex items-center gap-2 border-t border-line bg-surface-2 p-3 sm:hidden">
+              <div className="relative flex items-center gap-2 border-t border-line p-3 sm:hidden">
                 <button
                   type="button"
                   aria-label="More actions"
                   onClick={() => setReviewMenuOpen((open) => !open)}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-line bg-white text-xl text-ink"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-line-strong bg-white text-xl text-ink"
                 >
                   ⋯
                 </button>
@@ -2628,7 +2641,7 @@ export default function WeeklyOutreachPage() {
                   </Button>
                 ) : null}
                 {reviewMenuOpen ? (
-                  <div className="absolute bottom-full left-3 z-10 mb-2 w-60 overflow-hidden rounded-xl border border-line bg-white shadow-xl">
+                  <div className="absolute bottom-full left-3 z-10 mb-2 w-60 overflow-hidden rounded-md border border-line bg-white shadow-xl">
                     <button
                       type="button"
                       className="block w-full px-4 py-3 text-left text-sm text-ink hover:bg-surface-2 disabled:opacity-50"
@@ -2688,7 +2701,7 @@ export default function WeeklyOutreachPage() {
                       disabled={!reviewDraft.trim()}
                       onClick={startConfirmSend}
                     >
-                      Approve &amp; Send
+                      Approve &amp; send
                     </Button>
                   )
                 ) : (
@@ -2705,7 +2718,7 @@ export default function WeeklyOutreachPage() {
 
               {/* Laptop action bar: one row. Approve & Send is the primary action;
                   without an Outlook draft there is nothing to send, so Mark sent is. */}
-              <div className="hidden border-t border-line bg-surface-2 p-4 sm:block sm:px-6">
+              <div className="hidden border-t border-line p-4 sm:block sm:px-6">
                 {sheetError ? (
                   <p
                     role="alert"
@@ -2769,7 +2782,7 @@ export default function WeeklyOutreachPage() {
                         }
                         onClick={startConfirmSend}
                       >
-                        Approve &amp; Send
+                        Approve &amp; send
                       </Button>
                     )}
                   </div>
