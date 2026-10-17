@@ -727,14 +727,7 @@ function CallsPageContent() {
           <>
             {/* Controls bar */}
             <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-              <div>
-                <h2 className="text-lg font-normal text-ink">
-                  Call logger
-                </h2>
-                <p className="text-sm text-ink-secondary mt-0.5">
-                  Analyze your Outlook calendar and log calls to Salesforce
-                </p>
-              </div>
+              <p className="text-sm text-ink-secondary">Pick a week, analyze the Outlook calendar, log the calls to Salesforce.</p>
 
               <div className="flex flex-wrap items-center gap-3">
                 <WeekSelector
