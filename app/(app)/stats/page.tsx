@@ -1255,9 +1255,6 @@ export default function StatsPage() {
                                 Potential
                               </Table.HeadCell>
                             ) : null}
-                            <Table.HeadCell className="text-right">
-                              Rate
-                            </Table.HeadCell>
                           </Table.HeadRow>
                         </Table.Head>
                         <Table.Body>
@@ -1273,27 +1270,23 @@ export default function StatsPage() {
                               <Table.Cell className="text-right tabular-nums text-ink-secondary">
                                 {fmtNumber(p.sent)}
                               </Table.Cell>
-                              <Table.Cell className="text-right tabular-nums text-ink-secondary">
-                                {fmtNumber(p.bs)}
+                              {/* Count and share of that sender's emails, in the tier's colour. */}
+                              <Table.Cell
+                                className={`text-right tabular-nums ${p.bs > 0 ? "text-danger" : "text-ink-muted"}`}
+                              >
+                                {fmtNumber(p.bs)} · {fmtPct(p.rate)}
                               </Table.Cell>
                               {showWarn ? (
                                 <Table.Cell
-                                  className={`text-right tabular-nums ${p.warn > 0 ? "cursor-pointer text-[#8A6A1A] underline decoration-dotted" : "text-ink-muted"}`}
+                                  className={`text-right tabular-nums ${(p.warn ?? 0) > 0 ? "cursor-pointer text-[#8A6A1A] underline decoration-dotted" : "text-ink-muted"}`}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     openQualityPerson(p.owner, "warn");
                                   }}
                                 >
-                                  {fmtNumber(p.warn ?? 0)}
+                                  {fmtNumber(p.warn ?? 0)} · {fmtPct(p.sent > 0 ? (p.warn ?? 0) / p.sent : 0)}
                                 </Table.Cell>
                               ) : null}
-                              <Table.Cell
-                                className={`text-right tabular-nums ${
-                                  p.bs > 0 ? "text-danger" : "text-ink-muted"
-                                }`}
-                              >
-                                {fmtPct(p.rate)}
-                              </Table.Cell>
                             </Table.Row>
                           ))}
                         </Table.Body>
