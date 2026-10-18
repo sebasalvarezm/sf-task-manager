@@ -11,7 +11,7 @@ export function SidebarLogo() {
       aria-label="Valstone home"
     >
       <Image
-        src="/valstone-logo-dark.png"
+        src="/valstone-logo.png"
         alt="Valstone"
         width={115}
         height={32}

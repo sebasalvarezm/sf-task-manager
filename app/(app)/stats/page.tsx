@@ -542,13 +542,23 @@ export default function StatsPage() {
     (preset === "this_quarter" || preset === "ytd") &&
     qualityBucketData.length > 1;
 
-  function openQualityRange() {
-    if (!quality || quality.totals.bs === 0) return;
+  function openQualityRange(severity: "bs" | "warn" = "bs") {
+    if (!quality) return;
+    if (severity === "bs" && quality.totals.bs === 0) return;
+    if (severity === "warn" && !(quality.totals.warn > 0)) return;
     setQualityTarget({
-      title: `Flagged outreach · ${range.label}`,
+      title: `${severity === "warn" ? "Potential" : "Flagged"} outreach · ${range.label}`,
       start: range.start,
       end: range.end,
+      severity,
     });
+  }
+
+  /** The donut passes the clicked slice; the yellow one opens the potential list. */
+  function openQualitySlice(slice: { name?: string; payload?: { name?: string } } | null) {
+    const name = slice?.name ?? slice?.payload?.name;
+    if (name === "Clean") return;
+    openQualityRange(name === "Potential" ? "warn" : "bs");
   }
 
   type BucketClick = {
@@ -557,29 +567,33 @@ export default function StatsPage() {
     payload?: { start?: string; name?: string };
   };
 
-  function openQualityBucket(clicked: BucketClick | null) {
+  function openQualityBucket(clicked: BucketClick | null, severity: "bs" | "warn" = "bs") {
     // Recharts exposes the datum both spread onto the argument and nested under
     // `payload`, depending on the mark — read whichever is present.
     const start = clicked?.start ?? clicked?.payload?.start;
     if (!start) return;
     const bucket = quality?.byBucket.find((b) => b.start === start);
-    if (!bucket || bucket.bs === 0) return;
+    if (!bucket) return;
+    if (severity === "bs" ? bucket.bs === 0 : !(bucket.warn > 0)) return;
     const match = range.buckets.find((b) => b.start === start);
     setQualityTarget({
-      title: `Flagged outreach · ${clicked?.name ?? clicked?.payload?.name ?? bucket.label}`,
+      title: `${severity === "warn" ? "Potential" : "Flagged"} outreach · ${clicked?.name ?? clicked?.payload?.name ?? bucket.label}`,
       start: bucket.start,
       end: match?.end ?? range.end,
+      severity,
     });
   }
 
-  function openQualityPerson(owner: string) {
+  function openQualityPerson(owner: string, severity: "bs" | "warn" = "bs") {
     const person = quality?.byPerson.find((p) => p.owner === owner);
-    if (!person || person.bs === 0) return;
+    if (!person) return;
+    if (severity === "bs" ? person.bs === 0 : !(person.warn > 0)) return;
     setQualityTarget({
-      title: `Flagged outreach · ${owner}`,
+      title: `${severity === "warn" ? "Potential" : "Flagged"} outreach · ${owner}`,
       start: range.start,
       end: range.end,
       owner,
+      severity,
     });
   }
 
@@ -1048,8 +1062,8 @@ export default function StatsPage() {
                                 paddingAngle={2}
                                 strokeWidth={2}
                                 stroke="#FFFFFF"
-                                cursor={quality.totals.bs > 0 ? "pointer" : "default"}
-                                onClick={openQualityRange}
+                                cursor={quality.totals.bs > 0 || (showWarn && quality.totals.warn > 0) ? "pointer" : "default"}
+                                onClick={(slice) => openQualitySlice(slice as { name?: string; payload?: { name?: string } })}
                               >
                                 {qualityDonutData.map((slice) => (
                                   <Cell key={slice.name} fill={slice.fill} />
@@ -1189,7 +1203,7 @@ export default function StatsPage() {
                             stackId="q"
                             fill={WARN}
                             cursor="pointer"
-                            onClick={(d) => openQualityBucket(d as BucketClick)}
+                            onClick={(d) => openQualityBucket(d as BucketClick, "warn")}
                           />
                         ) : null}
                         <Bar
@@ -1236,6 +1250,11 @@ export default function StatsPage() {
                             <Table.HeadCell className="text-right">
                               Flagged
                             </Table.HeadCell>
+                            {showWarn ? (
+                              <Table.HeadCell className="text-right">
+                                Potential
+                              </Table.HeadCell>
+                            ) : null}
                             <Table.HeadCell className="text-right">
                               Rate
                             </Table.HeadCell>
@@ -1257,6 +1276,17 @@ export default function StatsPage() {
                               <Table.Cell className="text-right tabular-nums text-ink-secondary">
                                 {fmtNumber(p.bs)}
                               </Table.Cell>
+                              {showWarn ? (
+                                <Table.Cell
+                                  className={`text-right tabular-nums ${p.warn > 0 ? "cursor-pointer text-[#8A6A1A] underline decoration-dotted" : "text-ink-muted"}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openQualityPerson(p.owner, "warn");
+                                  }}
+                                >
+                                  {fmtNumber(p.warn ?? 0)}
+                                </Table.Cell>
+                              ) : null}
                               <Table.Cell
                                 className={`text-right tabular-nums ${
                                   p.bs > 0 ? "text-danger" : "text-ink-muted"

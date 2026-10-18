@@ -22,6 +22,8 @@ export async function GET(req: NextRequest) {
   const start = url.searchParams.get("start");
   const end = url.searchParams.get("end");
   const owner = url.searchParams.get("owner");
+  // "warn": emails that failed exactly one check (the yellow tier). Default: the red verdict.
+  const severity = url.searchParams.get("severity") === "warn" ? "warn" : "bs";
   const team: StatsTeam =
     url.searchParams.get("team") === "cdm" ? "cdm" : "small_ma";
 
@@ -49,7 +51,8 @@ export async function GET(req: NextRequest) {
       const verdict = scoreAccountQuality(row, thresholds, {
         foundedFieldAvailable,
       });
-      if (!verdict.isBs) continue;
+      const keep = severity === "warn" ? !verdict.isBs && verdict.flags.length > 0 : verdict.isBs;
+      if (!keep) continue;
       flagged.push({ ...row, flags: verdict.flags, missing: verdict.missing });
     }
 

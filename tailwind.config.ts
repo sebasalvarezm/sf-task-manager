@@ -48,7 +48,8 @@ const config: Config = {
           2: "#FFFFFF",       // cards, inputs
           3: "#F7F6F3",       // hover, selected row
           4: "#ECEBE7",       // pressed, dividers as fill
-          sidebar: "#EFEEEA",
+          sidebar: "#1B2A4A", // the original navy, back by request
+          "sidebar-active": "#253561",
         },
         line: {
           DEFAULT: "#E3E1DC",
@@ -59,7 +60,7 @@ const config: Config = {
           secondary: "#5F5E5A",
           muted: "#8B8985",
           inverse: "#FFFFFF",
-          "inverse-muted": "#C9C6BF",
+          "inverse-muted": "#A0AEC0",
         },
         ok: { DEFAULT: "#1F6B47", soft: "#E6F2EC" },
         warn: { DEFAULT: "#8A6A1A", soft: "#F7F0DC" },
@@ -67,13 +68,13 @@ const config: Config = {
         info: { DEFAULT: "#3B5BDB", soft: "#E9EDFA" },
       },
       borderRadius: {
-        sm: "4px",
-        DEFAULT: "4px",
-        md: "6px",
-        lg: "8px",
-        xl: "8px",
-        "2xl": "8px",
-        "3xl": "8px",
+        sm: "6px",
+        DEFAULT: "6px",
+        md: "8px",
+        lg: "10px",
+        xl: "12px",
+        "2xl": "12px",
+        "3xl": "12px",
       },
       boxShadow: {
         xs: "none",
@@ -85,15 +86,17 @@ const config: Config = {
         "2xl": "0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06)",
       },
       fontFamily: {
-        sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        // Poppins is the app's own face (kept from the first build); Inter stays for tabular numbers.
+        sans: ["Poppins", "Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        num: ["Inter", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
         mono: ["JetBrains Mono", "SF Mono", "Menlo", "monospace"],
       },
       fontWeight: {
-        // Hierarchy comes from size and grey, not weight: nothing renders heavier than 500.
-        semibold: "500",
-        bold: "500",
-        extrabold: "500",
-        black: "500",
+        // Headings may be a touch heavier than body, never more than 600.
+        semibold: "600",
+        bold: "600",
+        extrabold: "600",
+        black: "600",
       },
       transitionDuration: {
         DEFAULT: "120ms",

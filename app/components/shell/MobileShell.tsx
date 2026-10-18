@@ -45,11 +45,11 @@ export function MobileShell({ children }: { children: ReactNode }) {
       )}
 
       <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="sticky top-0 z-20 flex items-center gap-2 bg-surface-sidebar text-ink px-3 h-14 border-b border-line md:hidden">
+        <div className="sticky top-0 z-20 flex items-center gap-2 bg-surface-sidebar text-ink-inverse px-3 h-14 border-b border-surface-sidebar-active md:hidden">
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="-ml-1 p-2 rounded-sm hover:bg-surface-3 active:bg-surface-4 transition-colors"
+            className="-ml-1 p-2 rounded-sm hover:bg-surface-sidebar-active/60 active:bg-surface-sidebar-active transition-colors"
             aria-label="Open navigation menu"
             aria-expanded={open}
           >

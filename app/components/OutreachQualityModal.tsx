@@ -32,6 +32,8 @@ export type OutreachQualityTarget = {
   end: string;
   /** Full owner name, when drilling into one sender. */
   owner?: string;
+  /** "bs" = failed two or more checks (default); "warn" = failed exactly one. */
+  severity?: "bs" | "warn";
 };
 
 type FlaggedRow = {
@@ -94,6 +96,7 @@ export function OutreachQualityModal({
         team,
       });
       if (target.owner) params.set("owner", target.owner);
+      if (target.severity) params.set("severity", target.severity);
       try {
         const res = await fetch(
           `/api/salesforce/outreach-quality?${params.toString()}`,
