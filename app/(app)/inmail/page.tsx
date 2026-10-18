@@ -266,12 +266,12 @@ export default function InMailQueuePage() {
         subtitle="Contacts who finished the email sequence without replying. InMails are built from the E1 that was actually sent."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-sm text-ink-muted">
+            <label className="flex items-center gap-2 text-sm text-ink-secondary">
               E5 in last
               <select
                 value={days}
                 onChange={(event) => setDays(Number(event.target.value))}
-                className="rounded-lg border border-line bg-white px-2 py-1.5 text-sm text-ink"
+                className="h-9 rounded-sm border border-line-strong bg-white px-2 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4"
               >
                 {[7, 14, 30, 60].map((d) => (
                   <option key={d} value={d}>
@@ -280,29 +280,34 @@ export default function InMailQueuePage() {
                 ))}
               </select>
             </label>
-            <Button variant="secondary" loading={refreshing} onClick={() => void refresh()}>
-              <RefreshCw className="mr-1.5 h-4 w-4" /> Refresh from Salesforce
+            <Button variant="secondary" leftIcon={<RefreshCw size={16} />} loading={refreshing} onClick={() => void refresh()}>
+              Refresh from Salesforce
             </Button>
             <Button
+              variant="secondary"
+              leftIcon={<Asterisk size={16} />}
               loading={generatingAll}
               disabled={!items.some((r) => r.status === "pending" && r.e1_body && r.first_name)}
               onClick={() => void generateAll()}
             >
-              <Asterisk className="mr-1.5 h-4 w-4" /> Generate all pending
+              Generate all pending
             </Button>
           </div>
         }
       />
       <PageContent>
         {error ? (
-          <Alert variant="danger" onDismiss={() => setError(null)}>
+          <Alert variant="danger" className="mb-4" onDismiss={() => setError(null)}>
             {error}
           </Alert>
         ) : null}
         {message ? (
-          <Alert variant="ok" onDismiss={() => setMessage(null)}>
-            {message}
-          </Alert>
+          <div className="mb-4 flex items-start justify-between gap-3 text-sm text-ink-secondary">
+            <span>{message}</span>
+            <button type="button" onClick={() => setMessage(null)} className="shrink-0 rounded-sm px-1 text-ink-muted hover:bg-surface-3 hover:text-ink" aria-label="Dismiss">
+              ×
+            </button>
+          </div>
         ) : null}
 
         <div className="mb-4 flex flex-wrap gap-2">
@@ -318,8 +323,8 @@ export default function InMailQueuePage() {
               key={key}
               type="button"
               onClick={() => setFilter(key)}
-              className={`rounded-sm border px-3 py-1.5 text-sm font-medium ${
-                filter === key ? "border-brand bg-brand text-white" : "border-line bg-white text-ink hover:bg-surface-2"
+              className={`rounded-sm border px-3 py-1.5 text-sm ${
+                filter === key ? "border-navy bg-navy text-white" : "border-line bg-white text-ink-secondary hover:bg-surface-3"
               }`}
             >
               {label}
@@ -330,14 +335,14 @@ export default function InMailQueuePage() {
         {loading ? (
           <p className="text-sm text-ink-muted">Loading…</p>
         ) : visible.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-line bg-white p-10 text-center text-sm text-ink-muted">
+          <div className="rounded-md border border-line bg-white p-8 text-center text-sm text-ink-secondary">
             {items.length === 0
               ? "Nothing queued yet. Click Refresh from Salesforce to pull contacts whose E5 went out recently with no reply."
               : "Nothing in this view."}
           </div>
         ) : (
           <>
-          <div className="space-y-3 md:hidden">
+          <div className="border-t border-line md:hidden">
             {visible.map((row) => {
               const since = daysSince(row.e5_sent_at ? `${row.e5_sent_at}T12:00:00` : null);
               const sentDays = daysSince(row.sent_at);
@@ -345,26 +350,26 @@ export default function InMailQueuePage() {
               const isBusy = busy.has(row.who_id);
               const canGenerate = row.status === "pending" || row.status === "needs_review";
               return (
-                <div key={row.who_id} className="rounded-xl border border-line bg-white p-3 shadow-sm">
+                <div key={row.who_id} className="border-b border-line bg-white px-1 py-3 hover:bg-surface-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="truncate text-base font-semibold text-ink">{row.contact_name ?? "Unknown contact"}</div>
-                      <div className="truncate text-sm text-ink-muted">{row.account_name ?? "—"}</div>
+                      <div className="truncate text-[15px] font-medium text-ink">{row.contact_name ?? "Unknown contact"}</div>
+                      <div className="truncate text-[13px] text-ink-secondary">{row.account_name ?? "—"}</div>
                     </div>
-                    <Badge variant={STATUS_LABEL[row.status].variant} dot>
+                    <Badge variant={STATUS_LABEL[row.status].variant}>
                       {STATUS_LABEL[row.status].label}
                     </Badge>
                   </div>
-                  <div className="mt-1 text-xs text-ink-muted">
+                  <div className="mt-0.5 text-[13px] text-ink-secondary">
                     E5 sent {row.e5_sent_at ?? "—"}{since !== null ? ` (${since}d ago)` : ""}
                     {row.status === "sent" && sentDays !== null ? (
-                      <span className={sentDays >= 7 ? " font-semibold text-ink underline" : ""}>
+                      <span className={sentDays >= 7 ? " text-ink underline underline-offset-2" : ""}>
                         {" · "}{sentDays >= 7 ? "Follow-up due" : `Follow-up in ${7 - sentDays}d`}
                       </span>
                     ) : null}
                   </div>
                   {row.flags.length > 0 ? (
-                    <ul className="mt-1 space-y-0.5 text-xs text-warning">
+                    <ul className="mt-1 space-y-0.5 text-[13px] text-warn">
                       {row.flags.map((flag) => (
                         <li key={flag}>{flag}</li>
                       ))}
@@ -372,13 +377,12 @@ export default function InMailQueuePage() {
                   ) : null}
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     {row.initial_message ? (
-                      <Button size="sm" onClick={() => void copyRowInMail(row)}>
-                        {copiedRow === row.who_id ? <Check className="mr-1 h-4 w-4" /> : <Copy className="mr-1 h-4 w-4" />}
+                      <Button size="sm" leftIcon={copiedRow === row.who_id ? <Check size={16} /> : <Copy size={16} />} onClick={() => void copyRowInMail(row)}>
                         {copiedRow === row.who_id ? "Copied" : "Copy InMail"}
                       </Button>
                     ) : (
-                      <Button size="sm" loading={isBusy} disabled={!canGenerate || !row.e1_body || !row.first_name} onClick={() => void generate(row.who_id)}>
-                        <Asterisk className="mr-1 h-4 w-4" /> Generate
+                      <Button size="sm" variant="secondary" leftIcon={<Asterisk size={16} />} loading={isBusy} disabled={!canGenerate || !row.e1_body || !row.first_name} onClick={() => void generate(row.who_id)}>
+                        Generate
                       </Button>
                     )}
                     {href ? (
@@ -386,9 +390,9 @@ export default function InMailQueuePage() {
                         href={href}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-line bg-white px-3 text-sm font-medium text-ink active:bg-surface-2"
+                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-sm border border-line-strong bg-white px-3 text-[13px] font-medium text-ink hover:bg-surface-3 active:bg-surface-4"
                       >
-                        <MessageSquare className="h-4 w-4" /> {row.linkedin_url ? "Open profile" : "Find on LinkedIn"}
+                        <MessageSquare size={16} /> {row.linkedin_url ? "Open profile" : "Find on LinkedIn"}
                       </a>
                     ) : (
                       <span />
@@ -425,16 +429,16 @@ export default function InMailQueuePage() {
               );
             })}
           </div>
-          <div className="hidden overflow-x-auto rounded-2xl border border-line bg-white md:block">
+          <div className="hidden overflow-x-auto rounded-md border border-line bg-white md:block">
             <table className="w-full min-w-[820px] text-sm">
-              <thead className="bg-surface-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted">
+              <thead className="text-left text-[13px] font-normal text-ink-secondary">
                 <tr>
-                  <th className="px-4 py-3">Contact</th>
-                  <th className="px-4 py-3">Company</th>
-                  <th className="px-4 py-3">E5 sent</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">LinkedIn</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-4 py-3 font-normal">Contact</th>
+                  <th className="px-4 py-3 font-normal">Company</th>
+                  <th className="px-4 py-3 font-normal">E5 sent</th>
+                  <th className="px-4 py-3 font-normal">Status</th>
+                  <th className="px-4 py-3 font-normal">LinkedIn</th>
+                  <th className="px-4 py-3 text-right font-normal">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -444,12 +448,12 @@ export default function InMailQueuePage() {
                   const href = profileHref(row);
                   const isBusy = busy.has(row.who_id);
                   return (
-                    <tr key={row.who_id} className="border-t border-line align-top">
+                    <tr key={row.who_id} className="border-t border-line align-top hover:bg-surface-3">
                       <td className="px-4 py-3">
                         <div className="font-medium text-ink">{row.contact_name ?? "Unknown contact"}</div>
-                        {row.contact_email ? <div className="text-xs text-ink-muted">{row.contact_email}</div> : null}
+                        {row.contact_email ? <div className="text-[13px] text-ink-secondary">{row.contact_email}</div> : null}
                         {row.flags.length > 0 ? (
-                          <ul className="mt-1 space-y-0.5 text-xs text-warning">
+                          <ul className="mt-1 space-y-0.5 text-[13px] text-warn">
                             {row.flags.map((flag) => (
                               <li key={flag}>{flag}</li>
                             ))}
@@ -457,16 +461,16 @@ export default function InMailQueuePage() {
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-ink">{row.account_name ?? "—"}</td>
-                      <td className="px-4 py-3 text-ink-muted">
+                      <td className="px-4 py-3 tabular-nums text-ink-secondary">
                         {row.e5_sent_at ?? "—"}
-                        {since !== null ? <div className="text-xs">{since}d ago</div> : null}
+                        {since !== null ? <div className="text-[13px] text-ink-muted">{since}d ago</div> : null}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={STATUS_LABEL[row.status].variant} dot>
+                        <Badge variant={STATUS_LABEL[row.status].variant}>
                           {STATUS_LABEL[row.status].label}
                         </Badge>
                         {row.status === "sent" && sentDays !== null ? (
-                          <div className={`mt-1 text-xs ${sentDays >= 7 ? "font-semibold text-ink underline" : "text-ink-muted"}`}>
+                          <div className={`mt-1 text-[13px] ${sentDays >= 7 ? "text-ink underline underline-offset-2" : "text-ink-secondary"}`}>
                             {sentDays >= 7 ? "Follow-up due" : `Follow-up in ${7 - sentDays}d`}
                           </div>
                         ) : null}
@@ -477,11 +481,11 @@ export default function InMailQueuePage() {
                             href={href}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-ink underline hover:text-ink-secondary"
+                            className="inline-flex items-center gap-1 text-ink underline underline-offset-2 hover:text-ink-secondary"
                           >
-                            <MessageSquare className="h-4 w-4" />
+                            <MessageSquare size={16} />
                             {row.linkedin_url ? "Profile" : "Find in Recruiter"}
-                            <ExternalLink className="h-3 w-3" />
+                            <ExternalLink size={12} />
                           </a>
                         ) : (
                           <span className="text-ink-muted">—</span>
@@ -501,7 +505,7 @@ export default function InMailQueuePage() {
                             </Button>
                           ) : null}
                           {row.initial_message ? (
-                            <Button size="sm" onClick={() => setOpenId(row.who_id)}>
+                            <Button size="sm" variant="secondary" onClick={() => setOpenId(row.who_id)}>
                               Open
                             </Button>
                           ) : null}
@@ -540,16 +544,16 @@ export default function InMailQueuePage() {
             }}
           >
             <div
-              className="flex h-[100dvh] w-full flex-col bg-white shadow-2xl sm:h-auto sm:max-h-[95vh] sm:max-w-3xl sm:rounded-2xl"
+              className="flex h-[100dvh] w-full flex-col bg-white sm:h-auto sm:max-h-[95vh] sm:max-w-3xl sm:rounded-lg sm:border sm:border-line"
               role="dialog"
               aria-modal="true"
             >
               <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-3 sm:px-6 sm:py-4">
                 <div className="min-w-0">
-                  <h2 className="truncate text-lg font-semibold text-ink">
+                  <h2 className="truncate text-lg font-medium text-ink">
                     {open.contact_name} · {open.account_name}
                   </h2>
-                  <p className="mt-0.5 text-xs text-ink-muted">
+                  <p className="mt-0.5 text-[13px] text-ink-secondary">
                     E5 sent {open.e5_sent_at ?? "—"}. Copy subject and both messages into Recruiter, schedule the follow-up there, then mark both sent.
                   </p>
                 </div>
@@ -559,10 +563,10 @@ export default function InMailQueuePage() {
                       href={profileHref(open)!}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex h-9 items-center gap-1 rounded-lg border border-line px-3 text-sm font-medium text-ink hover:bg-surface-2"
+                      className="inline-flex h-9 items-center gap-1.5 rounded-sm border border-line-strong bg-white px-3 text-sm font-medium text-ink hover:bg-surface-3"
                       title={open.linkedin_url ? "LinkedIn profile from Salesforce" : isMobile ? "Search in the LinkedIn app" : "Search in LinkedIn Recruiter"}
                     >
-                      <MessageSquare className="h-4 w-4" /> {open.linkedin_url ? "Open profile" : isMobile ? "Find on LinkedIn" : "Open in Recruiter"}
+                      <MessageSquare size={16} /> {open.linkedin_url ? "Open profile" : isMobile ? "Find on LinkedIn" : "Open in Recruiter"}
                     </a>
                   ) : null}
                   {open.contact_name ? (
@@ -572,7 +576,7 @@ export default function InMailQueuePage() {
                       )}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="hidden h-9 items-center rounded-lg px-2 text-xs text-ink-muted hover:underline sm:inline-flex"
+                      className="hidden h-9 items-center rounded-sm px-2 text-[13px] text-ink-secondary hover:bg-surface-3 hover:text-ink sm:inline-flex"
                       title="Plain LinkedIn search, if Recruiter search misses"
                     >
                       LinkedIn search
@@ -581,7 +585,7 @@ export default function InMailQueuePage() {
                   <button
                     type="button"
                     onClick={() => setOpenId(null)}
-                    className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-3 text-xl text-ink-muted"
+                    className="flex h-9 w-9 items-center justify-center rounded-sm text-xl text-ink-secondary hover:bg-surface-3 hover:text-ink"
                     aria-label="Close"
                   >
                     ×
@@ -603,15 +607,14 @@ export default function InMailQueuePage() {
                 ) : null}
 
                 <section>
-                  <label className="mb-1.5 block text-sm font-semibold text-ink">Subject</label>
+                  <label className="mb-1.5 block text-[13px] text-ink-secondary">Subject</label>
                   <div className="flex gap-2">
                     <input
                       value={draftSubject}
                       onChange={(event) => setDraftSubject(event.target.value)}
-                      className="h-10 flex-1 rounded-xl border border-line px-3 text-base text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 sm:text-[15px]"
+                      className="h-10 flex-1 rounded-sm border border-line-strong px-3 text-base text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 sm:text-[15px]"
                     />
-                    <Button size="sm" variant="secondary" onClick={() => void copy("subject")}>
-                      {copied === "subject" ? <Check className="mr-1 h-4 w-4" /> : <Copy className="mr-1 h-4 w-4" />}
+                    <Button size="sm" variant="secondary" leftIcon={copied === "subject" ? <Check size={16} /> : <Copy size={16} />} onClick={() => void copy("subject")}>
                       {copied === "subject" ? "Copied" : "Copy"}
                     </Button>
                   </div>
@@ -619,48 +622,46 @@ export default function InMailQueuePage() {
 
                 <section>
                   <div className="mb-1.5 flex items-center justify-between">
-                    <label className="text-sm font-semibold text-ink">Initial InMail</label>
-                    <span className={`text-xs ${draftInitial.length > 1900 ? "text-danger" : "text-ink-muted"}`}>
+                    <label className="text-[13px] text-ink-secondary">Initial InMail</label>
+                    <span className={`text-[13px] tabular-nums ${draftInitial.length > 1900 ? "text-danger" : "text-ink-muted"}`}>
                       {draftInitial.length} / 1900
                     </span>
                   </div>
                   <textarea
                     value={draftInitial}
                     onChange={(event) => setDraftInitial(event.target.value)}
-                    className="min-h-56 w-full resize-y rounded-xl border border-line p-4 text-base leading-7 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 sm:text-[15px] sm:leading-6"
+                    className="min-h-56 w-full resize-y rounded-sm border border-line-strong p-3 text-base leading-7 text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 sm:text-[15px] sm:leading-6"
                   />
                   <div className="mt-2 flex gap-2">
-                    <Button size="sm" onClick={() => void copy("initial")}>
-                      {copied === "initial" ? <Check className="mr-1 h-4 w-4" /> : <Copy className="mr-1 h-4 w-4" />}
+                    <Button size="sm" leftIcon={copied === "initial" ? <Check size={16} /> : <Copy size={16} />} onClick={() => void copy("initial")}>
                       {copied === "initial" ? "Copied" : "Copy initial"}
                     </Button>
                   </div>
                 </section>
 
                 <section>
-                  <label className="mb-1.5 block text-sm font-semibold text-ink">
-                    Follow-up InMail <span className="font-normal text-ink-muted">(paste into Recruiter's scheduled follow-up, about a week out)</span>
+                  <label className="mb-1.5 block text-[13px] text-ink-secondary">
+                    Follow-up InMail <span className="text-ink-muted">(paste into Recruiter's scheduled follow-up, about a week out)</span>
                   </label>
                   <textarea
                     value={draftFollowup}
                     onChange={(event) => setDraftFollowup(event.target.value)}
-                    className="min-h-28 w-full resize-y rounded-xl border border-line p-4 text-base leading-7 text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 sm:text-[15px] sm:leading-6"
+                    className="min-h-28 w-full resize-y rounded-sm border border-line-strong p-3 text-base leading-7 text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 sm:text-[15px] sm:leading-6"
                   />
                   <div className="mt-2 flex gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => void copy("followup")}>
-                      {copied === "followup" ? <Check className="mr-1 h-4 w-4" /> : <Copy className="mr-1 h-4 w-4" />}
+                    <Button size="sm" variant="secondary" leftIcon={copied === "followup" ? <Check size={16} /> : <Copy size={16} />} onClick={() => void copy("followup")}>
                       {copied === "followup" ? "Copied" : "Copy follow-up"}
                     </Button>
                   </div>
                 </section>
 
-                <details className="rounded-xl border border-line bg-surface-2 p-3 text-sm">
-                  <summary className="cursor-pointer font-medium text-ink">Original E1 from Salesforce</summary>
-                  <pre className="mt-2 whitespace-pre-wrap font-sans text-ink-muted">{open.e1_body ?? "No E1 body stored."}</pre>
+                <details className="rounded-md border border-line bg-white p-3 text-sm">
+                  <summary className="cursor-pointer text-ink">Original E1 from Salesforce</summary>
+                  <pre className="mt-2 whitespace-pre-wrap font-sans text-ink-secondary">{open.e1_body ?? "No E1 body stored."}</pre>
                 </details>
               </div>
 
-              <div className="flex items-center justify-between gap-2 border-t border-line bg-surface-2 p-3 sm:px-6 sm:py-4">
+              <div className="flex items-center justify-between gap-2 border-t border-line bg-white p-3 sm:px-6 sm:py-4">
                 <Button variant="ghost" onClick={() => void generate(open.who_id)} loading={busy.has(open.who_id)}>
                   Regenerate
                 </Button>
@@ -680,6 +681,7 @@ export default function InMailQueuePage() {
                         </Button>
                       ) : null}
                       <Button
+                        variant="secondary"
                         title="InMail sent and follow-up scheduled in Recruiter"
                         onClick={() => void setStatus(open, "followup_sent")}
                       >

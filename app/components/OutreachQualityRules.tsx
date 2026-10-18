@@ -126,9 +126,9 @@ export function OutreachQualityRules({
         </Alert>
       )}
 
-      <Alert variant="info" className="mb-5">
+      <p className="mb-5 text-sm text-ink-secondary">
         Changing a rule re-scores history, so past weeks will move too.
-      </Alert>
+      </p>
 
       <div className="space-y-6">
         <section>

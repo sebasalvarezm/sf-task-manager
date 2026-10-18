@@ -29,11 +29,11 @@ export default function RangePicker({ value, trailingN, onChange }: Props) {
 
   return (
     <div className="flex items-center gap-3 flex-wrap">
-      <label className="text-sm font-medium text-navy">Range:</label>
+      <label className="text-sm font-normal text-ink-secondary">Range:</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as RangePreset, trailingN)}
-        className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-orange min-w-[200px]"
+        className="border border-line-strong rounded-sm px-3 py-2 text-sm text-ink bg-white focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 min-w-[200px]"
       >
         {PRESET_OPTIONS.map((opt) => (
           <option key={opt.value} value={opt.value}>
@@ -56,9 +56,9 @@ export default function RangePicker({ value, trailingN, onChange }: Props) {
                 (e.currentTarget as HTMLInputElement).blur();
               }
             }}
-            className="w-16 border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+            className="w-16 border border-line-strong rounded-sm px-2 py-2 text-sm text-ink bg-white focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4"
           />
-          <span className="text-sm text-gray-500">weeks</span>
+          <span className="text-sm text-ink-secondary">weeks</span>
         </div>
       )}
     </div>

@@ -355,7 +355,7 @@ export default function InboxPage() {
             <Button variant="ghost" size="sm" onClick={() => setSigOpen((v) => !v)}>
               {sig === undefined ? "Signature" : sig ? "Signature ✓" : "Signature: none"}
             </Button>
-            <Button variant="secondary" leftIcon={<RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />} loading={refreshing} onClick={() => void refresh()}>
+            <Button variant="secondary" leftIcon={<RefreshCw size={16} />} loading={refreshing} onClick={() => void refresh()}>
               Check Outlook
             </Button>
           </>
@@ -363,17 +363,17 @@ export default function InboxPage() {
       />
       <PageContent>
         {error ? <Alert variant="danger" className="mb-4">{error}</Alert> : null}
-        {message ? <Alert variant="info" className="mb-4">{message}</Alert> : null}
+        {message ? <p className="mb-4 text-sm text-ink-secondary">{message}</p> : null}
 
         {sigOpen ? (
-          <div className="mb-4 rounded-xl border border-line bg-white p-4">
-            <p className="text-sm font-semibold text-ink">Email signature</p>
-            <p className="mt-1 text-xs text-ink-muted">
+          <div className="mb-4 rounded-md border border-line bg-white p-4">
+            <p className="text-sm font-medium text-ink">Email signature</p>
+            <p className="mt-1 text-[13px] text-ink-secondary">
               Outlook adds your signature only when you send from Outlook itself. Store it here once and every email this tool sends (Inbox replies, RCE reconnects and follow-ups) gets it appended under your sign-off.
             </p>
             {sigError ? <Alert variant="danger" className="mt-3">{sigError}</Alert> : null}
             {sig ? (
-              <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-3 p-3 font-sans text-xs text-ink-secondary">{sig.text}</pre>
+              <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-sm border border-line p-3 font-sans text-[13px] text-ink-secondary">{sig.text}</pre>
             ) : (
               <p className="mt-3 text-sm text-ink-secondary">No signature stored. Emails go out with just your sign-off.</p>
             )}
@@ -386,9 +386,9 @@ export default function InboxPage() {
               ) : null}
             </div>
             <details className="mt-3">
-              <summary className="cursor-pointer text-xs font-medium text-ink underline">Or paste it as text</summary>
-              <textarea value={sigText} onChange={(e) => setSigText(e.target.value)} placeholder={"Sebastian Alvarez\nDirector, M&A | Valstone\n..."} className="mt-2 min-h-28 w-full rounded-lg border border-line p-3 text-base" />
-              <Button size="sm" className="mt-2" disabled={sigBusy || !sigText.trim()} onClick={() => void signatureAction({ text: sigText })}>Save pasted signature</Button>
+              <summary className="cursor-pointer text-[13px] text-ink underline underline-offset-2">Or paste it as text</summary>
+              <textarea value={sigText} onChange={(e) => setSigText(e.target.value)} placeholder={"Sebastian Alvarez\nDirector, M&A | Valstone\n..."} className="mt-2 min-h-28 w-full rounded-sm border border-line-strong p-3 text-base text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4" />
+              <Button size="sm" variant="secondary" className="mt-2" disabled={sigBusy || !sigText.trim()} onClick={() => void signatureAction({ text: sigText })}>Save pasted signature</Button>
             </details>
           </div>
         ) : null}
@@ -406,7 +406,7 @@ export default function InboxPage() {
               type="button"
               onClick={() => setFilter(key)}
               className={`whitespace-nowrap rounded-sm border px-3 py-1.5 text-sm ${
-                filter === key ? "border-navy bg-navy text-white" : "border-line bg-white text-ink"
+                filter === key ? "border-navy bg-navy text-white" : "border-line bg-white text-ink-secondary hover:bg-surface-3"
               }`}
             >
               {label}
@@ -417,12 +417,12 @@ export default function InboxPage() {
         {loading ? (
           <p className="text-sm text-ink-muted">Loading…</p>
         ) : visible.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-line p-8 text-center text-sm text-ink-muted">
-            <InboxIcon className="mx-auto mb-2" size={20} />
+          <div className="rounded-md border border-line bg-white p-8 text-center text-sm text-ink-secondary">
+            <InboxIcon className="mx-auto mb-2 text-ink-muted" size={16} />
             {items.length === 0 ? "Nothing here yet. Tap Check Outlook to pull unread replies." : "Nothing in this view."}
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="border-t border-line">
             {visible.map((r) => {
               const s = r.sentiment ? SENTIMENT[r.sentiment] : null;
               return (
@@ -430,12 +430,12 @@ export default function InboxPage() {
                   key={r.message_id}
                   type="button"
                   onClick={() => setOpenId(r.message_id)}
-                  className="w-full rounded-xl border border-line bg-white p-3 text-left shadow-sm active:bg-surface-3"
+                  className="w-full border-b border-line bg-white px-1 py-3 text-left hover:bg-surface-3 active:bg-surface-4"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-base font-semibold text-ink">
+                        <span className="truncate text-[15px] font-medium text-ink">
                           {r.account_name ?? r.from_name ?? r.from_email}
                         </span>
                         {s ? <Badge variant={s.variant} size="sm">{s.label}</Badge> : <Badge variant="neutral" size="sm">Not classified</Badge>}
@@ -443,16 +443,16 @@ export default function InboxPage() {
                         {r.status === "skipped" ? <Badge variant="neutral" size="sm">Removed</Badge> : null}
                         {r.status === "sent" ? <Badge variant="ok" size="sm">Replied</Badge> : null}
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-ink-muted">
+                      <p className="mt-0.5 truncate text-[13px] text-ink-secondary">
                         {r.from_name ?? r.from_email}
                         {r.account_name && r.from_name ? ` · ${r.subject ?? ""}` : r.subject ? ` · ${r.subject}` : ""}
                       </p>
-                      <p className="mt-1.5 line-clamp-2 text-sm text-ink-secondary">{r.summary ?? r.preview}</p>
+                      <p className="mt-1 line-clamp-2 text-[13px] text-ink-secondary">{r.summary ?? r.preview}</p>
                       {r.suggested_date ? (
-                        <p className="mt-1 text-xs text-ink-muted">Next touch: {longDate(r.suggested_date)}{r.timing_text ? ` (“${r.timing_text}”)` : ""}</p>
+                        <p className="mt-1 text-[13px] text-ink-muted">Next touch: {longDate(r.suggested_date)}{r.timing_text ? ` (“${r.timing_text}”)` : ""}</p>
                       ) : null}
                     </div>
-                    <span className="shrink-0 text-xs text-ink-muted">{daysAgo(r.received_at)}</span>
+                    <span className="shrink-0 text-[13px] tabular-nums text-ink-muted">{daysAgo(r.received_at)}</span>
                   </div>
                 </button>
               );
@@ -469,20 +469,20 @@ export default function InboxPage() {
             }}
           >
             <div
-              className="flex h-[100dvh] w-full flex-col bg-white shadow-2xl sm:h-auto sm:max-h-[95vh] sm:max-w-2xl sm:rounded-2xl"
+              className="flex h-[100dvh] w-full flex-col bg-white sm:h-auto sm:max-h-[95vh] sm:max-w-2xl sm:rounded-lg sm:border sm:border-line"
               style={sheetStyle}
               role="dialog"
               aria-modal="true"
             >
               <div className="flex items-start justify-between border-b border-line px-4 py-3 sm:px-6">
                 <div className="min-w-0">
-                  <h2 className="truncate text-lg font-semibold text-ink">{open.account_name ?? open.from_name ?? open.from_email}</h2>
-                  <p className="mt-0.5 truncate text-xs text-ink-muted">
+                  <h2 className="truncate text-lg font-medium text-ink">{open.account_name ?? open.from_name ?? open.from_email}</h2>
+                  <p className="mt-0.5 truncate text-[13px] text-ink-secondary">
                     {open.from_name} &lt;{open.from_email}&gt; · {longDate(open.received_at)}
                     {open.account_id ? ` · matched by ${open.account_matched_by}` : " · no Salesforce account"}
                   </p>
                 </div>
-                <button type="button" onClick={() => setOpenId(null)} className="ml-4 rounded-lg px-2 py-1 text-sm text-ink-muted hover:bg-surface-2">
+                <button type="button" onClick={() => setOpenId(null)} className="ml-4 rounded-sm px-2 py-1 text-sm text-ink-secondary hover:bg-surface-3 hover:text-ink">
                   Close
                 </button>
               </div>
@@ -490,18 +490,18 @@ export default function InboxPage() {
               <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-6">
                 {sheetError ? <Alert variant="danger" className="mb-3">{sheetError}</Alert> : null}
 
-                <div className="rounded-xl border border-line bg-surface-3 p-3">
+                <div className="rounded-md border border-line bg-white p-3">
                   <p className={`whitespace-pre-wrap text-sm text-ink ${threadOpen ? "" : "line-clamp-[12]"}`}>{open.thread[open.thread.length - 1]?.text || open.preview}</p>
                   {open.thread.length > 1 ? (
-                    <button type="button" onClick={() => setThreadOpen((v) => !v)} className="mt-2 flex items-center gap-1 text-xs font-medium text-ink underline">
-                      {threadOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    <button type="button" onClick={() => setThreadOpen((v) => !v)} className="mt-2 flex items-center gap-1 text-[13px] text-ink underline underline-offset-2">
+                      {threadOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                       {threadOpen ? "Show less" : `Show full thread (${open.thread.length - 1} earlier)`}
                     </button>
                   ) : null}
                   {threadOpen
                     ? open.thread.slice(0, -1).reverse().map((m, i) => (
                         <div key={i} className="mt-3 border-t border-line pt-2">
-                          <p className="text-xs font-medium text-ink-muted">
+                          <p className="text-[13px] text-ink-secondary">
                             {m.mine ? "You" : m.from || m.email} · {longDate(m.at)}
                           </p>
                           <p className="mt-1 whitespace-pre-wrap text-sm text-ink-secondary">{m.text}</p>
@@ -511,7 +511,7 @@ export default function InboxPage() {
                 </div>
 
                 <div className="mt-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">Read as</p>
+                  <p className="text-[13px] text-ink-secondary">Read as</p>
                   <div className="mt-1.5 flex flex-wrap gap-2">
                     {(["positive", "neutral", "negative", "unclear"] as Sentiment[]).map((s) => (
                       <button
@@ -520,7 +520,7 @@ export default function InboxPage() {
                         disabled={busy}
                         onClick={() => void setSentiment(s)}
                         className={`rounded-sm border px-3 py-1.5 text-sm ${
-                          open.sentiment === s ? "border-navy bg-navy text-white" : "border-line bg-white text-ink"
+                          open.sentiment === s ? "border-navy bg-navy text-white" : "border-line bg-white text-ink-secondary hover:bg-surface-3"
                         }`}
                       >
                         {SENTIMENT[s].label}
@@ -528,15 +528,15 @@ export default function InboxPage() {
                     ))}
                   </div>
                   {open.summary ? <p className="mt-2 text-sm text-ink-secondary">{open.summary}</p> : null}
-                  {open.is_broker_intro ? <p className="mt-1 text-xs text-ink-muted">Looks like a broker intro: no Salesforce changes will be made for it.</p> : null}
+                  {open.is_broker_intro ? <p className="mt-1 text-[13px] text-ink-muted">Looks like a broker intro: no Salesforce changes will be made for it.</p> : null}
                 </div>
 
                 <div className="mt-4">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">{isSent ? "Reply sent" : "Your reply"}</p>
+                    <p className="text-[13px] text-ink-secondary">{isSent ? "Reply sent" : "Your reply"}</p>
                     {!isSent ? (
-                      <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-xs font-medium text-ink underline disabled:text-ink-muted">
-                        <Asterisk size={13} /> {drafting ? "Drafting…" : "Redraft"}
+                      <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-[13px] text-ink underline underline-offset-2 disabled:text-ink-muted">
+                        <Asterisk size={16} /> {drafting ? "Drafting…" : "Redraft"}
                       </button>
                     ) : null}
                   </div>
@@ -545,18 +545,18 @@ export default function InboxPage() {
                     onChange={(e) => setDraftBody(e.target.value)}
                     readOnly={isSent}
                     placeholder={drafting ? "Writing your reply…" : "Tap Redraft, or type your reply."}
-                    className="mt-1.5 min-h-44 w-full rounded-lg border border-line p-3 text-base leading-6 text-ink read-only:bg-surface-3"
+                    className="mt-1.5 min-h-44 w-full rounded-sm border border-line-strong p-3 text-base leading-6 text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 read-only:bg-surface-3"
                   />
                   {draftIssues.length > 0 ? (
-                    <p className="mt-1 text-xs text-warn">{draftIssues.join(" ")}</p>
+                    <p className="mt-1 text-[13px] text-warn">{draftIssues.join(" ")}</p>
                   ) : null}
                   {open.sentiment === "positive" && !open.is_broker_intro && !isSent ? (
-                    <p className="mt-1 text-xs text-ink-muted">Reply goes to everyone on their email (reply all), with bot@blockit.com copied so it can send times and the Teams invite.</p>
+                    <p className="mt-1 text-[13px] text-ink-muted">Reply goes to everyone on their email (reply all), with bot@blockit.com copied so it can send times and the Teams invite.</p>
                   ) : null}
                 </div>
 
                 <div className="mt-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">Next touch (RCE task)</p>
+                  <p className="text-[13px] text-ink-secondary">Next touch (RCE task)</p>
                   <div className="mt-1.5 flex items-center gap-2">
                     <input
                       type="text"
@@ -565,13 +565,13 @@ export default function InboxPage() {
                       onChange={(e) => setRceInput(e.target.value)}
                       readOnly={isSent}
                       placeholder="rce50, or blank for none"
-                      className={`h-11 w-40 rounded-lg border px-3 text-base read-only:bg-surface-3 ${rceDays === undefined ? "border-danger" : "border-line"}`}
+                      className={`h-10 w-40 rounded-sm border px-3 text-base text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 read-only:bg-surface-3 ${rceDays === undefined ? "border-danger" : "border-line-strong"}`}
                     />
                     <span className="text-sm text-ink-secondary">
                       {isSent && open.task_date ? `Task on ${longDate(open.task_date)}` : rceDate ? longDate(rceDate) : rceDays === undefined ? "Not a number" : "No task"}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-ink-muted">
+                  <p className="mt-1 text-[13px] text-ink-muted">
                     {open.is_broker_intro || !open.account_id
                       ? "No Salesforce account on this one, so nothing is written there."
                       : open.timing_text
@@ -582,32 +582,32 @@ export default function InboxPage() {
                     {open.account_id && !open.is_broker_intro && !isSent ? " On Send: Responded and response type are set on the account, and the open task is moved or created." : ""}
                   </p>
                 </div>
-                {sentNote ? <Alert variant="info" className="mt-3">{sentNote}</Alert> : null}
+                {sentNote ? <p className="mt-3 text-sm text-ink-secondary">{sentNote}</p> : null}
               </div>
 
-              <div className="relative flex items-center gap-2 border-t border-line bg-surface-2 p-3 sm:px-6">
+              <div className="relative flex items-center gap-2 border-t border-line bg-white p-3 sm:px-6">
                 <button
                   type="button"
                   onClick={() => setMenuOpen((v) => !v)}
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-3 text-ink-muted"
+                  className="flex h-9 w-9 items-center justify-center rounded-sm border border-line-strong bg-white text-ink-secondary hover:bg-surface-3 hover:text-ink"
                   aria-label="More"
                 >
-                  <MoreHorizontal size={18} />
+                  <MoreHorizontal size={16} />
                 </button>
                 {menuOpen ? (
-                  <div className="absolute bottom-full left-3 z-10 mb-2 w-56 overflow-hidden rounded-xl border border-line bg-white shadow-xl">
-                    <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void reclassify(); }}>Reclassify</button>
-                    {!isSent && open?.status !== "skipped" ? <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void skip(); }}>Remove from pile (no reply)</button> : null}
-                    {!isSent && open?.status !== "skipped" ? <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void markUnread(); }}>Mark unread in Outlook and remove</button> : null}
-                    {open?.status === "skipped" ? <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); void restore(); }}>Put back in pile</button> : null}
-                    <button type="button" className="block w-full px-4 py-3 text-left text-sm hover:bg-surface-3" onClick={() => { setMenuOpen(false); setOpenId(null); }}>Close</button>
+                  <div className="absolute bottom-full left-3 z-10 mb-2 w-64 overflow-hidden rounded-md border border-line bg-white shadow-xl">
+                    <button type="button" className="block w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface-3" onClick={() => { setMenuOpen(false); void reclassify(); }}>Reclassify</button>
+                    {!isSent && open?.status !== "skipped" ? <button type="button" className="block w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface-3" onClick={() => { setMenuOpen(false); void skip(); }}>Remove from pile (no reply)</button> : null}
+                    {!isSent && open?.status !== "skipped" ? <button type="button" className="block w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface-3" onClick={() => { setMenuOpen(false); void markUnread(); }}>Mark unread in Outlook and remove</button> : null}
+                    {open?.status === "skipped" ? <button type="button" className="block w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface-3" onClick={() => { setMenuOpen(false); void restore(); }}>Put back in pile</button> : null}
+                    <button type="button" className="block w-full px-4 py-2.5 text-left text-sm text-ink hover:bg-surface-3" onClick={() => { setMenuOpen(false); setOpenId(null); }}>Close</button>
                   </div>
                 ) : null}
                 <div className="flex-1" />
                 {isSent ? (
                   <Button variant="secondary" onClick={() => setOpenId(null)}>Done</Button>
                 ) : (
-                  <Button leftIcon={<Send size={14} />} loading={sending} disabled={!canSend} onClick={() => void send()}>
+                  <Button leftIcon={<Send size={16} />} loading={sending} disabled={!canSend} onClick={() => void send()}>
                     Send
                   </Button>
                 )}

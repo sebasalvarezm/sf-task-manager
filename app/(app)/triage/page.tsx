@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
+import { Badge } from "@/app/components/ui/Badge";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -195,24 +197,24 @@ export default function TriagePage() {
 
   // ── Priority styling ──────────────────────────────────────────────────
 
-  const priorityBadge = {
-    p1: "bg-red-50 text-red-600 border border-red-200",
-    p2: "bg-amber-50 text-amber-600 border border-amber-200",
-    p3: "bg-green-50 text-green-600 border border-green-200",
+  const priorityBadge: Record<"p1" | "p2" | "p3", "danger" | "warn" | "ok"> = {
+    p1: "danger",
+    p2: "warn",
+    p3: "ok",
   };
 
   const priorityLabel = { p1: "P1 — Urgent", p2: "P2 — Important", p3: "P3 — Low" };
 
   const tabStyle = (tab: "p1" | "p2" | "p3") =>
     activeTab === tab
-      ? "px-4 py-2 text-sm font-medium rounded-lg bg-navy text-white"
-      : "px-4 py-2 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100";
+      ? "px-3 py-1.5 text-sm rounded-sm bg-navy text-white"
+      : "px-3 py-1.5 text-sm rounded-sm text-ink-secondary hover:bg-surface-3";
 
-  const reviewBadge = (status: string | null) => {
-    if (status === "approved") return "bg-green-50 text-green-600 border border-green-200";
-    if (status === "edited") return "bg-blue-50 text-blue-600 border border-blue-200";
-    if (status === "rejected") return "bg-red-50 text-red-600 border border-red-200";
-    return "";
+  const reviewBadge = (status: string | null): "ok" | "info" | "danger" | "neutral" => {
+    if (status === "approved") return "ok";
+    if (status === "edited") return "info";
+    if (status === "rejected") return "danger";
+    return "neutral";
   };
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -220,70 +222,74 @@ export default function TriagePage() {
   return (
     <>
       <PageHeader
-        title="Email Triage"
+        title="Email triage"
         subtitle={`${emails.length} emails for ${date}`}
         actions={
           <Button onClick={handleScan} disabled={scanning} loading={scanning}>
-            {scanning ? "Scanning…" : "Scan Now"}
+            {scanning ? "Scanning…" : "Scan now"}
           </Button>
         }
       />
       <PageContent>
         {/* Date navigation */}
         <div className="flex items-center justify-between">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => navigateDate(-1)}
-            className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-600"
+            leftIcon={<ChevronLeft className="h-4 w-4" strokeWidth={1.5} />}
           >
-            ← Previous day
-          </button>
+            Previous day
+          </Button>
           <div className="text-center">
-            <h2 className="text-base font-semibold text-navy">{date}</h2>
+            <h2 className="text-base font-normal text-ink tabular-nums">{date}</h2>
           </div>
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => navigateDate(1)}
-            className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-100 text-gray-600"
+            rightIcon={<ChevronRight className="h-4 w-4" strokeWidth={1.5} />}
           >
-            Next day →
-          </button>
+            Next day
+          </Button>
         </div>
 
         {scanning && (
-          <div className="text-xs text-gray-400">
+          <p className="text-sm text-ink-secondary">
             Reading emails, categorizing with AI, drafting replies — this takes ~30 seconds...
-          </div>
+          </p>
         )}
         {scanResult && !scanning && (
-          <div className="text-xs text-gray-600 bg-gray-100 rounded-sm px-3 py-1 inline-block">
+          <p className="text-sm text-ink-secondary">
             {scanResult}
-          </div>
+          </p>
         )}
 
         {/* Stats bar */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center text-xs rounded-sm px-3 py-1 ${priorityBadge.p1}`}>
+          <Badge variant={priorityBadge.p1} size="md">
             P1: {counts.p1}
-          </span>
-          <span className={`inline-flex items-center text-xs rounded-sm px-3 py-1 ${priorityBadge.p2}`}>
+          </Badge>
+          <Badge variant={priorityBadge.p2} size="md">
             P2: {counts.p2}
-          </span>
-          <span className={`inline-flex items-center text-xs rounded-sm px-3 py-1 ${priorityBadge.p3}`}>
+          </Badge>
+          <Badge variant={priorityBadge.p3} size="md">
             P3: {counts.p3}
-          </span>
+          </Badge>
           {counts.flagged > 0 && (
-            <span className="inline-flex items-center text-xs rounded-sm px-3 py-1 bg-violet-50 text-violet-600 border border-violet-200">
+            <Badge variant="neutral" size="md">
               Flagged: {counts.flagged}
-            </span>
+            </Badge>
           )}
-          <span className="inline-flex items-center text-xs rounded-sm px-3 py-1 bg-gray-100 text-gray-600">
+          <Badge variant="neutral" size="md">
             Drafts: {counts.drafts}
-          </span>
+          </Badge>
         </div>
 
         {/* Progress bar */}
         {counts.drafts > 0 && (
           <div>
-            <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+            <div className="flex items-center justify-between text-xs text-ink-secondary mb-1 tabular-nums">
               <span>
                 {counts.reviewed} of {counts.drafts} drafts reviewed
               </span>
@@ -291,9 +297,9 @@ export default function TriagePage() {
                 {Math.round((counts.reviewed / counts.drafts) * 100)}%
               </span>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-surface-4 rounded-sm h-1.5">
               <div
-                className="bg-green-500 h-2 rounded-full transition-all"
+                className="bg-info h-1.5 rounded-sm transition-all"
                 style={{
                   width: `${Math.round((counts.reviewed / counts.drafts) * 100)}%`,
                 }}
@@ -303,7 +309,7 @@ export default function TriagePage() {
         )}
 
         {/* Tabs */}
-        <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+        <div className="flex gap-1 border border-line rounded-md p-1 w-fit bg-white">
           <button className={tabStyle("p1")} onClick={() => setActiveTab("p1")}>
             P1 ({counts.p1})
           </button>
@@ -317,13 +323,13 @@ export default function TriagePage() {
 
         {/* Loading */}
         {loading && (
-          <div className="text-center py-12 text-gray-400">Loading...</div>
+          <div className="text-center py-12 text-sm text-ink-secondary">Loading…</div>
         )}
 
         {/* Empty state */}
         {!loading && filtered.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-gray-400 text-sm">
+            <p className="text-ink-secondary text-sm">
               No {priorityLabel[activeTab]} emails for this date.
             </p>
           </div>
@@ -341,89 +347,76 @@ export default function TriagePage() {
             return (
               <div
                 key={email.id}
-                className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden"
+                className="bg-white rounded-md border border-line overflow-hidden"
               >
                 {/* ── Card header (always visible) ───────────────────────── */}
                 <button
                   onClick={() =>
                     setExpandedId(isExpanded ? null : email.id)
                   }
-                  className="w-full text-left px-6 py-4 flex items-start gap-4 hover:bg-gray-50 transition-colors"
+                  className="w-full text-left px-5 py-4 flex items-start gap-4 hover:bg-surface-3 transition-colors"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span
-                        className={`text-xs font-medium rounded-sm px-2 py-0.5 ${priorityBadge[email.priority]}`}
-                      >
+                      <Badge variant={priorityBadge[email.priority]}>
                         {email.priority.toUpperCase()}
-                      </span>
+                      </Badge>
                       {email.is_flagged && (
-                        <span className="text-xs font-medium rounded-sm px-2 py-0.5 bg-violet-50 text-violet-600 border border-violet-200">
+                        <Badge variant="neutral">
                           Flagged
-                        </span>
+                        </Badge>
                       )}
                       {isReviewed && (
-                        <span
-                          className={`text-xs font-medium rounded-sm px-2 py-0.5 ${reviewBadge(email.review_status)}`}
-                        >
+                        <Badge variant={reviewBadge(email.review_status)}>
                           {email.review_status === "approved"
                             ? "Approved"
                             : email.review_status === "edited"
                             ? "Edited"
                             : "Rejected"}
-                        </span>
+                        </Badge>
                       )}
                       {!email.draft && (
-                        <span className="text-xs text-gray-400">
+                        <span className="text-xs text-ink-muted">
                           No draft
                         </span>
                       )}
                     </div>
-                    <h3 className="text-sm font-semibold text-navy truncate">
+                    <h3 className="text-sm font-medium text-ink truncate">
                       {email.subject}
                     </h3>
-                    <p className="text-xs text-gray-500 mt-0.5">
+                    <p className="text-xs text-ink-secondary mt-0.5">
                       From: {email.sender_name}
                       {email.sender_email && (
-                        <span className="text-gray-400">
+                        <span className="text-ink-muted">
                           {" "}
                           ({email.sender_email})
                         </span>
                       )}
                     </p>
                     {email.context && (
-                      <p className="text-xs text-gray-400 mt-1 italic">
+                      <p className="text-xs text-ink-muted mt-1">
                         {email.context}
                       </p>
                     )}
                   </div>
-                  <svg
-                    className={`w-5 h-5 text-gray-400 transition-transform flex-shrink-0 mt-1 ${
+                  <ChevronDown
+                    className={`w-4 h-4 text-ink-muted transition-transform flex-shrink-0 mt-1 ${
                       isExpanded ? "rotate-180" : ""
                     }`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 9l-7 7-7-7"
-                    />
-                  </svg>
+                    strokeWidth={1.5}
+                  />
                 </button>
 
                 {/* ── Expanded content ────────────────────────────────────── */}
                 {isExpanded && (
-                  <div className="px-6 pb-6 border-t border-gray-100">
+                  <div className="px-5 pb-5 border-t border-line">
                     {/* Flag note */}
                     {email.is_flagged && email.flag_note && (
-                      <div className="mt-4 p-3 rounded-xl bg-violet-50 border border-violet-200">
-                        <p className="text-xs font-medium text-violet-700 mb-1">
-                          Flag Note
+                      <div className="mt-4 p-3 rounded-md bg-white border border-line">
+                        <p className="text-sm font-medium text-ink mb-1">
+                          Flag note
                         </p>
-                        <p className="text-sm text-violet-600">
+                        <p className="text-sm text-ink-secondary">
                           {email.flag_note}
                         </p>
                       </div>
@@ -432,26 +425,26 @@ export default function TriagePage() {
                     {/* Thread */}
                     {email.thread && email.thread.length > 0 && (
                       <div className="mt-4">
-                        <p className="text-xs font-medium text-gray-500 mb-2">
+                        <p className="text-xs text-ink-secondary mb-2">
                           Thread ({email.thread.length} messages)
                         </p>
                         <div className="space-y-2 max-h-64 overflow-y-auto">
                           {email.thread.map((msg, i) => (
                             <div
                               key={i}
-                              className="p-3 rounded-xl bg-gray-50 border border-gray-100"
+                              className="p-3 rounded-md bg-white border border-line"
                             >
                               <div className="flex items-center justify-between mb-1">
-                                <span className="text-xs font-medium text-navy">
+                                <span className="text-xs font-medium text-ink">
                                   {msg.from}
                                 </span>
                                 {msg.date && (
-                                  <span className="text-xs text-gray-400">
+                                  <span className="text-xs text-ink-muted tabular-nums">
                                     {msg.date}
                                   </span>
                                 )}
                               </div>
-                              <p className="text-xs text-gray-600 whitespace-pre-wrap">
+                              <p className="text-xs text-ink-secondary whitespace-pre-wrap">
                                 {msg.body}
                               </p>
                             </div>
@@ -463,11 +456,11 @@ export default function TriagePage() {
                     {/* Draft editor */}
                     {email.draft && (
                       <div className="mt-4">
-                        <p className="text-xs font-medium text-gray-500 mb-2">
-                          Draft Reply
+                        <p className="text-xs text-ink-secondary mb-2">
+                          Draft reply
                         </p>
                         <textarea
-                          className="w-full p-3 rounded-xl border border-gray-200 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-navy/20 focus:border-navy resize-y min-h-[120px]"
+                          className="w-full p-3 rounded-sm border border-line-strong bg-white text-sm text-ink focus:outline-none focus:ring-2 focus:ring-surface-4 focus:border-ink disabled:bg-surface-3 resize-y min-h-[120px]"
                           rows={6}
                           value={currentDraft}
                           onChange={(e) =>
@@ -481,79 +474,79 @@ export default function TriagePage() {
 
                         {/* Action buttons */}
                         {!isReviewed ? (
-                          <div className="flex items-center gap-2 mt-3">
+                          <div className="flex items-center gap-2 mt-3 flex-wrap">
                             {/* Send & Approve */}
                             {msConnected && email.sender_email && (
-                              <button
+                              <Button
+                                variant="secondary"
                                 onClick={() => handleSend(email.id)}
                                 disabled={sendingId === email.id}
-                                className="px-4 py-2 text-sm font-medium rounded-lg bg-brand-orange text-white hover:bg-brand-orange-hover transition-colors disabled:opacity-50"
+                                loading={sendingId === email.id}
                               >
                                 {sendingId === email.id
-                                  ? "Sending..."
-                                  : "Send Reply"}
-                              </button>
+                                  ? "Sending…"
+                                  : "Send reply"}
+                              </Button>
                             )}
 
                             {/* Approve without sending */}
-                            <button
+                            <Button
+                              variant="secondary"
                               onClick={() => handleReview(email.id, "approved")}
-                              className="px-4 py-2 text-sm font-medium rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors"
                             >
                               Approve
-                            </button>
+                            </Button>
 
                             {/* Save edit */}
                             {editDrafts[email.id] &&
                               editDrafts[email.id] !== (email.edited_draft ?? email.draft) && (
-                                <button
+                                <Button
+                                  variant="secondary"
                                   onClick={() =>
                                     handleReview(email.id, "edited")
                                   }
-                                  className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
                                 >
-                                  Save Edit
-                                </button>
+                                  Save edit
+                                </Button>
                               )}
 
                             {/* Reject */}
-                            <button
+                            <Button
+                              variant="danger"
                               onClick={() =>
                                 handleReview(email.id, "rejected")
                               }
-                              className="px-4 py-2 text-sm font-medium rounded-lg text-red-600 border border-red-200 hover:bg-red-50 transition-colors"
                             >
                               Reject
-                            </button>
+                            </Button>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-2 mt-3">
-                            <span
-                              className={`text-xs font-medium rounded-sm px-3 py-1 ${reviewBadge(email.review_status)}`}
-                            >
+                          <div className="flex items-center gap-2 mt-3 flex-wrap">
+                            <Badge variant={reviewBadge(email.review_status)} size="md">
                               {email.review_status === "approved"
                                 ? "Approved"
                                 : email.review_status === "edited"
-                                ? "Edited & Saved"
+                                ? "Edited & saved"
                                 : "Rejected"}
-                            </span>
+                            </Badge>
                             {email.sent_at && (
-                              <span className="text-xs font-medium text-green-700">Reply sent</span>
+                              <span className="text-xs text-ok">Reply sent</span>
                             )}
                             {/* Allow sending after approval, but only once */}
                             {msConnected &&
                               email.sender_email &&
                               !email.sent_at &&
                               email.review_status !== "rejected" && (
-                                <button
+                                <Button
+                                  variant="secondary"
                                   onClick={() => handleSend(email.id)}
                                   disabled={sendingId === email.id}
-                                  className="px-4 py-2 text-sm font-medium rounded-lg bg-brand-orange text-white hover:bg-brand-orange-hover transition-colors disabled:opacity-50"
+                                  loading={sendingId === email.id}
                                 >
                                   {sendingId === email.id
-                                    ? "Sending..."
-                                    : "Send Reply"}
-                                </button>
+                                    ? "Sending…"
+                                    : "Send reply"}
+                                </Button>
                               )}
                           </div>
                         )}
@@ -562,13 +555,11 @@ export default function TriagePage() {
 
                     {/* No-draft flagged item */}
                     {!email.draft && email.is_flagged && (
-                      <div className="mt-4 p-3 rounded-xl bg-gray-50 border border-gray-100">
-                        <p className="text-xs text-gray-500 italic">
-                          This email was flagged for your attention but no draft
-                          reply was generated. Review the thread above and reply
-                          manually if needed.
-                        </p>
-                      </div>
+                      <p className="mt-4 text-sm text-ink-secondary">
+                        This email was flagged for your attention but no draft
+                        reply was generated. Review the thread above and reply
+                        manually if needed.
+                      </p>
                     )}
                   </div>
                 )}

@@ -5,6 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import ConnectSalesforce from "../../components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
+import { Button } from "@/app/components/ui/Button";
+import { Badge } from "@/app/components/ui/Badge";
+import { Alert } from "@/app/components/ui/Alert";
+import { AlertCircle, AlertTriangle, Check, X } from "lucide-react";
 import { useJobs, type Job, useJobResult } from "@/app/hooks/useJobs";
 
 const INDUSTRY_OPTIONS = [
@@ -390,17 +394,17 @@ function AccountsPageContent() {
       <PageContent>
         {sfConnected === null && (
           <div className="flex justify-center items-center py-24">
-            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-orange" />
+            <p className="text-sm text-ink-secondary">Loading…</p>
           </div>
         )}
 
         {sfConnected === false && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center mb-6">
-            <p className="text-amber-800 font-medium mb-2">Salesforce is not connected.</p>
-            <p className="text-amber-600 text-sm mb-4">Connect Salesforce to create accounts.</p>
+          <div className="bg-white border border-line rounded-md p-6 text-center mb-6">
+            <p className="text-ink font-medium mb-1">Salesforce is not connected.</p>
+            <p className="text-ink-secondary text-sm mb-4">Connect Salesforce to create accounts.</p>
             <a
               href="/api/salesforce/connect"
-              className="inline-block bg-brand-orange hover:bg-brand-orange-hover text-white text-sm font-semibold px-6 py-2 rounded-lg transition-colors"
+              className="inline-flex items-center justify-center h-9 bg-white border border-line-strong hover:bg-surface-3 text-ink text-sm font-medium px-4 rounded-sm transition-colors"
             >
               Connect Salesforce
             </a>
@@ -411,15 +415,15 @@ function AccountsPageContent() {
           <>
             <div className="mb-6 flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-navy">Account Creator</h2>
-                <p className="text-sm text-gray-400 mt-0.5">
+                <h2 className="text-lg font-normal text-ink">Account creator</h2>
+                <p className="text-sm text-ink-secondary mt-0.5">
                   Paste up to 5 company URLs to auto-fill and create Salesforce accounts
                 </p>
               </div>
               {(activeJob || isReviewPhase) && (
                 <button
                   onClick={handleReset}
-                  className="text-sm text-gray-400 hover:text-gray-600 underline mt-1"
+                  className="text-sm text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary mt-1"
                 >
                   Start new run
                 </button>
@@ -428,15 +432,15 @@ function AccountsPageContent() {
 
             {/* ── INPUT PHASE (no active job) ──────────────────────────── */}
             {!activeJob && (
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-                <label className="block text-sm font-medium text-navy mb-3">
-                  Company Website URLs
+              <div className="bg-white rounded-md border border-line p-5 mb-6">
+                <label className="block text-sm text-ink-secondary mb-3">
+                  Company website URLs
                 </label>
 
                 <div className="flex flex-col gap-2 mb-4">
                   {urlInputs.map((u, i) => (
                     <div key={i} className="flex gap-2 items-center">
-                      <span className="text-xs text-gray-400 w-4 text-right shrink-0">{i + 1}</span>
+                      <span className="text-xs text-ink-muted w-4 text-right shrink-0 tabular-nums">{i + 1}</span>
                       <input
                         type="text"
                         value={u}
@@ -448,16 +452,16 @@ function AccountsPageContent() {
                           }
                         }}
                         placeholder="https://example.com"
-                        className="flex-1 border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                        className="flex-1 h-10 border border-line-strong rounded-sm px-3 text-sm text-ink bg-white placeholder:text-ink-muted focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 disabled:bg-surface-3"
                         disabled={submitting}
                       />
                       {urlInputs.length > 1 && (
                         <button
                           onClick={() => handleRemoveUrl(i)}
-                          className="text-gray-300 hover:text-red-400 text-lg leading-none px-1"
+                          className="text-ink-muted hover:text-ink px-1 rounded-sm"
                           title="Remove"
                         >
-                          ×
+                          <X className="h-4 w-4" strokeWidth={1.5} />
                         </button>
                       )}
                     </div>
@@ -468,30 +472,30 @@ function AccountsPageContent() {
                   {urlInputs.length < 5 ? (
                     <button
                       onClick={handleAddUrl}
-                      className="text-sm text-ink underline"
+                      className="text-sm text-ink underline decoration-1 underline-offset-2"
                     >
-                      + Add another URL
+                      Add another URL
                     </button>
                   ) : (
-                    <span className="text-xs text-gray-400">Maximum 5 URLs</span>
+                    <span className="text-xs text-ink-muted">Maximum 5 URLs</span>
                   )}
 
-                  <button
+                  <Button
                     onClick={handleEnrichAll}
                     disabled={submitting || !canEnrichAll}
-                    className="bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+                    loading={submitting}
                   >
-                    {submitting ? "Starting…" : urlInputs.filter((u) => u.trim()).length > 1 ? "Enrich All" : "Enrich"}
-                  </button>
+                    {submitting ? "Starting…" : urlInputs.filter((u) => u.trim()).length > 1 ? "Enrich all" : "Enrich"}
+                  </Button>
                 </div>
 
                 {submitError && (
-                  <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  <Alert variant="danger" className="mt-4">
                     {submitError}
-                  </div>
+                  </Alert>
                 )}
 
-                <p className="text-xs text-gray-400 mt-4">
+                <p className="text-xs text-ink-muted mt-4">
                   Takes about 30–60 seconds per URL. You can navigate away — the bell will light up when it's done.
                 </p>
               </div>
@@ -499,25 +503,24 @@ function AccountsPageContent() {
 
             {/* ── JOB IN FLIGHT ─────────────────────────────────────────── */}
             {isJobInFlight && (
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+              <div className="bg-white rounded-md border border-line p-5 mb-6">
                 <div className="flex items-start gap-4">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-brand-orange shrink-0 mt-0.5" />
                   <div className="flex-1">
-                    <p className="text-sm font-semibold text-navy">
+                    <p className="text-sm font-medium text-ink">
                       {activeJob?.status === "queued"
                         ? "Queued — waiting for a worker"
                         : activeJob?.progress?.step
                           ? `Running — ${activeJob.progress.step}`
                           : "Enriching accounts…"}
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-ink-secondary mt-1">
                       You can switch to another tool. The bell will light up when it's done.
                     </p>
                     {typeof activeJob?.progress?.pct === "number" &&
                       activeJob.progress.pct > 0 && (
-                        <div className="mt-3 h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                        <div className="mt-3 h-1.5 w-full bg-surface-4 rounded-sm overflow-hidden">
                           <div
-                            className="h-full bg-brand-orange transition-all"
+                            className="h-full bg-info transition-all"
                             style={{ width: `${Math.min(100, activeJob.progress.pct)}%` }}
                           />
                         </div>
@@ -529,48 +532,45 @@ function AccountsPageContent() {
 
             {/* ── JOB FAILED ────────────────────────────────────────────── */}
             {isJobFailed && (
-              <div className="bg-red-50 border border-red-200 rounded-xl p-6 mb-6">
-                <p className="text-sm font-semibold text-red-800 mb-1">
-                  This run failed
-                </p>
-                <p className="text-sm text-red-700">
-                  {activeJob?.error ?? "Unknown error"}
-                </p>
+              <Alert variant="danger" title="This run failed" className="mb-6">
+                <p>{activeJob?.error ?? "Unknown error"}</p>
                 <button
                   onClick={handleReset}
-                  className="mt-3 text-sm text-red-700 hover:text-red-900 underline"
+                  className="mt-2 text-sm text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                 >
                   Start a new run
                 </button>
-              </div>
+              </Alert>
             )}
 
             {/* ── REVIEW PHASE (job succeeded, items hydrated) ─────────── */}
             {isReviewPhase && (
               <>
                 {items.length > 1 && (
-                  <div className="flex gap-2 mb-4 flex-wrap">
+                  <div className="flex gap-1 mb-4 flex-wrap border border-line rounded-md p-1 w-fit bg-white">
                     {items.map((item, i) => {
                       const isActive = i === activeIndex;
                       const isCreated = item.createResult?.success;
                       const hasDuplicate = !!item.duplicate;
                       const hasError = !!item.enrichError;
 
-                      let tabStyle = isActive
-                        ? "bg-navy text-white border-navy"
-                        : "bg-white text-gray-600 border-gray-200 hover:border-gray-400";
-
-                      if (!isActive && isCreated) tabStyle = "bg-green-50 text-green-700 border-green-300";
-                      else if (!isActive && hasDuplicate) tabStyle = "bg-amber-50 text-amber-700 border-amber-300";
-                      else if (!isActive && hasError) tabStyle = "bg-red-50 text-red-600 border-red-200";
+                      const tabStyle = isActive
+                        ? "bg-navy text-white"
+                        : "text-ink-secondary hover:bg-surface-3";
 
                       return (
                         <button
                           key={i}
                           onClick={() => setActiveIndex(i)}
-                          className={`border rounded-lg px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5 ${tabStyle}`}
+                          className={`rounded-sm px-3 py-1.5 text-sm transition-colors flex items-center gap-1.5 tabular-nums ${tabStyle}`}
                         >
-                          {isCreated ? <span>✓</span> : hasDuplicate ? <span>⚠</span> : null}
+                          {isCreated ? (
+                            <Check className={`h-3.5 w-3.5 ${isActive ? "" : "text-ok"}`} strokeWidth={1.5} />
+                          ) : hasDuplicate ? (
+                            <AlertTriangle className={`h-3.5 w-3.5 ${isActive ? "" : "text-warn"}`} strokeWidth={1.5} />
+                          ) : hasError ? (
+                            <AlertCircle className={`h-3.5 w-3.5 ${isActive ? "" : "text-danger"}`} strokeWidth={1.5} />
+                          ) : null}
                           {i + 1}
                         </button>
                       );
@@ -584,104 +584,105 @@ function AccountsPageContent() {
                   const canCreate = item.form.companyName.trim().length > 0 && item.form.website.trim().length > 0;
 
                   return (
-                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4">
+                    <div className="bg-white rounded-md border border-line p-5 mb-4">
                       <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-semibold text-navy">
-                          {items.length > 1 ? `Account ${i + 1}` : "Review & Edit"}
+                        <h3 className="text-base font-medium text-ink">
+                          {items.length > 1 ? `Account ${i + 1}` : "Review and edit"}
                         </h3>
                         <div className="flex items-center gap-3">
                           {item.confidence && (
-                            <span
-                              className={`text-xs font-medium px-2.5 py-1 rounded-sm ${
+                            <Badge
+                              variant={
                                 item.confidence === "high"
-                                  ? "bg-green-50 text-green-700 border border-green-200"
+                                  ? "ok"
                                   : item.confidence === "medium"
-                                  ? "bg-yellow-50 text-yellow-700 border border-yellow-200"
-                                  : "bg-red-50 text-red-700 border border-red-200"
-                              }`}
+                                  ? "warn"
+                                  : "danger"
+                              }
+                              size="md"
                             >
                               {item.confidence === "high"
                                 ? "High confidence"
                                 : item.confidence === "medium"
                                 ? "Medium confidence"
                                 : "Low confidence — please review"}
-                            </span>
+                            </Badge>
                           )}
                         </div>
                       </div>
 
                       {item.enrichError && (
-                        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+                        <p className="mb-4 text-sm text-ink-secondary">
                           {item.enrichError} — fill in the fields below.
-                        </div>
+                        </p>
                       )}
 
                       {item.duplicate && (
-                        <div className="mb-4 bg-amber-50 border border-amber-300 rounded-lg p-3 flex items-start justify-between gap-3">
-                          <div className="text-sm text-amber-800">
-                            <span className="font-medium">⚠ Possible duplicate found in Salesforce:</span>{" "}
-                            <strong>{item.duplicate.accountName}</strong>
+                        <div className="mb-4 bg-white border border-line rounded-md p-3 flex items-start justify-between gap-3">
+                          <div className="text-sm text-ink">
+                            <span className="font-medium">Possible duplicate found in Salesforce:</span>{" "}
+                            <span className="text-ink-secondary">{item.duplicate.accountName}</span>
                           </div>
                           <a
                             href={item.duplicate.accountUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-xs text-amber-700 hover:text-amber-900 underline whitespace-nowrap"
+                            className="text-xs text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary whitespace-nowrap"
                           >
-                            Open →
+                            Open
                           </a>
                         </div>
                       )}
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Company Name *</label>
+                          <label className="block text-xs text-ink-secondary mb-1">Company name *</label>
                           <input
                             type="text"
                             value={item.form.companyName}
                             onChange={(e) => updateItemField(i, "companyName", e.target.value)}
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                            className={FIELD}
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Website</label>
+                          <label className="block text-xs text-ink-secondary mb-1">Website</label>
                           <input
                             type="text"
                             value={item.form.website}
                             readOnly
-                            className="w-full border border-gray-100 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500"
+                            className="w-full h-10 border border-line rounded-sm px-3 text-sm bg-surface-3 text-ink-secondary"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Year Established</label>
+                          <label className="block text-xs text-ink-secondary mb-1">Year established</label>
                           <input
                             type="text"
                             value={item.form.yearEstablished}
                             onChange={(e) => updateItemField(i, "yearEstablished", e.target.value)}
                             placeholder="e.g. 2005"
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                            className={`${FIELD} tabular-nums`}
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Employees</label>
+                          <label className="block text-xs text-ink-secondary mb-1">Employees</label>
                           <input
                             type="number"
                             value={item.form.employees}
                             onChange={(e) => updateItemField(i, "employees", e.target.value)}
                             placeholder="e.g. 150"
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                            className={`${FIELD} tabular-nums`}
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Industry</label>
+                          <label className="block text-xs text-ink-secondary mb-1">Industry</label>
                           <select
                             value={item.form.industry}
                             onChange={(e) => updateItemField(i, "industry", e.target.value)}
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white"
+                            className={FIELD}
                           >
                             {industryOptions.map((opt) => (
                               <option key={opt} value={opt}>{opt || "— Select industry —"}</option>
@@ -690,22 +691,22 @@ function AccountsPageContent() {
                         </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">Country</label>
+                          <label className="block text-xs text-ink-secondary mb-1">Country</label>
                           <input
                             type="text"
                             value={item.form.country}
                             onChange={(e) => updateItemField(i, "country", e.target.value)}
                             placeholder="e.g. United States"
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange"
+                            className={FIELD}
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs font-medium text-gray-500 mb-1">State / Province</label>
+                          <label className="block text-xs text-ink-secondary mb-1">State / province</label>
                           <select
                             value={item.form.stateProvince}
                             onChange={(e) => updateItemField(i, "stateProvince", e.target.value)}
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange bg-white"
+                            className={FIELD}
                           >
                             {stateOptions.map((opt) => (
                               <option key={opt} value={opt}>{opt || "— Select state / province —"}</option>
@@ -714,75 +715,68 @@ function AccountsPageContent() {
                         </div>
                       </div>
 
-                      <div className="bg-gray-50 rounded-lg p-4 mb-6">
-                        <p className="text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">Auto-set defaults</p>
-                        <div className="flex gap-6 text-sm text-gray-600">
-                          <span>Group: <strong>CDM</strong></span>
-                          <span>Stage: <strong>Lead</strong></span>
-                          <span>Responded: <strong>No</strong></span>
+                      <div className="border-t border-line pt-4 mb-6">
+                        <p className="text-xs text-ink-secondary mb-2">Auto-set defaults</p>
+                        <div className="flex gap-6 text-sm text-ink-secondary">
+                          <span>Group: <span className="text-ink">CDM</span></span>
+                          <span>Stage: <span className="text-ink">Lead</span></span>
+                          <span>Responded: <span className="text-ink">No</span></span>
                         </div>
                       </div>
 
                       {item.createResult && !item.createResult.success && (
-                        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                        <Alert variant="danger" className="mb-4">
                           {item.createResult.error}
-                        </div>
+                        </Alert>
                       )}
 
                       {item.createResult?.success && (
-                        <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center justify-between">
+                        <div className="mb-4 bg-white border border-line rounded-md p-4 flex items-center justify-between">
                           <div>
-                            <p className="text-sm font-semibold text-green-800">Account created!</p>
-                            <p className="text-xs text-green-700 mt-0.5">{item.form.companyName}</p>
+                            <p className="text-sm font-medium text-ok">Account created</p>
+                            <p className="text-xs text-ink-secondary mt-0.5">{item.form.companyName}</p>
                           </div>
                           {item.createResult.accountUrl && (
                             <a
                               href={item.createResult.accountUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-green-700 hover:text-green-900 underline"
+                              className="text-xs text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                             >
-                              Open in Salesforce →
+                              Open in Salesforce
                             </a>
                           )}
                         </div>
                       )}
 
                       {!item.createResult?.success && (
-                        <button
+                        <Button
                           onClick={() => handleCreateOne(i)}
                           disabled={item.creating || !canCreate}
-                          className="w-full bg-brand-orange hover:bg-brand-orange-hover disabled:opacity-50 text-white font-semibold py-3 rounded-lg transition-colors text-sm"
+                          loading={item.creating}
+                          size="lg"
+                          className="w-full"
                         >
-                          {item.creating ? (
-                            <span className="flex items-center justify-center gap-2">
-                              <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                              Creating account...
-                            </span>
-                          ) : (
-                            "Create Account in Salesforce"
-                          )}
-                        </button>
+                          {item.creating ? "Creating account…" : "Create account in Salesforce"}
+                        </Button>
                       )}
                     </div>
                   );
                 })()}
 
                 {readyToCreateAll && (
-                  <button
+                  <Button
+                    variant="secondary"
                     onClick={handleCreateAll}
                     disabled={creatingAll}
-                    className="w-full border-2 border-brand-orange text-ink underline hover:bg-brand-orange hover:text-white disabled:opacity-50 font-semibold py-3 rounded-lg transition-colors text-sm"
+                    loading={creatingAll}
+                    size="lg"
+                    className="w-full"
                   >
-                    {creatingAll ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-current" />
-                        Creating all accounts...
-                      </span>
-                    ) : (
-                      `Create All ${items.filter((it) => !it.createResult?.success && it.form.companyName.trim()).length} Accounts`
-                    )}
-                  </button>
+                    {creatingAll
+                      ? "Creating all accounts…"
+                      : `Create all ${items.filter((it) => !it.createResult?.success && it.form.companyName.trim()).length} accounts`}
+                  </Button>
                 )}
               </>
             )}
@@ -790,8 +784,8 @@ function AccountsPageContent() {
             {/* ── RECENT RUNS ──────────────────────────────────────────── */}
             {accountsJobs.length > 0 && (
               <div className="mt-8">
-                <h2 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">
-                  Recent Enrichment Runs
+                <h2 className="text-sm text-ink-secondary mb-3">
+                  Recent enrichment runs
                 </h2>
                 <div className="space-y-2">
                   {accountsJobs.slice(0, 10).map((job) => (
@@ -818,6 +812,9 @@ function AccountsPageContent() {
   );
 }
 
+const FIELD =
+  "w-full h-10 border border-line-strong rounded-sm px-3 text-sm text-ink bg-white placeholder:text-ink-muted focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4";
+
 function RecentRunRow({
   job,
   selected,
@@ -834,27 +831,27 @@ function RecentRunRow({
     <button
       type="button"
       onClick={onClick}
-      className={`w-full text-left rounded-lg border bg-white px-4 py-3 transition-all hover:shadow-sm ${
+      className={`w-full text-left rounded-md border bg-white px-4 py-3 transition-colors hover:bg-surface-3 ${
         selected
-          ? "border-brand-orange shadow-xs ring-1 ring-brand-orange/20"
-          : "border-gray-200 hover:border-gray-300"
+          ? "border-ink"
+          : "border-line hover:border-line-strong"
       }`}
     >
       <div className="flex items-center gap-3">
-        <div className="shrink-0">
-          {status === "succeeded" && <span className="text-green-600 text-base">✓</span>}
+        <div className="shrink-0 w-4">
+          {status === "succeeded" && <Check className="h-4 w-4 text-ok" strokeWidth={1.5} />}
           {(status === "failed" || status === "cancelled") && (
-            <span className="text-red-600 text-base">✕</span>
+            <X className="h-4 w-4 text-danger" strokeWidth={1.5} />
           )}
           {isInFlight && (
-            <span className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-brand-orange" />
+            <span className="text-xs text-ink-muted">…</span>
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-navy truncate">
+          <p className="text-sm font-medium text-ink truncate">
             {job.label ?? "Enrichment run"}
           </p>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <p className="text-xs text-ink-secondary mt-0.5">
             {status === "queued" && "Queued"}
             {status === "running" &&
               (job.progress?.step ? `Running · ${job.progress.step}` : "Running")}
@@ -867,7 +864,7 @@ function RecentRunRow({
         {isInFlight &&
           typeof job.progress?.pct === "number" &&
           job.progress.pct > 0 && (
-            <span className="text-xs text-gray-400 shrink-0">{job.progress.pct}%</span>
+            <span className="text-xs text-ink-muted shrink-0 tabular-nums">{job.progress.pct}%</span>
           )}
       </div>
     </button>

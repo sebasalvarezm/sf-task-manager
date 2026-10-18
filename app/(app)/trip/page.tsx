@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
+import { Button } from "@/app/components/ui/Button";
+import { Badge } from "@/app/components/ui/Badge";
+import { Alert } from "@/app/components/ui/Alert";
 import { useJobs, fetchJobResult } from "@/app/hooks/useJobs";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -378,22 +381,21 @@ export default function TripPage() {
           {/* Connection status */}
           <div className="flex flex-wrap gap-2 mb-6">
             {sfConnected === true ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-200 rounded-sm px-3 py-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              <Badge variant="ok" dot>
                 Salesforce connected
-              </span>
+              </Badge>
             ) : sfConnected === false ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-sm px-3 py-1">
+              <Badge variant="warn">
                 Salesforce not connected
-              </span>
+              </Badge>
             ) : (
-              <span className="text-xs text-gray-400">Checking...</span>
+              <span className="text-xs text-ink-muted">Checking…</span>
             )}
           </div>
 
           {/* Search card */}
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
-            <h2 className="text-lg font-semibold text-navy mb-4">
+          <div className="bg-white rounded-md border border-line p-5 mb-6">
+            <h2 className="text-lg font-normal text-ink mb-4">
               Where are you traveling?
             </h2>
             <div className="flex flex-wrap gap-3 items-end">
@@ -404,17 +406,17 @@ export default function TripPage() {
                   onChange={(e) => setLocation(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                   placeholder="e.g. Denver, CO or 123 Main St, Houston, TX"
-                  className="w-full text-sm border border-gray-300 rounded-lg px-4 py-2.5 focus:border-navy focus:outline-none"
+                  className="w-full h-10 text-sm text-ink bg-white border border-line-strong rounded-sm px-3 placeholder:text-ink-muted focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4"
                 />
               </div>
               <div className="w-32">
-                <label className="block text-[10px] text-gray-500 uppercase font-semibold mb-1">
+                <label className="block text-xs text-ink-secondary mb-1">
                   Radius
                 </label>
                 <select
                   value={radius}
                   onChange={(e) => setRadius(Number(e.target.value))}
-                  className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2.5 focus:border-navy focus:outline-none"
+                  className="w-full h-10 text-sm text-ink bg-white border border-line-strong rounded-sm px-3 focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4"
                 >
                   <option value={50}>50 miles</option>
                   <option value={100}>100 miles</option>
@@ -423,29 +425,32 @@ export default function TripPage() {
                   <option value={300}>300 miles</option>
                 </select>
               </div>
-              <button
+              <Button
+                size="lg"
                 onClick={handleSearch}
                 disabled={searching || !location.trim()}
-                className="px-6 py-2.5 bg-brand-orange hover:bg-brand-orange-hover disabled:bg-gray-300 text-white text-sm font-medium rounded-lg transition-colors"
+                loading={searching}
               >
                 {searching ? "Searching…" : "Search"}
-              </button>
-              <button
+              </Button>
+              <Button
+                size="lg"
+                variant="secondary"
                 onClick={handleScan}
                 disabled={scanning}
-                className="px-4 py-2.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                loading={scanning}
               >
-                {scanning ? "Scanning…" : "Scan Accounts"}
-              </button>
+                {scanning ? "Scanning…" : "Scan accounts"}
+              </Button>
             </div>
 
             {/* Cancel links — visible when a job is in flight */}
             {(searching || scanning) && (
-              <div className="mt-2 flex items-center gap-4 text-xs text-ink-muted">
+              <div className="mt-2 flex items-center gap-4 text-xs text-ink-secondary">
                 {searching && (
                   <button
                     onClick={handleCancelSearch}
-                    className="hover:text-danger underline-offset-2 transition-colors"
+                    className="text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary transition-colors"
                   >
                     Cancel search
                   </button>
@@ -453,7 +458,7 @@ export default function TripPage() {
                 {scanning && (
                   <button
                     onClick={handleCancelScan}
-                    className="hover:text-danger underline-offset-2 transition-colors"
+                    className="text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary transition-colors"
                   >
                     Cancel scan
                   </button>
@@ -463,15 +468,14 @@ export default function TripPage() {
 
             {/* Scan progress */}
             {scanning && scanProgress && (
-              <div className="mt-3 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <div className="mt-3 text-sm text-ink-secondary">
+                <div className="tabular-nums">
                   Scanning: {scanProgress.cached} of {scanProgress.total} accounts geocoded
                   ({scanProgress.remaining} remaining)
                 </div>
-                <div className="mt-1.5 w-full h-1.5 bg-blue-200 rounded-full overflow-hidden">
+                <div className="mt-1.5 w-full h-1.5 bg-surface-4 rounded-sm overflow-hidden">
                   <div
-                    className="h-full bg-blue-500 rounded-full transition-all"
+                    className="h-full bg-info rounded-sm transition-all"
                     style={{
                       width: `${Math.round((scanProgress.cached / scanProgress.total) * 100)}%`,
                     }}
@@ -480,11 +484,11 @@ export default function TripPage() {
               </div>
             )}
             {scanDone && scanProgress && !scanning && (
-              <div className="mt-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              <div className="mt-3 text-sm text-ink-secondary">
                 Scan complete: {scanProgress.cached} of {scanProgress.total} accounts geocoded.
                 You can now search.
                 {scanFailures && scanFailures.count > 0 && (
-                  <div className="mt-1 text-amber-700">
+                  <div className="mt-1 text-warn">
                     {scanFailures.count} account{scanFailures.count === 1 ? "" : "s"} couldn&apos;t be placed
                     {scanFailures.samples.length > 0 && (
                       <>
@@ -500,53 +504,53 @@ export default function TripPage() {
 
           {/* Error */}
           {searchError && (
-            <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-4 text-sm text-red-700">
+            <Alert variant="danger" className="mb-4">
               {searchError}
-            </div>
+            </Alert>
           )}
 
           {/* Drive times unavailable: distances are straight-line */}
           {drivingError && results !== null && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4 text-sm text-amber-700">
+            <p className="mb-4 text-sm text-ink-secondary">
               {drivingError}
-            </div>
+            </p>
           )}
 
           {/* Uncached warning */}
           {uncachedCount > 0 && results !== null && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4 text-sm text-amber-700">
+            <p className="mb-4 text-sm text-ink-secondary">
               {uncachedCount} account{uncachedCount !== 1 ? "s" : ""} not
-              geocoded yet — click <strong>Scan Accounts</strong> first to
+              geocoded yet — click <span className="text-ink">Scan accounts</span> first to
               include them in search results.
-            </div>
+            </p>
           )}
 
           {/* Results area */}
           {(results !== null || discovered !== null) && (
             <>
               {/* Tabs */}
-              <div className="flex gap-2 mb-4">
+              <div className="flex gap-1 mb-4 border border-line rounded-md p-1 w-fit bg-white">
                 <button
                   onClick={() => setActiveTab("existing")}
-                  className={`px-4 py-2 rounded-sm text-sm font-medium transition-colors ${
+                  className={`px-3 py-1.5 rounded-sm text-sm transition-colors tabular-nums ${
                     activeTab === "existing"
                       ? "bg-navy text-white"
-                      : "bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
+                      : "text-ink-secondary hover:bg-surface-3"
                   }`}
                 >
-                  Existing Accounts ({results?.length ?? 0})
+                  Existing accounts ({results?.length ?? 0})
                 </button>
                 <button
                   onClick={() => setActiveTab("discover")}
-                  className={`px-4 py-2 rounded-sm text-sm font-medium transition-colors ${
+                  className={`px-3 py-1.5 rounded-sm text-sm transition-colors tabular-nums ${
                     activeTab === "discover"
                       ? "bg-navy text-white"
-                      : "bg-white text-gray-600 border border-gray-200 hover:border-gray-300"
+                      : "text-ink-secondary hover:bg-surface-3"
                   }`}
                 >
-                  Discover New{" "}
+                  Discover new{" "}
                   {discovering ? (
-                    <span className="ml-1 inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    <span className="ml-1">…</span>
                   ) : discovered ? (
                     `(${discovered.filter((c) => c.ownership !== "aggregator").length})`
                   ) : null}
@@ -557,19 +561,19 @@ export default function TripPage() {
               {activeTab === "existing" && (
                 <>
                   {searching ? (
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-                      <p className="text-gray-400 text-sm">
+                    <div className="bg-white rounded-md border border-line p-8 text-center">
+                      <p className="text-ink-secondary text-sm">
                         Searching nearby accounts…
                       </p>
                     </div>
                   ) : results && results.length > 0 ? (
                     <div className="space-y-2">
                       {userLoc && (
-                        <p className="text-xs text-gray-500 mb-3">
+                        <p className="text-xs text-ink-secondary mb-3">
                           {results.length} account
                           {results.length !== 1 ? "s" : ""} within {radius}{" "}
                           miles of{" "}
-                          <span className="font-medium text-gray-700">
+                          <span className="text-ink">
                             {userLoc.formattedAddress}
                           </span>
                         </p>
@@ -577,7 +581,7 @@ export default function TripPage() {
                       {results.map((r) => (
                         <div
                           key={r.accountId}
-                          className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 flex items-start justify-between gap-4"
+                          className="bg-white rounded-md border border-line p-4 flex items-start justify-between gap-4 hover:bg-surface-3 transition-colors"
                         >
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -585,35 +589,29 @@ export default function TripPage() {
                                 href={r.sfUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-base font-semibold text-navy hover:underline"
+                                className="text-[15px] font-medium text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                               >
                                 {r.accountName}
                               </a>
-                              <span
-                                className={`text-[10px] px-2 py-0.5 rounded-sm border ${
-                                  r.addressSource === "billing"
-                                    ? "text-green-700 bg-green-50 border-green-200"
-                                    : "text-blue-700 bg-blue-50 border-blue-200"
-                                }`}
-                              >
+                              <Badge variant="neutral">
                                 {r.addressSource === "billing"
                                   ? "Billing"
                                   : "Google Places"}
-                              </span>
+                              </Badge>
                             </div>
-                            <p className="text-xs text-gray-500 mb-1">
+                            <p className="text-xs text-ink-secondary mb-1">
                               {r.address}
                             </p>
-                            <div className="flex flex-wrap gap-x-4 text-xs text-gray-500">
+                            <div className="flex flex-wrap gap-x-4 text-xs text-ink-secondary">
                               <span>
                                 Owner:{" "}
-                                <span className="text-gray-700">
+                                <span className="text-ink">
                                   {r.ownerName}
                                 </span>
                               </span>
                               <span>
                                 Last activity:{" "}
-                                <span className="text-gray-700">
+                                <span className="text-ink tabular-nums">
                                   {fmtDate(r.lastActivityDate)}
                                 </span>
                               </span>
@@ -626,7 +624,7 @@ export default function TripPage() {
                                   }
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-gray-400 hover:text-navy break-all"
+                                  className="text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary break-all"
                                 >
                                   {r.website}
                                 </a>
@@ -634,27 +632,27 @@ export default function TripPage() {
                             </div>
                           </div>
                           <div className="text-right shrink-0">
-                            <p className="text-lg font-bold text-navy">
+                            <p className="text-lg font-normal text-ink tabular-nums">
                               {r.durationText ?? `~${r.distanceMiles} mi`}
                             </p>
-                            <p className="text-xs text-gray-500">
+                            <p className="text-xs text-ink-secondary tabular-nums">
                               {r.distanceMiles} miles
                             </p>
                             <a
                               href={mapsDirectionsUrl(r.lat, r.lng)}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-[10px] text-blue-600 hover:underline mt-1 inline-block"
+                              className="text-xs text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary mt-1 inline-block"
                             >
-                              Directions ↗
+                              Directions
                             </a>
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : results && results.length === 0 ? (
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-                      <p className="text-gray-400 text-sm">
+                    <div className="bg-white rounded-md border border-line p-8 text-center">
+                      <p className="text-ink-secondary text-sm">
                         No CDM accounts found within {radius} miles. Try a
                         larger radius?
                       </p>
@@ -667,27 +665,24 @@ export default function TripPage() {
               {activeTab === "discover" && (
                 <>
                   {discovering ? (
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-                      <p className="text-gray-500 text-sm mb-2">
+                    <div className="bg-white rounded-md border border-line p-8 text-center">
+                      <p className="text-ink-secondary text-sm mb-2">
                         Searching 9 CDM sub-verticals for software companies
                         near {location}…
                       </p>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-ink-muted">
                         This takes 1-3 minutes. Checking ownership status for
                         each company.
                       </p>
-                      <div className="mt-4 w-48 mx-auto h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                        <div className="h-full bg-brand-orange rounded-full animate-pulse w-2/3" />
-                      </div>
                     </div>
                   ) : discoveryError ? (
-                    <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-sm text-red-700">
+                    <Alert variant="danger">
                       {discoveryError}
-                    </div>
+                    </Alert>
                   ) : discovered && discovered.length > 0 ? (
                     <div>
                       {discoveryStats && (
-                        <p className="text-xs text-gray-500 mb-3">
+                        <p className="text-xs text-ink-secondary mb-3">
                           Found {discoveryStats.found} companies across{" "}
                           {discoveryStats.searched} verticals.{" "}
                           {discoveryStats.filteredByGeo > 0 && (
@@ -709,10 +704,10 @@ export default function TripPage() {
                         {discovered.map((c, i) => (
                           <div
                             key={i}
-                            className={`bg-white rounded-2xl border shadow-sm p-5 ${
+                            className={`bg-white rounded-md border border-line p-4 hover:bg-surface-3 transition-colors ${
                               c.ownership === "aggregator"
-                                ? "border-red-200 opacity-50"
-                                : "border-gray-200"
+                                ? "opacity-50"
+                                : ""
                             }`}
                           >
                             <div className="flex items-start justify-between gap-4">
@@ -727,81 +722,81 @@ export default function TripPage() {
                                       }
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className={`text-base font-semibold hover:underline ${
+                                      className={`text-[15px] font-medium underline decoration-1 underline-offset-2 hover:text-ink-secondary ${
                                         c.ownership === "aggregator"
-                                          ? "text-gray-400 line-through"
-                                          : "text-navy"
+                                          ? "text-ink-muted line-through"
+                                          : "text-ink"
                                       }`}
                                     >
                                       {c.name}
                                     </a>
                                   ) : (
                                     <span
-                                      className={`text-base font-semibold ${
+                                      className={`text-[15px] font-medium ${
                                         c.ownership === "aggregator"
-                                          ? "text-gray-400 line-through"
-                                          : "text-navy"
+                                          ? "text-ink-muted line-through"
+                                          : "text-ink"
                                       }`}
                                     >
                                       {c.name}
                                     </span>
                                   )}
-                                  <span className="text-[10px] px-2 py-0.5 rounded-sm border bg-navy text-white border-navy">
+                                  <Badge variant="neutral">
                                     {c.subVertical}
-                                  </span>
+                                  </Badge>
                                   {c.employeesEstimate != null && (
-                                    <span
-                                      className={`text-[10px] px-2 py-0.5 rounded-sm border ${
+                                    <Badge
+                                      variant={
                                         c.employeesEstimate >= 20 &&
                                         c.employeesEstimate <= 150
-                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                          : "bg-gray-100 text-gray-500 border-gray-200"
-                                      }`}
+                                          ? "ok"
+                                          : "neutral"
+                                      }
                                     >
                                       ~{c.employeesEstimate} employees
-                                    </span>
+                                    </Badge>
                                   )}
                                 </div>
-                                <p className="text-sm text-gray-600 mb-1">
+                                <p className="text-sm text-ink-secondary mb-1">
                                   {c.description}
                                 </p>
-                                <p className="text-xs text-gray-400 flex items-center gap-2 flex-wrap">
+                                <p className="text-xs text-ink-muted flex items-center gap-2 flex-wrap">
                                   <span>
                                     {[c.city, c.state].filter(Boolean).join(", ") ||
                                       "Location unknown"}
                                   </span>
                                   {c.distanceMiles != null && (
-                                    <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-sm bg-blue-50 text-blue-700 border border-blue-200">
+                                    <span className="tabular-nums text-ink-secondary">
                                       {c.distanceMiles} mi
                                       {c.durationText ? ` · ${c.durationText}` : ""}
                                     </span>
                                   )}
                                   {c.distanceMiles == null &&
                                     c.straightLineMiles != null && (
-                                      <span className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-sm bg-gray-100 text-gray-600 border border-gray-200">
+                                      <span className="tabular-nums text-ink-secondary">
                                         ~{c.straightLineMiles} mi
                                       </span>
                                     )}
                                 </p>
                               </div>
-                              <div className="shrink-0">
-                                <span
-                                  className={`text-xs px-2 py-1 rounded-sm border ${
+                              <div className="shrink-0 flex flex-col items-end">
+                                <Badge
+                                  variant={
                                     c.ownership === "independent"
-                                      ? "text-green-700 bg-green-50 border-green-200"
+                                      ? "ok"
                                       : c.ownership === "pe_vc"
-                                      ? "text-blue-700 bg-blue-50 border-blue-200"
-                                      : "text-red-700 bg-red-50 border-red-200"
-                                  }`}
+                                      ? "info"
+                                      : "danger"
+                                  }
                                 >
                                   {c.ownership === "independent"
                                     ? "Independent"
                                     : c.ownership === "pe_vc"
                                     ? "PE/VC"
                                     : "Aggregator"}
-                                </span>
+                                </Badge>
                                 {c.ownershipDetail && (
-                                  <p className="text-[10px] text-gray-400 mt-1 max-w-[200px] text-right">
+                                  <p className="text-[11px] text-ink-muted mt-1 max-w-[200px] text-right">
                                     {c.ownershipDetail}
                                   </p>
                                 )}
@@ -812,20 +807,20 @@ export default function TripPage() {
                       </div>
                     </div>
                   ) : discovered && discovered.length === 0 ? (
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
-                      <p className="text-gray-700 text-sm font-medium mb-2">
+                    <div className="bg-white rounded-md border border-line p-8 text-center">
+                      <p className="text-ink text-sm mb-2">
                         No new companies to show.
                       </p>
                       {discoveryStats ? (
                         <>
-                          <p className="text-gray-500 text-xs mb-3">
+                          <p className="text-ink-secondary text-xs mb-3">
                             AI searched {discoveryStats.searched} verticals and
-                            returned <strong>{discoveryStats.found}</strong>{" "}
+                            returned <span className="text-ink">{discoveryStats.found}</span>{" "}
                             companies.
                             {discoveryStats.filteredByGeo > 0 && (
                               <>
                                 {" "}
-                                <strong>{discoveryStats.filteredByGeo}</strong>{" "}
+                                <span className="text-ink">{discoveryStats.filteredByGeo}</span>{" "}
                                 were outside the {/* radius */}radius (or had
                                 no city to verify).
                               </>
@@ -833,19 +828,19 @@ export default function TripPage() {
                             {discoveryStats.deduped > 0 && (
                               <>
                                 {" "}
-                                <strong>{discoveryStats.deduped}</strong> were
+                                <span className="text-ink">{discoveryStats.deduped}</span> were
                                 already in Salesforce.
                               </>
                             )}
                           </p>
-                          <p className="text-gray-400 text-xs">
+                          <p className="text-ink-muted text-xs">
                             {discoveryStats.found === 0
                               ? "The AI couldn't find any small software companies near this location for the CDM verticals. Try a larger radius or a different city."
                               : "All discovered candidates were filtered out before display. Try a larger radius."}
                           </p>
                         </>
                       ) : (
-                        <p className="text-gray-400 text-xs">
+                        <p className="text-ink-muted text-xs">
                           Try a larger radius or different location.
                         </p>
                       )}

@@ -6,7 +6,6 @@ import { Modal } from "./ui/Modal";
 import { Table } from "./ui/Table";
 import { Button } from "./ui/Button";
 import { Alert } from "./ui/Alert";
-import { Spinner } from "./ui/Spinner";
 import {
   QUALITY_FLAG_LABELS,
   parseYearInput,
@@ -253,7 +252,9 @@ export function OutreachQualityModal({
         </Alert>
       )}
 
-      {rows === null && <Spinner center label="Loading flagged emails…" />}
+      {rows === null && (
+        <p className="py-10 text-center text-sm text-ink-secondary">Loading…</p>
+      )}
 
       {rows !== null && rows.length === 0 && !error && (
         <p className="py-10 text-center text-sm text-ink-muted">
@@ -312,7 +313,7 @@ export function OutreachQualityModal({
                             }
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 whitespace-nowrap text-ink-muted hover:text-ink"
+                            className="inline-flex items-center gap-1 whitespace-nowrap text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                           >
                             {prettyDomain(row.website)}
                             <ExternalLink className="h-3 w-3" strokeWidth={1.75} />
@@ -322,7 +323,7 @@ export function OutreachQualityModal({
                           href={row.accountUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 whitespace-nowrap text-ink-muted hover:text-ink"
+                          className="inline-flex items-center gap-1 whitespace-nowrap text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                         >
                           Salesforce
                           <ExternalLink className="h-3 w-3" strokeWidth={1.75} />
@@ -461,12 +462,12 @@ function FieldCell({
           inputMode={inputMode}
           maxLength={maxLength}
           aria-label={`${QUALITY_FLAG_LABELS[flagKey]} — not set in Salesforce`}
-          className={`h-8 w-full min-w-[6rem] rounded-sm border border-warn/40 bg-warn-soft px-2 text-sm text-ink placeholder:text-warn/70 focus:border-warn focus:outline-none focus:ring-2 focus:ring-warn/25 disabled:cursor-not-allowed disabled:opacity-60 ${
+          className={`h-8 w-full min-w-[6rem] rounded-sm border border-warn bg-white px-2 text-sm text-ink placeholder:text-ink-muted focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 disabled:cursor-not-allowed disabled:opacity-60 ${
             align === "right" ? "text-right tabular-nums" : ""
           }`}
         />
-        <span className="mt-1 block text-[11px] font-medium uppercase tracking-wide text-warn">
-          not set
+        <span className="mt-1 block text-[11px] text-warn">
+          Not set
         </span>
       </Table.Cell>
     );
@@ -477,14 +478,14 @@ function FieldCell({
     <Table.Cell className={cellAlign}>
       <span
         className={`${align === "right" ? "tabular-nums" : ""} ${
-          isFlagged ? "font-medium text-danger" : "text-ink-secondary"
+          isFlagged ? "text-danger" : "text-ink-secondary"
         }`}
       >
         {value ?? "—"}
       </span>
       {isFlagged && (
-        <span className="mt-1 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-danger">
-          <X className="h-3 w-3" strokeWidth={2.5} />
+        <span className="mt-1 flex items-center gap-1 text-[11px] text-danger">
+          <X className="h-3 w-3" strokeWidth={1.5} />
           {QUALITY_FLAG_LABELS[flagKey]}
         </span>
       )}
