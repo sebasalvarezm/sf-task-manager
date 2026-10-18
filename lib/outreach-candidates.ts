@@ -383,7 +383,7 @@ export async function listCandidates(): Promise<CandidateRow[]> {
       out.push({
         ...r,
         sends: Array.isArray(r.sends) ? r.sends.slice(0, 5) : [],
-        screen_facts: f ? { summary: f.summary ?? null, ownership: f.ownership ?? null, investment: f.investment ?? null, softwareType: f.softwareType ?? null, linkedin: typeof f.linkedin === "string" ? f.linkedin : null, group: g?.matched ? { group: g.group ?? null, mainGroup: g.mainGroup ?? null } : null } : null,
+        screen_facts: f ? { summary: f.summary ?? null, ownership: f.ownership ?? null, investment: f.investment ?? null, softwareType: f.softwareType ?? null, linkedin: typeof f.linkedin === "string" ? f.linkedin : null, linkedinChecked: f.linkedinChecked === true, group: g?.matched ? { group: g.group ?? null, mainGroup: g.mainGroup ?? null } : null } : null,
       });
     }
     if (rows.length < page) break;

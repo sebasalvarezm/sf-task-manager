@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { countUnscreenedEligible } from "@/lib/outreach-screen";
+import { countUnscreenedEligible, countLinkedInBackfill } from "@/lib/outreach-screen";
 
 export const dynamic = "force-dynamic";
 
@@ -26,9 +26,10 @@ export async function POST(request: NextRequest) {
     const limit = Math.min(200, Math.max(1, Number(body.limit) || 60));
     const existing = await runningJob();
     if (existing) return NextResponse.json({ jobId: existing.id, status: existing.status, duplicate: true });
-    const pending = await countUnscreenedEligible();
-    if (pending === 0) return NextResponse.json({ jobId: null, status: "nothing_to_do", pending: 0 });
-    const job = await createJob({ kind: "outreach_screen", input: { limit }, label: `Outreach check: ${Math.min(limit, pending)} accounts`, resultRoute: "/outreach" });
+    const [pending, linkedin] = await Promise.all([countUnscreenedEligible(), countLinkedInBackfill()]);
+    if (pending === 0 && linkedin === 0) return NextResponse.json({ jobId: null, status: "nothing_to_do", pending: 0 });
+    const label = pending > 0 ? `Outreach check: ${Math.min(limit, pending)} accounts` : `Outreach: finding ${Math.min(60, linkedin)} LinkedIn pages`;
+    const job = await createJob({ kind: "outreach_screen", input: { limit }, label, resultRoute: "/outreach" });
     try {
       await inngest.send({ id: job.id, name: "job/outreach_screen", data: { jobId: job.id, input: job.input } });
     } catch (sendErr) {

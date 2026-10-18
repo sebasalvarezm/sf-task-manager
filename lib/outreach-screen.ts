@@ -28,8 +28,10 @@ export type ScreenVerdict = {
     /** One line for the card: "Ag retailer ERP, Canada, bootstrapped, no acquisition or investment on record." */
     summary: string | null;
     group: GroupMatch | null;
-    /** The company's LinkedIn page, when the site links to it. */
+    /** The company's LinkedIn page: from the site's footer, else one web search. */
     linkedin: string | null;
+    /** True once the web lookup ran, so a miss is not retried on every batch. */
+    linkedinChecked?: boolean;
     confidence: "high" | "medium" | "low";
     source: string[];
   };
@@ -168,6 +170,10 @@ export async function screenCompany(input: { name: string; website: string | nul
   parsed.facts.source = site.pages;
   parsed.facts.linkedin = findLinkedInCompanyUrl(site.text);
   if (parsed.status === "software") {
+    if (!parsed.facts.linkedin) {
+      parsed.facts.linkedin = await lookupLinkedInUrl(input.name, input.website).catch(() => null);
+      parsed.facts.linkedinChecked = true;
+    }
     // Same portfolio-group classifier Sourcing uses, run once here so the push
     // carries the group and Sourcing can skip its own classification step.
     parsed.facts.group = await matchGroup(client, site.text, loadGroupFiles()).catch(() => null);
@@ -180,6 +186,81 @@ export function findLinkedInCompanyUrl(text: string): string | null {
   const m = text.match(/https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/(?:company|school|showcase)\/[A-Za-z0-9._%-]+\/?/i);
   if (!m) return null;
   return m[0].replace(/^http:/i, "https:").replace(/\/$/, "");
+}
+
+/**
+ * The site did not link its LinkedIn page: one web search for "<name> <domain>
+ * linkedin" through the small model, and we keep only a company-page URL whose
+ * slug the model confirmed. Returns null when nothing convincing comes back.
+ */
+export async function lookupLinkedInUrl(name: string, website: string | null): Promise<string | null> {
+  const client = getAnthropicClient();
+  if (!client) return null;
+  const host = (() => {
+    const home = homepageOf(website);
+    try {
+      return home ? new URL(home).hostname.replace(/^www\./, "") : null;
+    } catch {
+      return null;
+    }
+  })();
+  const response = await client.messages.create({
+    model: MODELS.extraction,
+    max_tokens: 200,
+    system:
+      "You find the official LinkedIn company page for a business. Run one web search for the company name, its website domain and the word linkedin. Reply with the single URL of the company's own LinkedIn page (linkedin.com/company/...), nothing else. If no result is clearly that company (same name and same website or location), reply NONE. Never return a person's profile.",
+    tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 1 }],
+    messages: [{ role: "user", content: `Company: ${name}\nWebsite: ${host ?? website ?? "unknown"}` }],
+  });
+  const text = response.content
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("")
+    .trim();
+  if (/^\s*NONE\b/i.test(text)) return null;
+  return findLinkedInCompanyUrl(text);
+}
+
+/** Already-checked software rows that never had the web lookup: run it now, a few at a time. */
+export async function backfillLinkedIn(limit: number): Promise<number> {
+  const db = getSupabaseAdmin();
+  const { data, error } = await db
+    .from("outreach_candidates")
+    .select("sf_account_id, account_name, website, screen_facts")
+    .eq("in_pool", true)
+    .eq("review_status", "open")
+    .eq("rule_status", "eligible")
+    .eq("screen_status", "software")
+    .is("screen_facts->>linkedin", null)
+    .is("screen_facts->>linkedinChecked", null)
+    .order("last_e1_at", { ascending: true, nullsFirst: true })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<{ sf_account_id: string; account_name: string; website: string | null; screen_facts: Record<string, unknown> | null }>;
+  const width = 4;
+  for (let i = 0; i < rows.length; i += width) {
+    await Promise.all(
+      rows.slice(i, i + width).map(async (r) => {
+        const linkedin = await lookupLinkedInUrl(r.account_name, r.website).catch(() => null);
+        const facts = { ...(r.screen_facts ?? {}), linkedin, linkedinChecked: true };
+        await db.from("outreach_candidates").update({ screen_facts: facts, updated_at: new Date().toISOString() }).eq("sf_account_id", r.sf_account_id);
+      }),
+    );
+  }
+  return rows.length;
+}
+
+export async function countLinkedInBackfill(): Promise<number> {
+  const { count, error } = await getSupabaseAdmin()
+    .from("outreach_candidates")
+    .select("sf_account_id", { count: "exact", head: true })
+    .eq("in_pool", true)
+    .eq("review_status", "open")
+    .eq("rule_status", "eligible")
+    .eq("screen_status", "software")
+    .is("screen_facts->>linkedin", null)
+    .is("screen_facts->>linkedinChecked", null);
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 }
 
 function emptyFacts(): ScreenVerdict["facts"] {

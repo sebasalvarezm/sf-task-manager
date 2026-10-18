@@ -1,7 +1,7 @@
 import { inngest } from "@/lib/inngest/client";
 import { markJobFailedFromInngest } from "@/lib/inngest/on-failure";
 import { markRunning, markSucceeded, markFailed, updateProgress } from "@/lib/jobs";
-import { runScreenBatch } from "@/lib/outreach-screen";
+import { runScreenBatch, backfillLinkedIn } from "@/lib/outreach-screen";
 
 /**
  * Outreach prescreen. Screens the next N eligible, unchecked accounts (site
@@ -34,7 +34,15 @@ export const outreachScreenJob = inngest.createFunction(
         );
         if (counts.total < take) break; // queue drained
       }
-      await step.run("mark-succeeded", () => markSucceeded(jobId, { ...totals, done }));
+      // Rows checked before the LinkedIn lookup existed: find their pages now, 12 per step.
+      let linkedin = 0;
+      for (let i = 0; i < 5; i++) {
+        const n = await step.run(`linkedin-${i}`, () => backfillLinkedIn(12));
+        linkedin += n;
+        if (n < 12) break;
+        await step.run(`linkedin-progress-${i}`, () => updateProgress(jobId, { step: `Finding LinkedIn pages: ${linkedin}`, pct: 100 }));
+      }
+      await step.run("mark-succeeded", () => markSucceeded(jobId, { ...totals, done, linkedin }));
       return { ok: true, jobId, done };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unexpected error";

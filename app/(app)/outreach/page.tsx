@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
+import { ChevronDown, MoreHorizontal } from "lucide-react";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
 
@@ -40,7 +40,7 @@ type Row = {
   sends_in_window: number;
   screen_status: ScreenStatus;
   screen_reason: string | null;
-  screen_facts: { summary?: string | null; ownership?: string | null; investment?: string | null; softwareType?: string | null; linkedin?: string | null; group?: { group: string | null; mainGroup: string | null } | null } | null;
+  screen_facts: { summary?: string | null; ownership?: string | null; investment?: string | null; softwareType?: string | null; linkedin?: string | null; linkedinChecked?: boolean; group?: { group: string | null; mainGroup: string | null } | null } | null;
   review_status: ReviewStatus;
   skip_reason: string | null;
   reviewed_at: string | null;
@@ -157,6 +157,8 @@ function OutreachInner() {
   const [shown, setShown] = useState(50);
   const [screen, setScreen] = useState<{ pending: number; running: boolean; step: string | null }>({ pending: 0, running: false, step: null });
   const readyRef = useRef(0);
+  /** Ready rows still without a LinkedIn page and never looked up: the check job fills them in. */
+  const linkedinRef = useRef(0);
 
   const pollScreen = useCallback(async () => {
     try {
@@ -176,7 +178,7 @@ function OutreachInner() {
     async (batch: number, force = false) => {
       const running = await pollScreen();
       if (running) return;
-      if (!force && readyRef.current >= batch) return;
+      if (!force && readyRef.current >= batch && linkedinRef.current === 0) return;
       try {
         const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch }) });
         const data = await res.json();
@@ -205,7 +207,9 @@ function OutreachInner() {
         setShown(set.settings.batchSize ?? 50);
       }
       setError(null);
-      readyRef.current = rows.filter((r) => r.review_status === "open" && r.rule_status === "eligible" && r.screen_status === "software").length;
+      const ready = rows.filter((r) => r.review_status === "open" && r.rule_status === "eligible" && r.screen_status === "software");
+      readyRef.current = ready.length;
+      linkedinRef.current = ready.filter((r) => !r.screen_facts?.linkedin && !r.screen_facts?.linkedinChecked).length;
       void ensureScreened(set?.settings?.batchSize ?? 50);
     } catch (err) {
       setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped while loading. Reopen the page.");
@@ -299,6 +303,7 @@ function OutreachInner() {
   const filtered = useMemo(() => eligibleAll.filter((r) => r.screen_status === "not_software" || r.screen_status === "acquired"), [eligibleAll]);
   const done = useMemo(() => items.filter((r) => r.review_status !== "open").sort((a, b) => ((a.reviewed_at ?? "") < (b.reviewed_at ?? "") ? 1 : -1)), [items]);
   readyRef.current = next.filter((r) => r.screen_status === "software").length;
+  linkedinRef.current = next.filter((r) => r.screen_status === "software" && !r.screen_facts?.linkedin && !r.screen_facts?.linkedinChecked).length;
 
   const batch = settings?.batchSize ?? 50;
   const list = view === "next" ? next.slice(0, shown) : view === "waiting" ? waiting : view === "filtered" ? filtered : view === "done" ? done : [];
@@ -465,39 +470,54 @@ function CandidateRow({
             ? `Check was unclear: ${row.screen_reason ?? ""}`
             : null;
   const pushLabel = view === "next" ? "Push" : "Push anyway";
+  const stop = (e: MouseEvent) => e.stopPropagation();
 
   return (
     <div className="border-b border-line last:border-b-0">
       <div className="flex items-start gap-3 px-4 py-3 hover:bg-surface-3 sm:items-center">
-        <button type="button" onClick={onToggle} aria-label={expanded ? "Hide details" : "Show details"} className="mt-1 shrink-0 text-ink-muted hover:text-ink sm:mt-0">
-          {expanded ? <ChevronDown size={16} strokeWidth={1.5} /> : <ChevronRight size={16} strokeWidth={1.5} />}
-        </button>
-        <div className="min-w-0 flex-1">
+        {/* The whole text block opens and closes the details; links inside keep their own click. */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={expanded}
+          onClick={onToggle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onToggle();
+            }
+          }}
+          className="min-w-0 flex-1 cursor-pointer select-none"
+        >
           <div className="flex flex-wrap items-baseline gap-x-2">
             {row.account_url ? (
-              <a href={row.account_url} target="_blank" rel="noreferrer" className="text-[15px] font-medium text-ink no-underline hover:underline">
+              <a href={row.account_url} target="_blank" rel="noreferrer" onClick={stop} className="text-[15px] font-medium text-ink no-underline hover:underline">
                 {row.account_name}
               </a>
             ) : (
               <span className="text-[15px] font-medium text-ink">{row.account_name}</span>
             )}
             {site ? (
-              <a href={site} target="_blank" rel="noreferrer" className="text-[13px] text-info no-underline hover:underline">
+              <a href={site} target="_blank" rel="noreferrer" onClick={stop} className="text-[13px] text-info no-underline hover:underline">
                 {hostOf(row.website)}
               </a>
             ) : null}
             <a
-              href={row.screen_facts?.linkedin ?? `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(row.account_name)}`}
+              href={row.screen_facts?.linkedin ?? `https://www.google.com/search?q=${encodeURIComponent(`${row.account_name} ${hostOf(row.website) ?? ""} linkedin`.trim())}`}
               target="_blank"
               rel="noreferrer"
+              onClick={stop}
               className="text-[13px] text-info no-underline hover:underline"
-              title={row.screen_facts?.linkedin ? "LinkedIn company page" : "Search LinkedIn for the company"}
+              title={row.screen_facts?.linkedin ? "LinkedIn company page" : "Google the company's LinkedIn page"}
             >
-              {row.screen_facts?.linkedin ? "LinkedIn" : "LinkedIn search"}
+              {row.screen_facts?.linkedin ? "LinkedIn" : "Find on LinkedIn"}
             </a>
           </div>
           {lineTwo ? <p className="truncate text-[13px] text-ink-secondary">{lineTwo}</p> : null}
-          <p className="truncate text-[13px] text-ink-secondary">{lastContact}</p>
+          <p className="flex items-center gap-1 text-[13px] text-ink-secondary">
+            <span className="truncate">{lastContact}</span>
+            <ChevronDown size={14} strokeWidth={1.5} className={`shrink-0 text-ink-muted transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden />
+          </p>
           {lineThree ? <p className="mt-0.5 text-[13px] text-ink-muted">{lineThree}</p> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -518,7 +538,7 @@ function CandidateRow({
         </div>
       </div>
       {skipOpen && isOpen ? (
-        <div className="flex flex-wrap gap-1.5 border-t border-line bg-surface-3 px-4 py-2 pl-11">
+        <div className="flex flex-wrap gap-1.5 border-t border-line bg-surface-3 px-4 py-2">
           {SKIP_REASONS.map((reason) => (
             <button key={reason} type="button" disabled={busy} onClick={() => onSkip(reason)} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink hover:bg-surface-3">
               {reason}
@@ -527,7 +547,7 @@ function CandidateRow({
         </div>
       ) : null}
       {expanded ? (
-        <div className="border-t border-line bg-surface-3 px-4 py-3 pl-11 text-[13px] text-ink-secondary">
+        <div className="border-t border-line bg-surface-3 px-4 py-3 text-[13px] text-ink-secondary">
           <p><span className="text-ink">Rule:</span> {row.rule_reason}</p>
           {row.screen_reason ? <p className="mt-1"><span className="text-ink">Check:</span> {row.screen_reason}</p> : null}
           {row.screen_facts?.investment ? <p className="mt-1"><span className="text-ink">Investment:</span> {row.screen_facts.investment}</p> : null}

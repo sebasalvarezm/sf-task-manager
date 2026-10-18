@@ -13,3 +13,9 @@ describe("LinkedIn company page from site text", () => {
     expect(findLinkedInCompanyUrl("https://www.linkedin.com/in/dave-owner")).toBeNull();
   });
 });
+
+describe("LinkedIn lookup reply parsing", () => {
+  it("pulls the company URL out of a chatty reply and strips tracking", () => {
+    expect(findLinkedInCompanyUrl("The page is https://www.linkedin.com/company/tronia-systems/?trk=foo for Tronia.")).toBe("https://www.linkedin.com/company/tronia-systems");
+  });
+});
