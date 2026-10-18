@@ -240,7 +240,62 @@ export type InboxRefreshSummary = {
   skippedAutomated: number;
   skippedInternal: number;
   alreadyKnown: number;
+  /** Open rows closed because Outlook shows Seb already dealt with them. */
+  repliedInOutlook: number;
+  readInOutlook: number;
 };
+
+/**
+ * Catch up with what Seb did in Outlook since the last refresh. For every row
+ * still in the pile, read the thread again: a reply of his after the message
+ * means it is answered (status sent, with his reply in the thread); the
+ * message now read, moved or deleted means he dealt with it (status skipped).
+ * Threads Outlook cannot return are left alone.
+ */
+async function reconcileWithOutlook(identities: Set<string>, summary: InboxRefreshSummary): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase
+    .from("inbox_replies")
+    .select("message_id, conversation_id, received_at")
+    .in("status", ["new", "drafted"])
+    .order("received_at", { ascending: false })
+    .limit(80);
+  const open = (data ?? []) as Array<{ message_id: string; conversation_id: string; received_at: string }>;
+  if (open.length === 0) return;
+  const now = new Date().toISOString();
+  await mapLimit(open, 5, async (row) => {
+    let full: Awaited<ReturnType<typeof fetchEmailThread>>;
+    try {
+      full = await fetchEmailThread(row.conversation_id);
+    } catch {
+      return;
+    }
+    if (full.length === 0) return;
+    const self = full.find((e) => e.id === row.message_id);
+    const myReply = full
+      .filter((e) => isSelfAddress(e.from.email, identities) && e.receivedDateTime > row.received_at)
+      .sort((a, b) => (a.receivedDateTime < b.receivedDateTime ? 1 : -1))[0];
+    if (myReply) {
+      const thread: ThreadMessage[] = full.map((e) => ({
+        from: e.from.name,
+        email: e.from.email,
+        at: e.receivedDateTime,
+        mine: isSelfAddress(e.from.email, identities),
+        text: trimReplyBody(e.bodyText || e.bodyPreview),
+      }));
+      await supabase
+        .from("inbox_replies")
+        .update({ status: "sent", sent_at: myReply.receivedDateTime, thread, has_mine: true, updated_at: now })
+        .eq("message_id", row.message_id);
+      summary.repliedInOutlook++;
+      return;
+    }
+    if (!self || self.isRead) {
+      await supabase.from("inbox_replies").update({ status: "skipped", updated_at: now }).eq("message_id", row.message_id);
+      summary.readInOutlook++;
+    }
+  });
+}
 
 /**
  * Pull unread inbound mail, keep what looks like a person replying to or
@@ -257,7 +312,8 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
   );
 
   const messages = await fetchUnreadInbound(days);
-  const summary: InboxRefreshSummary = { scanned: messages.length, added: 0, skippedAutomated: 0, skippedInternal: 0, alreadyKnown: 0 };
+  const summary: InboxRefreshSummary = { scanned: messages.length, added: 0, skippedAutomated: 0, skippedInternal: 0, alreadyKnown: 0, repliedInOutlook: 0, readInOutlook: 0 };
+  await reconcileWithOutlook(identities, summary);
 
   // Latest inbound message per thread.
   const latestByConversation = new Map<string, GraphMessage>();

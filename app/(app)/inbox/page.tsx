@@ -119,6 +119,19 @@ export default function InboxPage() {
       setLoading(false);
     }
   }, []);
+  // Opening the page also syncs with Outlook, unless it just did (3 minutes), so
+  // replies Seb sent or read on his phone leave the pile without a tap.
+  useEffect(() => {
+    let stale = true;
+    try {
+      const last = Number(localStorage.getItem("inbox:last-refresh") ?? 0);
+      stale = Date.now() - last > 3 * 60_000;
+    } catch {
+      /* no storage: just refresh */
+    }
+    if (stale) void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     void load();
     void fetch("/api/inbox/signature", { cache: "no-store" })
@@ -158,10 +171,17 @@ export default function InboxPage() {
       if (!data) throw new Error("The refresh took too long. Try again in a moment.");
       if (!res.ok) throw new Error(data.error ?? "Refresh failed");
       setItems(data.items ?? []);
+      try {
+        localStorage.setItem("inbox:last-refresh", String(Date.now()));
+      } catch {
+        /* ignore */
+      }
       const s = data.summary;
       setMessage(
         `${s.scanned} unread in the last 14 days: ${s.added} new ${s.added === 1 ? "reply" : "replies"} added` +
           (s.alreadyKnown ? `, ${s.alreadyKnown} already here` : "") +
+          (s.repliedInOutlook ? `, ${s.repliedInOutlook} answered from Outlook` : "") +
+          (s.readInOutlook ? `, ${s.readInOutlook} read or filed in Outlook` : "") +
           (s.skippedAutomated ? `, ${s.skippedAutomated} automated` : "") +
           (s.skippedInternal ? `, ${s.skippedInternal} internal` : "") +
           ".",
