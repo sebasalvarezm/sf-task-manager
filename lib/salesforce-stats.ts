@@ -187,6 +187,32 @@ export async function fetchTaskCountsByBucket(
 ): Promise<BucketCountRow[]> {
   if (buckets.length === 0) return [];
 
+  // One grouped query for the whole span instead of one per bucket, when the
+  // span is short enough to stay under Salesforce's 2,000-row aggregate limit
+  // (days x six subject types). Longer spans keep the per-bucket path.
+  const spanStart = buckets.reduce((a, b) => (b.start < a ? b.start : a), buckets[0].start);
+  const spanEnd = buckets.reduce((a, b) => (b.end > a ? b.end : a), buckets[0].end);
+  const spanDays = (Date.parse(spanEnd) - Date.parse(spanStart)) / 86_400_000 + 1;
+  if (spanDays > 0 && spanDays * 6 <= 1800) {
+    const soql =
+      `SELECT ActivityDate d, Subject_Type__c stype, COUNT(Id) cnt ` +
+      `FROM Task ` +
+      `WHERE Subject_Type__c IN (${subjectTypesClause}) ` +
+      `AND Status = 'Completed' ` +
+      `AND ActivityDate >= ${spanStart} AND ActivityDate <= ${spanEnd} ` +
+      `AND Owner.Name IN (${ownerNamesClauseFor(team)}) ` +
+      `GROUP BY ActivityDate, Subject_Type__c`;
+    type Row = { d: string; stype: TrackedSubjectType; cnt: number };
+    const rows = await runQuery<Row>(credentials, soql);
+    return buckets.map((b) => {
+      const byType: Record<TrackedSubjectType, number> = { E1: 0, RCE1: 0, "D-E1": 0, C1: 0, RCC: 0, F2F: 0 };
+      for (const r of rows) {
+        if (r.d >= b.start && r.d <= b.end && r.stype in byType) byType[r.stype] += Number(r.cnt) || 0;
+      }
+      return { bucketLabel: b.label, bucketStart: b.start, e1: byType.E1, rce1: byType.RCE1, de1: byType["D-E1"], c1: byType.C1, rcc: byType.RCC, f2f: byType.F2F };
+    });
+  }
+
   const perBucket = await Promise.all(
     buckets.map(async (b) => {
       const soql =

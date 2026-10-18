@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BarChart,
@@ -209,6 +209,7 @@ const TEAL = "#5EC4C4";
 const NAVY = "#1A1A1A"; // ink, used for bar labels
 const LINE = "#E3E1DC"; // hairline gridlines
 const TICK = { fontSize: 12, fill: "#5F5E5A" };
+const CACHE_MS = 10 * 60_000;
 
 /** Phone-width viewport: fewer axis ticks and smaller bar labels so nothing overlaps. */
 function useNarrow(): boolean {
@@ -292,6 +293,8 @@ export default function StatsPage() {
   const router = useRouter();
   const narrow = useNarrow();
   const labelStyle = { fontSize: narrow ? 10 : 12, fill: NAVY };
+  // On a phone, show every nth category label so about five fit; wider screens let Recharts decide.
+  const xInterval = (n: number): number | "preserveStartEnd" => (narrow ? Math.max(0, Math.ceil(n / 5) - 1) : "preserveStartEnd");
   const [preset, setPreset] = useState<RangePreset>("this_week");
   const [trailingN, setTrailingN] = useState<number>(4);
   // Which team's view is shown. Small M&A is the default; CDM is the legacy view.
@@ -310,6 +313,14 @@ export default function StatsPage() {
   const [engagement, setEngagement] = useState<EngagementResponse | null>(null);
 
   const [drill, setDrill] = useState<DrillTarget | null>(null);
+
+  // Ranges already loaded this visit come back instantly when you switch to
+  // them again; Refresh always goes to Salesforce. The sequence counters drop
+  // a slow answer for a range you have since moved away from.
+  const statsCache = useRef<Map<string, { at: number; data: StatsResponse }>>(new Map());
+  const engagementCache = useRef<Map<string, { at: number; data: EngagementResponse }>>(new Map());
+  const statsSeq = useRef(0);
+  const engagementSeq = useRef(0);
 
   // Outreach quality ("BS") drill-down + the admin rules editor.
   const [qualityTarget, setQualityTarget] =
@@ -411,17 +422,27 @@ export default function StatsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outreachConnected, preset, trailingN, team]);
 
-  async function loadStats() {
+  async function loadStats(force = false) {
+    const params = new URLSearchParams({
+      start: range.start,
+      end: range.end,
+      buckets: JSON.stringify(range.buckets),
+      team,
+    });
+    const key = params.toString();
+    const seq = ++statsSeq.current;
+    const cached = statsCache.current.get(key);
+    if (!force && cached && Date.now() - cached.at < CACHE_MS) {
+      setData(cached.data);
+      setStatsError(null);
+      setStatsLoading(false);
+      return;
+    }
     setStatsLoading(true);
     setStatsError(null);
     try {
-      const params = new URLSearchParams({
-        start: range.start,
-        end: range.end,
-        buckets: JSON.stringify(range.buckets),
-        team,
-      });
-      const res = await fetch(`/api/salesforce/stats?${params.toString()}`);
+      const res = await fetch(`/api/salesforce/stats?${key}`);
+      if (seq !== statsSeq.current) return; // a newer range was requested meanwhile
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         if (body.error === "NOT_CONNECTED") {
@@ -430,24 +451,37 @@ export default function StatsPage() {
         }
         throw new Error(body.error ?? "Failed to load stats");
       }
-      setData((await res.json()) as StatsResponse);
+      const json = (await res.json()) as StatsResponse;
+      statsCache.current.set(key, { at: Date.now(), data: json });
+      setData(json);
     } catch (err) {
+      if (seq !== statsSeq.current) return;
       setStatsError(err instanceof Error ? err.message : "Unexpected error");
     } finally {
-      setStatsLoading(false);
+      if (seq === statsSeq.current) setStatsLoading(false);
     }
   }
 
-  async function loadEngagement() {
+  async function loadEngagement(force = false) {
+    const params = new URLSearchParams({
+      start: range.start,
+      end: range.end,
+      team,
+    });
+    const key = params.toString();
+    const seq = ++engagementSeq.current;
+    const cached = engagementCache.current.get(key);
+    if (!force && cached && Date.now() - cached.at < CACHE_MS) {
+      setEngagement(cached.data);
+      setEngagementError(null);
+      setEngagementLoading(false);
+      return;
+    }
     setEngagementLoading(true);
     setEngagementError(null);
     try {
-      const params = new URLSearchParams({
-        start: range.start,
-        end: range.end,
-        team,
-      });
-      const res = await fetch(`/api/outreach/engagement?${params.toString()}`);
+      const res = await fetch(`/api/outreach/engagement?${key}`);
+      if (seq !== engagementSeq.current) return;
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         if (body.error === "OUTREACH_NOT_CONNECTED") {
@@ -456,11 +490,14 @@ export default function StatsPage() {
         }
         throw new Error(body.error ?? "Failed to load engagement");
       }
-      setEngagement((await res.json()) as EngagementResponse);
+      const json = (await res.json()) as EngagementResponse;
+      engagementCache.current.set(key, { at: Date.now(), data: json });
+      setEngagement(json);
     } catch (err) {
+      if (seq !== engagementSeq.current) return;
       setEngagementError(err instanceof Error ? err.message : "Unexpected error");
     } finally {
-      setEngagementLoading(false);
+      if (seq === engagementSeq.current) setEngagementLoading(false);
     }
   }
 
@@ -472,8 +509,8 @@ export default function StatsPage() {
   }
 
   function handleRefresh() {
-    if (sfConnected) loadStats();
-    if (outreachConnected) loadEngagement();
+    if (sfConnected) loadStats(true);
+    if (outreachConnected) loadEngagement(true);
   }
 
   // ── Derived chart data ─────────────────────────────────────────────────────
@@ -862,7 +899,7 @@ export default function StatsPage() {
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={outreachByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval={xInterval(outreachByPersonData.length)} minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                     <Bar
@@ -889,7 +926,7 @@ export default function StatsPage() {
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={trendData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                       <CartesianGrid stroke={LINE} vertical={false} />
-                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval={xInterval(trendData.length)} minTickGap={12} />
                       <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                       <Bar dataKey="Outreach" fill={BLUE} radius={BAR_RADIUS} />
@@ -899,7 +936,7 @@ export default function StatsPage() {
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={e1VsRce1Data} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                       <CartesianGrid stroke={LINE} vertical={false} />
-                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval={xInterval(e1VsRce1Data.length)} minTickGap={12} />
                       <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                       <Legend wrapperStyle={{ fontSize: 12, color: "#5F5E5A" }} iconType="square" iconSize={8} />
@@ -953,7 +990,7 @@ export default function StatsPage() {
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={callsF2FByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval={xInterval(callsF2FByPersonData.length)} minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                     <Legend wrapperStyle={{ fontSize: 12, color: "#5F5E5A" }} iconType="square" iconSize={8} />
@@ -1010,7 +1047,7 @@ export default function StatsPage() {
                     margin={{ top: 24, right: 16, left: 0, bottom: 5 }}
                   >
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval={xInterval(data.conversion.byPerson.length)} minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => `${v}%`} />
                     <Bar
@@ -1177,7 +1214,7 @@ export default function StatsPage() {
                         margin={{ top: 24, right: 16, left: 0, bottom: 5 }}
                       >
                         <CartesianGrid stroke={LINE} vertical={false} />
-                        <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                        <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval={xInterval(qualityBucketData.length)} minTickGap={12} />
                         <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                         <Tooltip
                           contentStyle={TOOLTIP_STYLE}
@@ -1360,7 +1397,7 @@ export default function StatsPage() {
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={originatorData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval={xInterval(originatorData.length)} minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => fmtMoney(Number(v))} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => fmtMoney(Number(v))} />
                     <Bar
@@ -1400,7 +1437,7 @@ export default function StatsPage() {
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={stageData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={{ ...TICK, fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
+                    <XAxis dataKey="name" tick={{ ...TICK, fontSize: 11 }} axisLine={false} tickLine={false} interval={xInterval(stageData.length)} minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => fmtMoney(Number(v))} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => fmtMoney(Number(v))} />
                     <Bar
