@@ -209,6 +209,19 @@ const TEAL = "#5EC4C4";
 const NAVY = "#1A1A1A"; // ink, used for bar labels
 const LINE = "#E3E1DC"; // hairline gridlines
 const TICK = { fontSize: 12, fill: "#5F5E5A" };
+
+/** Phone-width viewport: fewer axis ticks and smaller bar labels so nothing overlaps. */
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setNarrow(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
 const BAR_RADIUS: [number, number, number, number] = [2, 2, 0, 0];
 const TOOLTIP_STYLE = {
   borderRadius: 6,
@@ -277,6 +290,8 @@ function daysAgo(iso: string): string {
 
 export default function StatsPage() {
   const router = useRouter();
+  const narrow = useNarrow();
+  const labelStyle = { fontSize: narrow ? 10 : 12, fill: NAVY };
   const [preset, setPreset] = useState<RangePreset>("this_week");
   const [trailingN, setTrailingN] = useState<number>(4);
   // Which team's view is shown. Small M&A is the default; CDM is the legacy view.
@@ -847,7 +862,7 @@ export default function StatsPage() {
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={outreachByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                     <Bar
@@ -863,7 +878,7 @@ export default function StatsPage() {
                         )
                       }
                     >
-                      <LabelList dataKey="Outreach" position="top" style={{ fontSize: 12, fill: NAVY }} />
+                      <LabelList dataKey="Outreach" position="top" style={labelStyle} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -874,7 +889,7 @@ export default function StatsPage() {
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={trendData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                       <CartesianGrid stroke={LINE} vertical={false} />
-                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
                       <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                       <Bar dataKey="Outreach" fill={BLUE} radius={BAR_RADIUS} />
@@ -884,7 +899,7 @@ export default function StatsPage() {
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={e1VsRce1Data} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                       <CartesianGrid stroke={LINE} vertical={false} />
-                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
                       <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                       <Legend wrapperStyle={{ fontSize: 12, color: "#5F5E5A" }} iconType="square" iconSize={8} />
@@ -938,7 +953,7 @@ export default function StatsPage() {
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={callsF2FByPersonData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} />
                     <Legend wrapperStyle={{ fontSize: 12, color: "#5F5E5A" }} iconType="square" iconSize={8} />
@@ -995,7 +1010,7 @@ export default function StatsPage() {
                     margin={{ top: 24, right: 16, left: 0, bottom: 5 }}
                   >
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => `${v}%`} />
                     <Bar
@@ -1011,7 +1026,7 @@ export default function StatsPage() {
                         )
                       }
                     >
-                      <LabelList dataKey="Rate" position="top" formatter={(v: number) => `${v}%`} style={{ fontSize: 12, fill: NAVY }} />
+                      <LabelList dataKey="Rate" position="top" formatter={(v: number) => `${v}%`} style={labelStyle} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -1162,7 +1177,7 @@ export default function StatsPage() {
                         margin={{ top: 24, right: 16, left: 0, bottom: 5 }}
                       >
                         <CartesianGrid stroke={LINE} vertical={false} />
-                        <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                        <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
                         <YAxis tick={TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                         <Tooltip
                           contentStyle={TOOLTIP_STYLE}
@@ -1219,7 +1234,7 @@ export default function StatsPage() {
                             dataKey="Rate"
                             position="top"
                             formatter={fmtBarPct}
-                            style={{ fontSize: 12, fill: NAVY }}
+                            style={labelStyle}
                           />
                         </Bar>
                       </BarChart>
@@ -1345,7 +1360,7 @@ export default function StatsPage() {
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={originatorData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => fmtMoney(Number(v))} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => fmtMoney(Number(v))} />
                     <Bar
@@ -1374,7 +1389,7 @@ export default function StatsPage() {
                         dataKey="Amount"
                         position="top"
                         formatter={(v: number) => fmtMoney(Number(v))}
-                        style={{ fontSize: 12, fill: NAVY }}
+                        style={labelStyle}
                       />
                     </Bar>
                   </BarChart>
@@ -1385,7 +1400,7 @@ export default function StatsPage() {
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={stageData} margin={{ top: 24, right: 16, left: 0, bottom: 5 }}>
                     <CartesianGrid stroke={LINE} vertical={false} />
-                    <XAxis dataKey="name" tick={{ ...TICK, fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="name" tick={{ ...TICK, fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={12} />
                     <YAxis tick={TICK} axisLine={false} tickLine={false} tickFormatter={(v) => fmtMoney(Number(v))} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} cursor={TOOLTIP_CURSOR} formatter={(v) => fmtMoney(Number(v))} />
                     <Bar
@@ -1408,7 +1423,7 @@ export default function StatsPage() {
                         dataKey="Amount"
                         position="top"
                         formatter={(v: number) => fmtMoney(Number(v))}
-                        style={{ fontSize: 12, fill: NAVY }}
+                        style={labelStyle}
                       />
                     </Bar>
                   </BarChart>
