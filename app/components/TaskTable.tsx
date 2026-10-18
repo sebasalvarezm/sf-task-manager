@@ -29,6 +29,14 @@ function parseShortcode(
   return null;
 }
 
+/** The shortcode for an action, so a code set from outside the table (a draft restore, Pre-mark BS) shows in the box. */
+function codeFor(action: TaskAction): string {
+  if (action.actionType === "hard_delete") return "D";
+  if (action.actionType === "complete_reschedule") return `RCE${action.days}`;
+  if (action.actionType === "delay") return `P${action.days}`;
+  return "";
+}
+
 // ── Column indexes (used for keyboard navigation) ─────────────────────────────
 // 0=row#, 1=account, 2=sf-link, 3=subject, 4=due-date, 5=next-steps
 const FIRST_COL = 1;
@@ -205,6 +213,18 @@ export default function TaskTable({
     if (a === "complete_reschedule") return "border-line-strong bg-white";
     if (a === "delay") return "border-line-strong bg-white";
     return "border-line-strong bg-white";
+  }
+
+  /** What the box shows: what was typed here, unless the action no longer matches it (set elsewhere). */
+  function shownValue(taskId: string): string {
+    const typed = inputValues.get(taskId);
+    const action = getAction(taskId);
+    if (typed !== undefined) {
+      const parsed = parseShortcode(typed);
+      const matches = parsed ? parsed.actionType === action.actionType && parsed.days === action.days : action.actionType === "none";
+      if (matches) return typed;
+    }
+    return codeFor(action);
   }
 
   function isInvalidCode(taskId: string) {
@@ -393,7 +413,7 @@ export default function TaskTable({
                       else inputRefs.current.delete(task.Id);
                     }}
                     type="text"
-                    value={inputValues.get(task.Id) ?? ""}
+                    value={shownValue(task.Id)}
                     placeholder="D / RCE14 / P30"
                     onChange={(e) => handleInputChange(task, e.target.value)}
                     onFocus={() => setActiveCell({ row: rowIdx, col: INTERACTIVE_COL })}
@@ -534,7 +554,7 @@ export default function TaskTable({
             <input
               type="text"
               inputMode="text"
-              value={inputValues.get(task.Id) ?? ""}
+              value={shownValue(task.Id)}
               placeholder="Or type: D / RCE14 / P30"
               onChange={(e) => handleInputChange(task, e.target.value)}
               className={`w-full border rounded-sm px-3 min-h-[44px] text-sm focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 transition-colors mt-2 ${getInputBorderClass(task.Id)}`}

@@ -172,6 +172,35 @@ function TasksPageContent() {
       })
     : [];
 
+  // Accounts that fail the basics (founded after 2019, or fewer than 20 employees
+  // in Salesforce) get pushed four months without reading them one by one.
+  const BS_FOUNDED_AFTER = 2019;
+  const BS_MIN_EMPLOYEES = 20;
+  const BS_PUSH_DAYS = 120;
+  const looksBs = (t: SalesforceTask) =>
+    (t.AccountFounded != null && t.AccountFounded > BS_FOUNDED_AFTER) ||
+    (t.AccountEmployees != null && t.AccountEmployees < BS_MIN_EMPLOYEES);
+  const bsCandidates = weekTasks.filter((t) => looksBs(t) && !actions.has(t.Id));
+
+  function preMarkBs() {
+    if (bsCandidates.length === 0) return;
+    setActions((prev) => {
+      const next = new Map(prev);
+      for (const t of bsCandidates) {
+        next.set(t.Id, {
+          taskId: t.Id,
+          accountId: t.AccountId,
+          accountName: t.AccountName,
+          subject: t.Subject,
+          currentDate: t.ActivityDate,
+          actionType: "delay",
+          days: BS_PUSH_DAYS,
+        });
+      }
+      return next;
+    });
+  }
+
   function handleActionChange(taskId: string, action: TaskAction) {
     setActions((prev) => {
       const next = new Map(prev);
@@ -278,6 +307,15 @@ function TasksPageContent() {
                   setApplyResult(null);
                 }}
               />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={preMarkBs}
+                disabled={tasksLoading || bsCandidates.length === 0}
+                title={`Queue P${BS_PUSH_DAYS} on every task whose account was founded after ${BS_FOUNDED_AFTER} or has fewer than ${BS_MIN_EMPLOYEES} employees in Salesforce. Rows you already marked are left alone.`}
+              >
+                Pre-mark BS{bsCandidates.length > 0 ? ` (${bsCandidates.length})` : ""}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"

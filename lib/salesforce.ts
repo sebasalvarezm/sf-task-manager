@@ -2,6 +2,7 @@ import { getValidCredentials } from "./token-manager";
 import { getSupabaseAdmin } from "./supabase";
 import { assertSalesforceId, sfErrorText, sfFetch, sfQuery } from "./sf-query";
 import { addDays, format } from "date-fns";
+import { extractYear } from "./outreach-quality";
 
 export type SalesforceTask = {
   Id: string;
@@ -11,6 +12,9 @@ export type SalesforceTask = {
   AccountName: string | null;
   AccountUrl: string | null;
   AccountWebsite: string | null; // Company's own website (e.g. https://acme.com)
+  /** From the account, for the "Pre-mark BS" sweep on the Tasks page. */
+  AccountEmployees: number | null;
+  AccountFounded: number | null;
   Priority: string;
 };
 
@@ -23,21 +27,31 @@ export async function fetchOpenTasks(): Promise<SalesforceTask[]> {
   const userId = credentials.salesforce_user_id;
   if (!userId) throw new Error("NOT_CONNECTED");
 
-  const query =
-    `SELECT Id, Subject, ActivityDate, AccountId, Account.Name, Account.Website, Priority ` +
+  const query = (withFounded: boolean) =>
+    `SELECT Id, Subject, ActivityDate, AccountId, Account.Name, Account.Website, Account.NumberOfEmployees` +
+    (withFounded ? `, Account.Year_Established__c` : ``) +
+    `, Priority ` +
     `FROM Task ` +
     `WHERE Status = 'Open' ` +
     `AND OwnerId = '${userId}' ` +
     `ORDER BY ActivityDate ASC NULLS FIRST`;
 
-  const records = await sfQuery<{
+  type Raw = {
     Id: string;
     Subject: string;
     ActivityDate: string;
     AccountId: string | null;
-    Account?: { Name: string; Website?: string | null } | null;
+    Account?: { Name: string; Website?: string | null; NumberOfEmployees?: number | null; Year_Established__c?: string | null } | null;
     Priority: string;
-  }>(query, credentials);
+  };
+  let records: Raw[];
+  try {
+    records = await sfQuery<Raw>(query(true), credentials);
+  } catch (err) {
+    // Year_Established__c is a custom field; fall back without it rather than fail the page.
+    if (err instanceof Error && err.message === "NOT_CONNECTED") throw err;
+    records = await sfQuery<Raw>(query(false), credentials);
+  }
 
   return records.map(
     (r): SalesforceTask => ({
@@ -50,6 +64,8 @@ export async function fetchOpenTasks(): Promise<SalesforceTask[]> {
         ? `${credentials.instance_url}/${r.AccountId}`
         : null,
       AccountWebsite: r.Account?.Website ?? null,
+      AccountEmployees: typeof r.Account?.NumberOfEmployees === "number" ? r.Account.NumberOfEmployees : null,
+      AccountFounded: extractYear(r.Account?.Year_Established__c),
       Priority: r.Priority,
     })
   );
