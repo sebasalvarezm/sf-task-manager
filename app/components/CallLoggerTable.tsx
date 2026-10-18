@@ -724,7 +724,7 @@ export default function CallLoggerTable({
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 text-ink underline hover:text-ink text-sm font-normal underline-offset-2"
+                      className="inline-flex items-center gap-1 text-info underline hover:text-ink text-sm font-normal underline-offset-2"
                     >
                       Open ↗
                     </a>
@@ -909,7 +909,7 @@ export default function CallLoggerTable({
                                 href={granola.webUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-ink underline underline-offset-2"
+                                className="text-info underline underline-offset-2"
                               >
                                 Open in Granola ↗
                               </a>
@@ -917,7 +917,7 @@ export default function CallLoggerTable({
                             <button
                               type="button"
                               onClick={() => void toggleTranscript(meeting.eventId, granola.noteId)}
-                              className="font-normal text-ink underline underline-offset-2"
+                              className="font-normal text-info underline underline-offset-2"
                               aria-expanded={Boolean(t?.open)}
                             >
                               {t?.open ? "Hide transcript" : "Show transcript"}

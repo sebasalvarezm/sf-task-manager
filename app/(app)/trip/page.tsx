@@ -450,7 +450,7 @@ export default function TripPage() {
                 {searching && (
                   <button
                     onClick={handleCancelSearch}
-                    className="text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary transition-colors"
+                    className="text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary transition-colors"
                   >
                     Cancel search
                   </button>
@@ -458,7 +458,7 @@ export default function TripPage() {
                 {scanning && (
                   <button
                     onClick={handleCancelScan}
-                    className="text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary transition-colors"
+                    className="text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary transition-colors"
                   >
                     Cancel scan
                   </button>
@@ -589,7 +589,7 @@ export default function TripPage() {
                                 href={r.sfUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-[15px] font-medium text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
+                                className="text-[15px] font-medium text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                               >
                                 {r.accountName}
                               </a>
@@ -624,7 +624,7 @@ export default function TripPage() {
                                   }
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary break-all"
+                                  className="text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary break-all"
                                 >
                                   {r.website}
                                 </a>
@@ -642,7 +642,7 @@ export default function TripPage() {
                               href={mapsDirectionsUrl(r.lat, r.lng)}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary mt-1 inline-block"
+                              className="text-xs text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary mt-1 inline-block"
                             >
                               Directions
                             </a>

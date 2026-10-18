@@ -125,6 +125,8 @@ export async function refreshInMailQueue(days = 7): Promise<RefreshSummary> {
     `SELECT Id, Subject, Description, Subject_Type__c, ActivityDate, CompletedDateTime, Status, ` +
       `WhoId, Who.Name, Who.Email, AccountId, Account.Name, Account.Responded__c, Account.LastActivityDate ` +
       `FROM Task WHERE Subject_Type__c = 'E5' AND Status = 'Completed' AND WhoId != null ` +
+      // Only sequences the signed-in user sent: a colleague's E5 is their InMail to write, not Seb's.
+      (credentials.salesforce_user_id ? `AND OwnerId = '${credentials.salesforce_user_id}' ` : "") +
       `AND (CompletedDateTime >= ${sinceIso} OR (CompletedDateTime = null AND ActivityDate >= ${sinceIso.slice(0, 10)})) ` +
       `ORDER BY CompletedDateTime DESC NULLS LAST LIMIT 400`,
     credentials,

@@ -45,8 +45,8 @@ export async function PATCH(request: NextRequest) {
     const body = (await request.json()) as { accountId?: string; action?: string; reason?: string; weekStart?: string };
     if (!body.accountId) return NextResponse.json({ error: "Missing account" }, { status: 400 });
     if (body.action === "push") {
-      const { row, item } = await pushCandidate(body.accountId, body.weekStart);
-      return NextResponse.json({ item: row, weekly: item });
+      const { row, item, ownerChanged } = await pushCandidate(body.accountId, body.weekStart);
+      return NextResponse.json({ item: row, weekly: item, ownerChanged });
     }
     if (body.action === "skip") return NextResponse.json({ item: await skipCandidate(body.accountId, body.reason ?? null) });
     if (body.action === "reopen") return NextResponse.json({ item: await reopenCandidate(body.accountId) });

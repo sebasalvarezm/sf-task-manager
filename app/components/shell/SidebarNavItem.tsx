@@ -16,7 +16,7 @@ export function SidebarNavItem({ href, label, Icon, active, unread }: Props) {
       aria-current={active ? "page" : undefined}
       className={`relative flex h-9 items-center gap-3 rounded-sm px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-surface-4 ${
         active
-          ? "bg-surface-4 text-ink"
+          ? "bg-surface-4 text-ink border-l-2 border-info pl-[10px]"
           : "text-ink-secondary hover:bg-surface-3 hover:text-ink"
       }`}
     >

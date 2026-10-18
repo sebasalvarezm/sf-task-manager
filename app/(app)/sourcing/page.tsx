@@ -1189,7 +1189,7 @@ function SourcingResultDisplay({
                     href={hookAnchor.sourceUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-ink underline hover:no-underline"
+                    className="text-info underline hover:no-underline"
                   >
                     {hookAnchor.sourceLabel || hookAnchor.sourceUrl}
                   </a>
@@ -1433,7 +1433,7 @@ function SourcingResultDisplay({
                   href={result.archiveUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 mt-2 text-xs text-ink underline underline-offset-2 hover:text-ink-secondary font-normal"
+                  className="inline-flex items-center gap-1 mt-2 text-xs text-info underline underline-offset-2 hover:text-ink-secondary font-normal"
                 >
                   View archived page
                   <ExternalLink className="h-3 w-3" strokeWidth={2} />
@@ -1528,7 +1528,7 @@ function SourcingResultDisplay({
                 href={result.addressSourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-ink underline hover:text-ink-secondary underline-offset-2 inline-flex items-center gap-0.5"
+                className="text-info underline hover:text-info/80 underline-offset-2 inline-flex items-center gap-0.5"
               >
                 {result.addressSource ?? "view location"}
                 <ExternalLink className="h-3 w-3" strokeWidth={2} />

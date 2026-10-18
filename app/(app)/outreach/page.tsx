@@ -40,7 +40,7 @@ type Row = {
   sends_in_window: number;
   screen_status: ScreenStatus;
   screen_reason: string | null;
-  screen_facts: { summary?: string | null; ownership?: string | null; investment?: string | null; softwareType?: string | null; group?: { group: string | null; mainGroup: string | null } | null } | null;
+  screen_facts: { summary?: string | null; ownership?: string | null; investment?: string | null; softwareType?: string | null; linkedin?: string | null; group?: { group: string | null; mainGroup: string | null } | null } | null;
   review_status: ReviewStatus;
   skip_reason: string | null;
   reviewed_at: string | null;
@@ -268,7 +268,10 @@ function OutreachInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not save");
       replaceRow(data.item);
-      if (action === "push") setWeekCount((n) => (n === null ? null : n + 1));
+      if (action === "push") {
+        setWeekCount((n) => (n === null ? null : n + 1));
+        setNotice(`${row.account_name} added to Weekly Outreach${data.ownerChanged ? ", account owner set to you in Salesforce" : ""}.`);
+      }
       if (action === "reopen") setWeekCount(null);
       setSkipFor(null);
       if (action !== "reopen") void ensureScreened(settings?.batchSize ?? 50);
@@ -479,10 +482,19 @@ function CandidateRow({
               <span className="text-[15px] font-medium text-ink">{row.account_name}</span>
             )}
             {site ? (
-              <a href={site} target="_blank" rel="noreferrer" className="text-[13px] text-ink-muted no-underline hover:underline">
+              <a href={site} target="_blank" rel="noreferrer" className="text-[13px] text-info no-underline hover:underline">
                 {hostOf(row.website)}
               </a>
             ) : null}
+            <a
+              href={row.screen_facts?.linkedin ?? `https://www.linkedin.com/search/results/companies/?keywords=${encodeURIComponent(row.account_name)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[13px] text-info no-underline hover:underline"
+              title={row.screen_facts?.linkedin ? "LinkedIn company page" : "Search LinkedIn for the company"}
+            >
+              {row.screen_facts?.linkedin ? "LinkedIn" : "LinkedIn search"}
+            </a>
           </div>
           {lineTwo ? <p className="truncate text-[13px] text-ink-secondary">{lineTwo}</p> : null}
           <p className="truncate text-[13px] text-ink-secondary">{lastContact}</p>

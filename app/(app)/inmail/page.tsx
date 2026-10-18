@@ -363,7 +363,7 @@ export default function InMailQueuePage() {
                   <div className="mt-0.5 text-[13px] text-ink-secondary">
                     E5 sent {row.e5_sent_at ?? "—"}{since !== null ? ` (${since}d ago)` : ""}
                     {row.status === "sent" && sentDays !== null ? (
-                      <span className={sentDays >= 7 ? " text-ink underline underline-offset-2" : ""}>
+                      <span className={sentDays >= 7 ? " text-info underline underline-offset-2" : ""}>
                         {" · "}{sentDays >= 7 ? "Follow-up due" : `Follow-up in ${7 - sentDays}d`}
                       </span>
                     ) : null}
@@ -470,7 +470,7 @@ export default function InMailQueuePage() {
                           {STATUS_LABEL[row.status].label}
                         </Badge>
                         {row.status === "sent" && sentDays !== null ? (
-                          <div className={`mt-1 text-[13px] ${sentDays >= 7 ? "text-ink underline underline-offset-2" : "text-ink-secondary"}`}>
+                          <div className={`mt-1 text-[13px] ${sentDays >= 7 ? "text-info underline underline-offset-2" : "text-ink-secondary"}`}>
                             {sentDays >= 7 ? "Follow-up due" : `Follow-up in ${7 - sentDays}d`}
                           </div>
                         ) : null}
@@ -481,7 +481,7 @@ export default function InMailQueuePage() {
                             href={href}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-ink underline underline-offset-2 hover:text-ink-secondary"
+                            className="inline-flex items-center gap-1 text-info underline underline-offset-2 hover:text-ink-secondary"
                           >
                             <MessageSquare size={16} />
                             {row.linkedin_url ? "Profile" : "Find in Recruiter"}
@@ -537,7 +537,7 @@ export default function InMailQueuePage() {
 
         {open ? (
           <div
-            className="fixed inset-0 z-50 flex items-end bg-navy/50 sm:items-center sm:justify-center sm:p-6"
+            className="fixed inset-0 z-50 flex items-end bg-black/40 sm:items-center sm:justify-center sm:p-6"
             role="presentation"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) setOpenId(null);

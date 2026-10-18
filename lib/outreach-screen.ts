@@ -28,6 +28,8 @@ export type ScreenVerdict = {
     /** One line for the card: "Ag retailer ERP, Canada, bootstrapped, no acquisition or investment on record." */
     summary: string | null;
     group: GroupMatch | null;
+    /** The company's LinkedIn page, when the site links to it. */
+    linkedin: string | null;
     confidence: "high" | "medium" | "low";
     source: string[];
   };
@@ -76,6 +78,7 @@ function parseVerdict(raw: string): ScreenVerdict | null {
       investment: str(o.investment),
       summary: (str(o.summary) ?? null)?.replace(/\s*[\u2013\u2014]\s*/g, ", ").replace(/\.$/, "").slice(0, 160) ?? null,
       group: null,
+      linkedin: null,
       confidence,
       source: [],
     },
@@ -163,6 +166,7 @@ export async function screenCompany(input: { name: string; website: string | nul
   if (!parsed) parsed = parseVerdict(await ask(false));
   if (!parsed) return { status: "error", reason: "The model did not return a readable verdict.", facts: { ...emptyFacts(), source: site.pages } };
   parsed.facts.source = site.pages;
+  parsed.facts.linkedin = findLinkedInCompanyUrl(site.text);
   if (parsed.status === "software") {
     // Same portfolio-group classifier Sourcing uses, run once here so the push
     // carries the group and Sourcing can skip its own classification step.
@@ -171,8 +175,15 @@ export async function screenCompany(input: { name: string; website: string | nul
   return parsed;
 }
 
+/** Jina keeps links in its markdown, so the footer's LinkedIn icon is findable. Company pages only, never a person. */
+export function findLinkedInCompanyUrl(text: string): string | null {
+  const m = text.match(/https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/(?:company|school|showcase)\/[A-Za-z0-9._%-]+\/?/i);
+  if (!m) return null;
+  return m[0].replace(/^http:/i, "https:").replace(/\/$/, "");
+}
+
 function emptyFacts(): ScreenVerdict["facts"] {
-  return { softwareType: null, businessModel: null, acquiredBy: null, acquiredWhen: null, employeesOnSite: null, ownership: null, investment: null, summary: null, group: null, confidence: "low", source: [] };
+  return { softwareType: null, businessModel: null, acquiredBy: null, acquiredWhen: null, employeesOnSite: null, ownership: null, investment: null, summary: null, group: null, linkedin: null, confidence: "low", source: [] };
 }
 
 // ── Queue ────────────────────────────────────────────────────────────────────

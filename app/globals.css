@@ -4,11 +4,11 @@
 @tailwind utilities;
 
 :root {
-  --navy: #1A1A1A;
-  --navy-dark: #000000;
+  --navy: #3B5BDB;
+  --navy-dark: #2F49B0;
   --orange: #E84C0E;
   --orange-hover: #D64408;
-  --navy-light: #2A2A2A;
+  --navy-light: #6F86E3;
   --brand: #E84C0E;
   --brand-hover: #D64408;
   --brand-soft: #FBEFE8;

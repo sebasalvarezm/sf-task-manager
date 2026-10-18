@@ -1114,7 +1114,7 @@ function MeetingRow({
               )}
               <button
                 onClick={() => onStartEdit(effectiveMatch.accountName)}
-                className="text-xs text-ink underline decoration-1 underline-offset-2 transition-colors hover:text-ink-secondary"
+                className="text-xs text-info underline decoration-1 underline-offset-2 transition-colors hover:text-ink-secondary"
               >
                 Change
               </button>
@@ -1193,7 +1193,7 @@ function MeetingRow({
               href={effectiveMatch.accountUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary text-xs"
+              className="text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary text-xs"
             >
               Open
             </a>
@@ -1232,7 +1232,7 @@ function MeetingRow({
                 Generating…
                 <button
                   onClick={onCancelGenerate}
-                  className="ml-1 text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary transition-colors"
+                  className="ml-1 text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary transition-colors"
                 >
                   Cancel
                 </button>

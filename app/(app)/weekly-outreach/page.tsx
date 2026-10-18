@@ -133,10 +133,18 @@ function isE1ReadyForSourcing(
   );
 }
 
+/** Row colour code, kept by request: green once an email is out, amber when an RCE still owes its second email. */
 function sentRowTone(item: WeeklyOutreachItem): string {
-  // Rows stay white; a sent row only reads in secondary grey. Status is text, not fill.
   if (item.status !== "sent") return "bg-white hover:bg-surface-3";
-  return "bg-white text-ink-secondary hover:bg-surface-3";
+  if (item.outreach_type === "RCE" && !item.rce_second_sent) return "bg-warn-soft hover:bg-[#F1E7C8]";
+  return "bg-ok-soft hover:bg-[#D9EBE1]";
+}
+
+/** 0 = still to do, 1 = half done (RCE first sent), 2 = done. */
+function finishRank(item: WeeklyOutreachItem): number {
+  if (item.status !== "sent") return 0;
+  if (item.outreach_type === "RCE" && !item.rce_second_sent) return 1;
+  return 2;
 }
 
 /** Plain-English note explaining how the Outlook chain above the draft was chosen. */
@@ -339,6 +347,30 @@ export default function WeeklyOutreachPage() {
 
   const blankRowCount = Math.max(5, MINIMUM_SHEET_ROWS - items.length);
   const visibleDraftRows = draftRows.slice(0, blankRowCount);
+
+  // "Unfinished first": E1s not yet sent and RCEs still owing their second email float to the top.
+  const [unfinishedFirst, setUnfinishedFirst] = useState(false);
+  useEffect(() => {
+    try {
+      setUnfinishedFirst(window.localStorage.getItem("weekly-outreach:unfinished-first") === "1");
+    } catch {
+      /* no storage */
+    }
+  }, []);
+  function toggleUnfinishedFirst() {
+    setUnfinishedFirst((v) => {
+      try {
+        window.localStorage.setItem("weekly-outreach:unfinished-first", v ? "0" : "1");
+      } catch {
+        /* no storage */
+      }
+      return !v;
+    });
+  }
+  const orderedItems = useMemo(
+    () => (unfinishedFirst ? [...items].sort((a, b) => finishRank(a) - finishRank(b) || a.created_at.localeCompare(b.created_at)) : items),
+    [items, unfinishedFirst],
+  );
   const goalPercent = Math.min(100, (counts.total / WEEKLY_GOAL) * 100);
   const retryableSourcingJobIds = useMemo(
     () =>
@@ -1555,7 +1587,7 @@ export default function WeeklyOutreachPage() {
         {outlookReconnectRequired && (
           <Alert variant="info" onDismiss={() => setOutlookReconnectRequired(false)}>
             Outlook needs one permission refresh before it can create editable reply drafts.{" "}
-            <a className="text-ink underline underline-offset-2" href="/api/microsoft/connect">
+            <a className="text-info underline underline-offset-2" href="/api/microsoft/connect">
               Reconnect Outlook
             </a>
           </Alert>
@@ -1582,7 +1614,10 @@ export default function WeeklyOutreachPage() {
                 />
               </div>
             </div>
-            <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+            <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+              <Button className="w-full sm:w-auto" variant={unfinishedFirst ? "secondary" : "ghost"} onClick={toggleUnfinishedFirst} disabled={items.length === 0}>
+                {unfinishedFirst ? "Unfinished first ✓" : "Unfinished first"}
+              </Button>
               <Button className="w-full sm:w-auto" variant="ghost" onClick={copyCsv} disabled={items.length === 0}>
                 Copy CSV
               </Button>
@@ -1593,11 +1628,11 @@ export default function WeeklyOutreachPage() {
                 variant="secondary"
                 onClick={prepareAllRces}
                 disabled={pasting || preparingRces.size > 0 || counts.rceToDraft === 0}
-                className="w-full sm:w-auto"
+                className="col-span-2 w-full sm:col-span-1 sm:w-auto"
               >
                 Prepare RCE drafts ({counts.rceToDraft})
               </Button>
-              <Button className="w-full sm:w-auto" onClick={prepareE1s} disabled={pasting || saving || e1ToSourceCount === 0}>
+              <Button className="col-span-2 w-full sm:col-span-1 sm:w-auto" onClick={prepareE1s} disabled={pasting || saving || e1ToSourceCount === 0}>
                 Prepare E1 sourcing batch ({e1ToSourceCount})
               </Button>
             </div>
@@ -1689,7 +1724,7 @@ export default function WeeklyOutreachPage() {
             </div>
           ) : null}
 
-          {items.map((item, index) => (
+          {orderedItems.map((item, index) => (
             <div key={item.id} className={`rounded-md border border-line p-4 ${sentRowTone(item)}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -1767,7 +1802,7 @@ export default function WeeklyOutreachPage() {
               ) : null}
 
               <details className="mt-3 border-t border-line pt-3">
-                <summary className="cursor-pointer text-sm text-ink underline underline-offset-2">
+                <summary className="cursor-pointer text-sm text-info underline underline-offset-2">
                   Edit Salesforce fields
                 </summary>
                 <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1855,7 +1890,7 @@ export default function WeeklyOutreachPage() {
                   type="button"
                   onClick={() => void moveRowToNextWeek(item)}
                   disabled={movingRows.has(item.id)}
-                  className="py-2 text-sm text-ink underline underline-offset-2 disabled:opacity-50"
+                  className="py-2 text-sm text-info underline underline-offset-2 disabled:opacity-50"
                 >
                   {movingRows.has(item.id) ? "Moving…" : "Move to next week"}
                 </button>
@@ -1911,7 +1946,7 @@ export default function WeeklyOutreachPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item, index) => (
+                {orderedItems.map((item, index) => (
                   <tr
                     key={item.id}
                     aria-selected={selectedRowId === item.id}
@@ -2008,7 +2043,7 @@ export default function WeeklyOutreachPage() {
                         ))}
                       </select>
                       {item.sourcing_job_id ? (
-                        <Link className="px-1 text-xs text-ink underline underline-offset-2" href={`/sourcing?jobId=${item.sourcing_job_id}`}>
+                        <Link className="px-1 text-xs text-info underline underline-offset-2" href={`/sourcing?jobId=${item.sourcing_job_id}`}>
                           Open sourcing
                         </Link>
                       ) : null}
@@ -2025,7 +2060,7 @@ export default function WeeklyOutreachPage() {
                             type="button"
                             onKeyDown={(event) => handleGridNavigation(event, index, 9)}
                             onClick={() => void openFollowUp(item)}
-                            className="h-11 w-full px-2 text-left text-ink underline underline-offset-2 hover:bg-surface-3"
+                            className="h-11 w-full px-2 text-left text-info underline underline-offset-2 hover:bg-surface-3"
                             title={
                               item.rce_follow_up_trackable
                                 ? "Preview and send the short follow-up into the same Outlook thread"
@@ -2060,7 +2095,7 @@ export default function WeeklyOutreachPage() {
                               type="button"
                               onClick={() => void prepareRce(item)}
                               disabled={preparingRces.has(item.id)}
-                              className="min-w-0 flex-1 text-left text-ink underline underline-offset-2 hover:text-ink-secondary disabled:opacity-50"
+                              className="min-w-0 flex-1 text-left text-info underline underline-offset-2 hover:text-ink-secondary disabled:opacity-50"
                             >
                               {preparingRces.has(item.id) ? "Preparing…" : "Prepare"}
                             </button>
@@ -2072,7 +2107,7 @@ export default function WeeklyOutreachPage() {
                           type="button"
                           onKeyDown={(event) => handleGridNavigation(event, index, 9)}
                           onClick={() => openRceReview(item)}
-                          className="h-11 w-full px-2 text-left text-ink underline underline-offset-2 hover:bg-surface-3"
+                          className="h-11 w-full px-2 text-left text-info underline underline-offset-2 hover:bg-surface-3"
                         >
                           Review
                         </button>
@@ -2099,7 +2134,7 @@ export default function WeeklyOutreachPage() {
                         type="button"
                         onClick={() => void moveRowToNextWeek(item)}
                         disabled={movingRows.has(item.id)}
-                        className="whitespace-nowrap text-ink underline underline-offset-2 hover:text-ink-secondary disabled:opacity-50"
+                        className="whitespace-nowrap text-info underline underline-offset-2 hover:text-ink-secondary disabled:opacity-50"
                         aria-label={`Move ${item.account_name} to next week`}
                       >
                         {movingRows.has(item.id) ? "Moving…" : "Move →"}
@@ -2246,7 +2281,7 @@ export default function WeeklyOutreachPage() {
 
         {followUpItem ? (
           <div
-            className="fixed inset-0 z-50 flex items-end bg-navy/50 sm:items-center sm:justify-center sm:p-6"
+            className="fixed inset-0 z-50 flex items-end bg-black/40 sm:items-center sm:justify-center sm:p-6"
             role="presentation"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) closeFollowUp();
@@ -2439,7 +2474,7 @@ export default function WeeklyOutreachPage() {
 
         {reviewingRce ? (
           <div
-            className="fixed inset-0 z-50 flex items-end bg-navy/50 sm:items-center sm:justify-center sm:p-6"
+            className="fixed inset-0 z-50 flex items-end bg-black/40 sm:items-center sm:justify-center sm:p-6"
             role="presentation"
             onMouseDown={(event) => {
               // Only a press that lands on the dim area itself closes the box, so
@@ -2510,7 +2545,7 @@ export default function WeeklyOutreachPage() {
                     <button
                       type="button"
                       onClick={() => setReviewContextOpen((open) => !open)}
-                      className="shrink-0 text-[11px] text-ink underline underline-offset-2"
+                      className="shrink-0 text-[11px] text-info underline underline-offset-2"
                     >
                       {reviewContextOpen ? "Hide context" : "Why this draft"}
                     </button>
@@ -2596,7 +2631,7 @@ export default function WeeklyOutreachPage() {
                         </span>
                         <button
                           type="button"
-                          className="shrink-0 text-ink underline underline-offset-2"
+                          className="shrink-0 text-info underline underline-offset-2"
                           onClick={() => void saveDraftNow()}
                         >
                           Retry

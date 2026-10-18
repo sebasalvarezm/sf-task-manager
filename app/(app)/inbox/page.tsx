@@ -386,7 +386,7 @@ export default function InboxPage() {
               ) : null}
             </div>
             <details className="mt-3">
-              <summary className="cursor-pointer text-[13px] text-ink underline underline-offset-2">Or paste it as text</summary>
+              <summary className="cursor-pointer text-[13px] text-info underline underline-offset-2">Or paste it as text</summary>
               <textarea value={sigText} onChange={(e) => setSigText(e.target.value)} placeholder={"Sebastian Alvarez\nDirector, M&A | Valstone\n..."} className="mt-2 min-h-28 w-full rounded-sm border border-line-strong p-3 text-base text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4" />
               <Button size="sm" variant="secondary" className="mt-2" disabled={sigBusy || !sigText.trim()} onClick={() => void signatureAction({ text: sigText })}>Save pasted signature</Button>
             </details>
@@ -462,7 +462,7 @@ export default function InboxPage() {
 
         {open ? (
           <div
-            className="fixed inset-0 z-50 flex items-end bg-navy/50 sm:items-center sm:justify-center sm:p-6"
+            className="fixed inset-0 z-50 flex items-end bg-black/40 sm:items-center sm:justify-center sm:p-6"
             role="presentation"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) setOpenId(null);
@@ -493,7 +493,7 @@ export default function InboxPage() {
                 <div className="rounded-md border border-line bg-white p-3">
                   <p className={`whitespace-pre-wrap text-sm text-ink ${threadOpen ? "" : "line-clamp-[12]"}`}>{open.thread[open.thread.length - 1]?.text || open.preview}</p>
                   {open.thread.length > 1 ? (
-                    <button type="button" onClick={() => setThreadOpen((v) => !v)} className="mt-2 flex items-center gap-1 text-[13px] text-ink underline underline-offset-2">
+                    <button type="button" onClick={() => setThreadOpen((v) => !v)} className="mt-2 flex items-center gap-1 text-[13px] text-info underline underline-offset-2">
                       {threadOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                       {threadOpen ? "Show less" : `Show full thread (${open.thread.length - 1} earlier)`}
                     </button>
@@ -535,7 +535,7 @@ export default function InboxPage() {
                   <div className="flex items-center justify-between">
                     <p className="text-[13px] text-ink-secondary">{isSent ? "Reply sent" : "Your reply"}</p>
                     {!isSent ? (
-                      <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-[13px] text-ink underline underline-offset-2 disabled:text-ink-muted">
+                      <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-[13px] text-info underline underline-offset-2 disabled:text-ink-muted">
                         <Asterisk size={16} /> {drafting ? "Drafting…" : "Redraft"}
                       </button>
                     ) : null}

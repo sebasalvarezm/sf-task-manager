@@ -29,11 +29,12 @@ const config: Config = {
         blue: { ...colors.blue, 50: "#E9EDFA", 100: "#D6DEF5", 200: "#B3C1EC", 400: "#6F86E3", 500: "#3B5BDB", 600: "#3B5BDB", 700: "#2F49B0", 800: "#263B8E" },
         amber: { ...colors.amber, 50: "#F7F0DC", 100: "#EFE2B8", 200: "#E2CC8A", 500: "#8A6A1A", 600: "#8A6A1A", 700: "#705515", 800: "#5A4411" },
         yellow: { ...colors.yellow, 50: "#F7F0DC", 100: "#EFE2B8", 700: "#705515", 800: "#5A4411" },
-        // "navy" is now the ink-black used for selected chips and dark tooltips.
+        // "navy" is the selected-state colour for chips and segments: the muted
+        // --info blue, the only blue in the system (DESIGN.md §3).
         navy: {
-          DEFAULT: "#1A1A1A",
-          dark: "#000000",
-          light: "#2A2A2A",
+          DEFAULT: "#3B5BDB",
+          dark: "#2F49B0",
+          light: "#6F86E3",
         },
         brand: {
           DEFAULT: "#E84C0E",

@@ -152,7 +152,7 @@ type StatsResponse = {
 // Outreach quality ("BS"): what share of outreach went to companies failing two
 // of the three checks — geography, founded year, headcount. Rates are fractions
 // 0–1, matching the `conversion` convention above.
-type QualityRate = { sent: number; bs: number; rate: number };
+type QualityRate = { sent: number; bs: number; warn: number; rate: number };
 
 type OutreachQuality = {
   totals: QualityRate;
@@ -200,12 +200,12 @@ type EngagementResponse = {
 };
 
 // ── Colors ───────────────────────────────────────────────────────────────────
-// Charts use the neutral scale plus at most two hues (DESIGN.md §3): --info
-// blue and a dusty violet. Third/fourth series fall back to neutral greys.
-const BLUE = "#3B5BDB"; // --info
-const GREEN = "#7A6FA8"; // dusty violet
-const ORANGE = "#8B8985"; // neutral: --text-tertiary
-const TEAL = "#C9C6BF"; // neutral: --border-strong
+// The original chart palette, kept by request: the charts are the one place
+// the page is allowed colour. Chrome around them stays neutral.
+const BLUE = "#6FA8F0";
+const GREEN = "#8DD178";
+const ORANGE = "#F2B84B";
+const TEAL = "#5EC4C4";
 const NAVY = "#1A1A1A"; // ink, used for bar labels
 const LINE = "#E3E1DC"; // hairline gridlines
 const TICK = { fontSize: 12, fill: "#5F5E5A" };
@@ -219,10 +219,11 @@ const TOOLTIP_STYLE = {
 };
 const TOOLTIP_CURSOR = { fill: "#F7F6F3" };
 
-// Outreach quality: FLAGGED is the semantic --negative (a flagged email is a
-// value judgement); CLEAN is a neutral track so the chart stays one hue.
+// Outreach quality: FLAGGED fails two or more checks (a verdict), WARN fails
+// exactly one (worth a look), CLEAN passes all.
 const FLAGGED = "#B5441F";
-const CLEAN = "#C9C6BF";
+const WARN = "#F2B84B";
+const CLEAN = BLUE;
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
@@ -493,19 +494,23 @@ export default function StatsPage() {
   // ── Outreach quality ("BS") derived data ───────────────────────────────────
 
   const quality = data?.outreachQuality ?? null;
+  // "Potential" shows emails that fail exactly one check as a yellow slice.
+  const [showWarn, setShowWarn] = useState(false);
 
-  /** Two-slice donut: flagged first so it starts at 12 o'clock. */
+  /** Donut: flagged first so it starts at 12 o'clock, then potential (optional), then clean. */
   const qualityDonutData = useMemo(() => {
     if (!quality) return [];
+    const warn = showWarn ? quality.totals.warn ?? 0 : 0;
     return [
       { name: "Flagged", value: quality.totals.bs, fill: FLAGGED },
+      ...(showWarn ? [{ name: "Potential", value: warn, fill: WARN }] : []),
       {
         name: "Clean",
-        value: Math.max(0, quality.totals.sent - quality.totals.bs),
+        value: Math.max(0, quality.totals.sent - quality.totals.bs - warn),
         fill: CLEAN,
       },
     ];
-  }, [quality]);
+  }, [quality, showWarn]);
 
   /** Stacked bars per bucket. `Rate` rides along for the label and tooltip. */
   const qualityBucketData = useMemo(() => {
@@ -513,12 +518,13 @@ export default function StatsPage() {
     return quality.byBucket.map((b) => ({
       name: b.label,
       start: b.start,
-      Clean: Math.max(0, b.sent - b.bs),
+      Clean: Math.max(0, b.sent - b.bs - (showWarn ? b.warn ?? 0 : 0)),
+      Potential: showWarn ? b.warn ?? 0 : 0,
       Flagged: b.bs,
       Rate: b.rate,
       Sent: b.sent,
     }));
-  }, [quality]);
+  }, [quality, showWarn]);
 
   /** Senders who actually sent something, worst rate first. */
   const qualityByPerson = useMemo(() => {
@@ -1007,13 +1013,19 @@ export default function StatsPage() {
                   <ChartCard
                     title="BS meter"
                     actions={
-                      <button
-                        type="button"
-                        onClick={() => setRulesOpen(true)}
-                        className="text-xs text-ink-secondary hover:text-ink transition-colors"
-                      >
-                        Rules
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-ink-secondary">
+                          <input type="checkbox" className="h-3.5 w-3.5 accent-[#1A1A1A]" checked={showWarn} onChange={(e) => setShowWarn(e.target.checked)} />
+                          Show potential
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setRulesOpen(true)}
+                          className="text-xs text-ink-secondary hover:text-ink transition-colors"
+                        >
+                          Rules
+                        </button>
+                      </div>
                     }
                   >
                     {quality.totals.sent === 0 ? (
@@ -1067,6 +1079,7 @@ export default function StatsPage() {
                         <p className="mt-1 text-center text-xs text-ink-secondary tabular-nums">
                           {fmtNumber(quality.totals.bs)} of{" "}
                           {fmtNumber(quality.totals.sent)} emails
+                          {showWarn ? ` · ${fmtNumber(quality.totals.warn ?? 0)} potential (one check failed)` : ""}
                         </p>
 
                         {/* Legend — identity is never colour-alone. */}
@@ -1078,6 +1091,12 @@ export default function StatsPage() {
                             />
                             Flagged
                           </span>
+                          {showWarn ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="h-2 w-2 rounded-sm" style={{ background: WARN }} />
+                              Potential
+                            </span>
+                          ) : null}
                           <span className="inline-flex items-center gap-1.5">
                             <span
                               className="h-2 w-2 rounded-sm"
@@ -1164,6 +1183,15 @@ export default function StatsPage() {
                           cursor="pointer"
                           onClick={(d) => openQualityBucket(d as BucketClick)}
                         />
+                        {showWarn ? (
+                          <Bar
+                            dataKey="Potential"
+                            stackId="q"
+                            fill={WARN}
+                            cursor="pointer"
+                            onClick={(d) => openQualityBucket(d as BucketClick)}
+                          />
+                        ) : null}
                         <Bar
                           dataKey="Flagged"
                           stackId="q"
@@ -1577,6 +1605,28 @@ function DrillModal({
   onClose: () => void;
 }) {
   const [rows, setRows] = useState<DrillRow[] | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
+
+  /** Move a BRO to another stage in Salesforce and reflect it in the table at once. */
+  async function moveStage(opportunityId: string, stage: string) {
+    setMovingId(opportunityId);
+    setMoveError(null);
+    try {
+      const res = await fetch("/api/salesforce/opportunity-stage", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opportunityId, stage }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "Could not move the opportunity");
+      setRows((prev) => (prev ? prev.map((r) => (r.opportunityId === opportunityId ? { ...r, stage } : r)) : prev));
+    } catch (err) {
+      setMoveError(err instanceof Error ? err.message : "Could not move the opportunity");
+    } finally {
+      setMovingId(null);
+    }
+  }
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -2112,7 +2162,7 @@ function DrillModal({
             return (
               <Fragment key={(r.opportunityId ?? r.accountId ?? "") + i}>
                 <Table.Row
-                  className={starred ? "bg-surface-3" : ""}
+                  className={starred ? "bg-[#FEF9C3] hover:bg-[#FEF08A]" : ""}
                 >
                   <Table.Cell className="font-medium text-ink">
                     <div className="flex items-start gap-2">
@@ -2130,7 +2180,7 @@ function DrillModal({
                         >
                           <Star
                             className={`h-3.5 w-3.5 ${
-                              starred ? "fill-ink text-ink" : ""
+                              starred ? "fill-[#FACC15] text-[#EAB308]" : ""
                             }`}
                             strokeWidth={1.5}
                           />
@@ -2184,7 +2234,26 @@ function DrillModal({
                     )}
                   </Table.Cell>
                   {includeStageColumn && (
-                    <Table.Cell>{r.stage ?? "—"}</Table.Cell>
+                    <Table.Cell>
+                      {isOpps && oppId ? (
+                        <select
+                          value={STAGE_DISPLAY_ORDER.includes((r.stage ?? "") as (typeof STAGE_DISPLAY_ORDER)[number]) ? (r.stage as string) : ""}
+                          disabled={movingId === oppId}
+                          onChange={(e) => {
+                            if (e.target.value && e.target.value !== r.stage) void moveStage(oppId, e.target.value);
+                          }}
+                          aria-label={`Stage for ${r.accountName}`}
+                          className="h-8 rounded-sm border border-line-strong bg-white px-2 text-xs text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4 disabled:text-ink-muted"
+                        >
+                          {!r.stage || !STAGE_DISPLAY_ORDER.includes(r.stage as (typeof STAGE_DISPLAY_ORDER)[number]) ? <option value="">{r.stage ?? "—"}</option> : null}
+                          {STAGE_DISPLAY_ORDER.map((stage) => (
+                            <option key={stage} value={stage}>{stage}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        r.stage ?? "—"
+                      )}
+                    </Table.Cell>
                   )}
                   {isOpps && (
                     <Table.Cell className="text-right tabular-nums">
@@ -2285,6 +2354,7 @@ function DrillModal({
         </p>
       )}
       {rows != null && rows.length > 0 && !isOpps && renderTable(rows, false)}
+      {moveError ? <p className="mb-3 text-sm text-danger">{moveError}</p> : null}
       {rows != null && rows.length > 0 && isOpps && grouped && (
         <div className="space-y-6">
           {grouped.map(({ stage, rows: stageRows }) => (
@@ -2298,7 +2368,7 @@ function DrillModal({
                   {stageRows.length === 1 ? "y" : "ies"}
                 </span>
               </div>
-              {renderTable(stageRows, false)}
+              {renderTable(stageRows, true)}
             </div>
           ))}
         </div>

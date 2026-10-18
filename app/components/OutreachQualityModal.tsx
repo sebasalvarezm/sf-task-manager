@@ -313,7 +313,7 @@ export function OutreachQualityModal({
                             }
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 whitespace-nowrap text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
+                            className="inline-flex items-center gap-1 whitespace-nowrap text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                           >
                             {prettyDomain(row.website)}
                             <ExternalLink className="h-3 w-3" strokeWidth={1.75} />
@@ -323,7 +323,7 @@ export function OutreachQualityModal({
                           href={row.accountUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 whitespace-nowrap text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
+                          className="inline-flex items-center gap-1 whitespace-nowrap text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                         >
                           Salesforce
                           <ExternalLink className="h-3 w-3" strokeWidth={1.75} />

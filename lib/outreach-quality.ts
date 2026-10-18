@@ -289,6 +289,8 @@ export type QualityBucket = {
 export type QualityTotals = {
   sent: number;
   bs: number;
+  /** Emails with at least one flag but fewer than `bsFlagCount`: worth a look, not a verdict. */
+  warn: number;
   /** Fraction 0–1, matching the existing `conversion.rate` convention. */
   rate: number;
 };
@@ -340,18 +342,23 @@ export function aggregateOutreachQuality(
     end: b.end,
     sent: 0,
     bs: 0,
+    warn: 0,
   }));
-  const personTally = new Map<string, { sent: number; bs: number }>();
+  const personTally = new Map<string, { sent: number; bs: number; warn: number }>();
 
   let sent = 0;
   let bs = 0;
+  let warn = 0;
 
   for (const row of rows) {
     const verdict = scoreAccountQuality(row, thresholds, opts);
+    const isWarn = !verdict.isBs && verdict.flags.length > 0;
     sent += 1;
     if (verdict.isBs) {
       bs += 1;
       for (const flag of verdict.flags) reasonCounts[flag] += 1;
+    } else if (isWarn) {
+      warn += 1;
     }
 
     // yyyy-MM-dd sorts lexicographically, so plain string comparison is a
@@ -362,22 +369,25 @@ export function aggregateOutreachQuality(
     if (bucket) {
       bucket.sent += 1;
       if (verdict.isBs) bucket.bs += 1;
+      else if (isWarn) bucket.warn += 1;
     }
 
-    const person = personTally.get(row.owner) ?? { sent: 0, bs: 0 };
+    const person = personTally.get(row.owner) ?? { sent: 0, bs: 0, warn: 0 };
     person.sent += 1;
     if (verdict.isBs) person.bs += 1;
+    else if (isWarn) person.warn += 1;
     personTally.set(row.owner, person);
   }
 
   return {
-    totals: { sent, bs, rate: rate(bs, sent) },
+    totals: { sent, bs, warn, rate: rate(bs, sent) },
     reasonCounts,
     byBucket: bucketTally.map((b) => ({
       label: b.label,
       start: b.start,
       sent: b.sent,
       bs: b.bs,
+      warn: b.warn,
       rate: rate(b.bs, b.sent),
     })),
     byPerson: [...personTally.entries()]
@@ -385,6 +395,7 @@ export function aggregateOutreachQuality(
         owner,
         sent: t.sent,
         bs: t.bs,
+        warn: t.warn,
         rate: rate(t.bs, t.sent),
       }))
       .sort((a, b) => b.rate - a.rate || b.bs - a.bs),

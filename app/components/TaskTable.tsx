@@ -335,7 +335,7 @@ export default function TaskTable({
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 text-ink underline hover:text-ink text-sm font-normal underline-offset-2"
+                    className="inline-flex items-center gap-1 text-info underline hover:text-ink text-sm font-normal underline-offset-2"
                   >
                     Open ↗
                   </a>
@@ -368,7 +368,7 @@ export default function TaskTable({
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="text-sm text-ink underline hover:text-ink underline-offset-2 tabular-nums"
+                      className="text-sm text-info underline hover:text-ink underline-offset-2 tabular-nums"
                     >
                       {task.ActivityDate}
                     </a>
@@ -453,7 +453,7 @@ export default function TaskTable({
                     href={website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-ink underline hover:text-ink underline-offset-2 tabular-nums"
+                    className="text-info underline hover:text-ink underline-offset-2 tabular-nums"
                   >
                     {task.ActivityDate}
                   </a>
@@ -465,7 +465,7 @@ export default function TaskTable({
                   href={task.AccountUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-ink underline hover:text-ink font-normal underline-offset-2"
+                  className="inline-flex items-center gap-1 text-info underline hover:text-ink font-normal underline-offset-2"
                 >
                   Open in Salesforce ↗
                 </a>

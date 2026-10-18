@@ -423,7 +423,7 @@ function AccountsPageContent() {
               {(activeJob || isReviewPhase) && (
                 <button
                   onClick={handleReset}
-                  className="text-sm text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary mt-1"
+                  className="text-sm text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary mt-1"
                 >
                   Start new run
                 </button>
@@ -472,7 +472,7 @@ function AccountsPageContent() {
                   {urlInputs.length < 5 ? (
                     <button
                       onClick={handleAddUrl}
-                      className="text-sm text-ink underline decoration-1 underline-offset-2"
+                      className="text-sm text-info underline decoration-1 underline-offset-2"
                     >
                       Add another URL
                     </button>
@@ -536,7 +536,7 @@ function AccountsPageContent() {
                 <p>{activeJob?.error ?? "Unknown error"}</p>
                 <button
                   onClick={handleReset}
-                  className="mt-2 text-sm text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
+                  className="mt-2 text-sm text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                 >
                   Start a new run
                 </button>
@@ -627,7 +627,7 @@ function AccountsPageContent() {
                             href={item.duplicate.accountUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-xs text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary whitespace-nowrap"
+                            className="text-xs text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary whitespace-nowrap"
                           >
                             Open
                           </a>
@@ -741,7 +741,7 @@ function AccountsPageContent() {
                               href={item.createResult.accountUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-ink underline decoration-1 underline-offset-2 hover:text-ink-secondary"
+                              className="text-xs text-info underline decoration-1 underline-offset-2 hover:text-ink-secondary"
                             >
                               Open in Salesforce
                             </a>

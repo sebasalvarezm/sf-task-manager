@@ -1,5 +1,5 @@
 import { getValidCredentials } from "./token-manager";
-import { sfQuery } from "./sf-query";
+import { sfQuery, sfFetch, assertSalesforceId } from "./sf-query";
 import { getSupabaseAdmin, type SfCredentials } from "./supabase";
 import { canonicalizeCountry, isTierOneCountry } from "./outreach-quality";
 import { describeResponseFields, pickResponseTypeValue } from "./inbox-salesforce";
@@ -383,7 +383,7 @@ export async function listCandidates(): Promise<CandidateRow[]> {
       out.push({
         ...r,
         sends: Array.isArray(r.sends) ? r.sends.slice(0, 5) : [],
-        screen_facts: f ? { summary: f.summary ?? null, ownership: f.ownership ?? null, investment: f.investment ?? null, softwareType: f.softwareType ?? null, group: g?.matched ? { group: g.group ?? null, mainGroup: g.mainGroup ?? null } : null } : null,
+        screen_facts: f ? { summary: f.summary ?? null, ownership: f.ownership ?? null, investment: f.investment ?? null, softwareType: f.softwareType ?? null, linkedin: typeof f.linkedin === "string" ? f.linkedin : null, group: g?.matched ? { group: g.group ?? null, mainGroup: g.mainGroup ?? null } : null } : null,
       });
     }
     if (rows.length < page) break;
@@ -416,7 +416,20 @@ export async function reopenCandidate(accountId: string): Promise<CandidateRow> 
 }
 
 /** Push to this week's Weekly Outreach as an E1 and record it on the card. */
-export async function pushCandidate(accountId: string, weekStart?: string): Promise<{ row: CandidateRow; item: WeeklyOutreachItem }> {
+/** The account becomes Seb's once he decides to work it: owner = the signed-in Salesforce user. Best effort. */
+async function takeOwnership(accountId: string): Promise<boolean> {
+  const credentials = await getValidCredentials();
+  if (!credentials?.salesforce_user_id) return false;
+  const response = await sfFetch(
+    `/services/data/v62.0/sobjects/Account/${accountId}`,
+    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ OwnerId: credentials.salesforce_user_id }) },
+    credentials,
+  ).catch(() => null);
+  return !!response && (response.ok || response.status === 204);
+}
+
+export async function pushCandidate(accountId: string, weekStart?: string): Promise<{ row: CandidateRow; item: WeeklyOutreachItem; ownerChanged: boolean }> {
+  assertSalesforceId(accountId, "account id");
   const item = await addAccountToWeeklyOutreach({
     accountId,
     outreachType: "E1",
@@ -443,7 +456,8 @@ export async function pushCandidate(accountId: string, weekStart?: string): Prom
     item.group_name = facts.group.group;
     if (facts.group.mainGroup) item.industry = facts.group.mainGroup;
   }
-  return { row: data as CandidateRow, item };
+  const ownerChanged = await takeOwnership(accountId);
+  return { row: data as CandidateRow, item, ownerChanged };
 }
 
 // ── Check a pasted list (the old Re-Contact) ─────────────────────────────────
