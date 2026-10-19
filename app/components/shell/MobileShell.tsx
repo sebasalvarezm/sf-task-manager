@@ -58,7 +58,7 @@ export function MobileShell({ children }: { children: ReactNode }) {
           <SidebarLogo />
         </div>
 
-        <div className="mx-auto max-w-[1120px] px-4 py-6 md:px-8 md:py-10">
+        <div className="mx-auto max-w-[1480px] px-4 py-6 md:px-8 md:py-8">
           {children}
         </div>
       </main>
