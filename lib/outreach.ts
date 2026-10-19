@@ -312,6 +312,37 @@ export async function findProspectsByEmails(
   return result;
 }
 
+/**
+ * Email → LinkedIn profile URL from the Outreach prospect record, for whichever
+ * emails match. Outreach fills `linkedInUrl` on most prospects it imported, so
+ * this is the quickest route to a profile without a search.
+ */
+export async function findProspectLinkedInByEmails(emails: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const normalized = Array.from(new Set(emails.map((e) => e.trim().toLowerCase()).filter((e) => !!e)));
+  const CHUNK_SIZE = 50;
+  for (let i = 0; i < normalized.length; i += CHUNK_SIZE) {
+    const chunk = normalized.slice(i, i + CHUNK_SIZE);
+    try {
+      const filter = encodeURIComponent(chunk.join(","));
+      const res = await outreachFetch(`/prospects?filter[emails]=${filter}&fields[prospect]=emails,linkedInUrl&page[size]=${chunk.length}`);
+      if (!res.ok) continue;
+      const body = (await res.json()) as { data?: Array<{ attributes?: { emails?: string[]; linkedInUrl?: string | null } }> };
+      for (const row of body.data ?? []) {
+        const url = row.attributes?.linkedInUrl;
+        if (typeof url !== "string" || !/linkedin\.com\/in\//i.test(url)) continue;
+        for (const em of row.attributes?.emails ?? []) {
+          const key = (em ?? "").toLowerCase();
+          if (key && !result.has(key)) result.set(key, url.replace(/^http:/i, "https:"));
+        }
+      }
+    } catch {
+      // skip this chunk
+    }
+  }
+  return result;
+}
+
 export type LastSequenceUsed = {
   prospectId: string;
   sequenceId: string;

@@ -63,17 +63,6 @@ export default function InMailQueuePage() {
   const [draftFollowup, setDraftFollowup] = useState("");
   const [copied, setCopied] = useState<"subject" | "initial" | "followup" | null>(null);
   const [copiedRow, setCopiedRow] = useState<string | null>(null);
-  // Phones have no Recruiter web app worth opening; the LinkedIn app does open
-  // a people search, and the profile page there has "View in Recruiter".
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const sync = () => setIsMobile(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, []);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -244,8 +233,8 @@ export default function InMailQueuePage() {
     row.contact_name
       ? `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent([row.contact_name, row.account_name].filter(Boolean).join(" "))}`
       : null;
-  // Desktop: Salesforce profile link, else Recruiter search. Phone: profile link, else LinkedIn people search (opens the app).
-  const profileHref = (row: Row) => row.linkedin_url ?? (isMobile ? peopleSearchHref(row) : row.navigator_url) ?? null;
+  // Rows saved before the Recruiter link was found to be a dead end carry the old URL; build the search fresh.
+  const profileHref = (row: Row) => row.linkedin_url ?? peopleSearchHref(row) ?? row.navigator_url ?? null;
 
   async function copyRowInMail(row: Row) {
     const text = [row.subject, row.initial_message].filter(Boolean).join("\n\n");
@@ -484,7 +473,7 @@ export default function InMailQueuePage() {
                             className="inline-flex items-center gap-1 text-info underline underline-offset-2 hover:text-ink-secondary"
                           >
                             <MessageSquare size={16} />
-                            {row.linkedin_url ? "Profile" : "Find in Recruiter"}
+                            {row.linkedin_url ? "Profile" : "Find on LinkedIn"}
                             <ExternalLink size={12} />
                           </a>
                         ) : (
@@ -564,9 +553,9 @@ export default function InMailQueuePage() {
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex h-9 items-center gap-1.5 rounded-sm border border-line-strong bg-white px-3 text-sm font-medium text-ink hover:bg-surface-3"
-                      title={open.linkedin_url ? "LinkedIn profile from Salesforce" : isMobile ? "Search in the LinkedIn app" : "Search in LinkedIn Recruiter"}
+                      title={open.linkedin_url ? "LinkedIn profile from Salesforce" : "Search LinkedIn for this person at this company"}
                     >
-                      <MessageSquare size={16} /> {open.linkedin_url ? "Open profile" : isMobile ? "Find on LinkedIn" : "Open in Recruiter"}
+                      <MessageSquare size={16} /> {open.linkedin_url ? "Open profile" : "Find on LinkedIn"}
                     </a>
                   ) : null}
                   {open.contact_name ? (

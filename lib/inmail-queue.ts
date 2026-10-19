@@ -3,6 +3,7 @@ import { sfQuery } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
 import { getAnthropicClient, MODELS } from "./anthropic";
 import { cleanE1Body } from "./outreach-queue";
+import { findProspectLinkedInByEmails } from "./outreach";
 import {
   INMAIL_SYSTEM_PROMPT,
   firstNameOf,
@@ -188,6 +189,11 @@ export async function refreshInMailQueue(days = 7): Promise<RefreshSummary> {
     }
   }
 
+  // Outreach usually knows the profile even when Salesforce doesn't.
+  const fromOutreach = await findProspectLinkedInByEmails(
+    fresh.map((id) => byWho.get(id)?.Who?.Email ?? "").filter(Boolean),
+  ).catch(() => new Map<string, string>());
+
   const rows: Array<Partial<InMailQueueRow> & { who_id: string }> = [];
   for (const whoId of fresh) {
     const e5 = byWho.get(whoId)!;
@@ -201,9 +207,17 @@ export async function refreshInMailQueue(days = 7): Promise<RefreshSummary> {
       continue;
     }
     const tasks = relatedByWho.get(whoId) ?? [];
+    // Only completed, already-dated activity counts as "something happened".
+    // An open RCE due next week is a plan to follow up, not a reply, and used
+    // to knock contacts out of the queue.
+    const today = dayOf(new Date().toISOString());
     const afterE5 = tasks.filter((t) => {
       const day = dayOf(t.CompletedDateTime ?? t.ActivityDate);
-      return day && e5Day && day > e5Day && !/^E[1-5]$/.test(t.Subject_Type__c ?? "");
+      return (
+        t.Status === "Completed" &&
+        day && e5Day && day > e5Day && (!today || day <= today) &&
+        !/^E[1-5]$/.test(t.Subject_Type__c ?? "")
+      );
     });
     if (afterE5.length > 0) {
       // Activity after the sequence ended: probably a reply or a call. Skip it
@@ -241,7 +255,7 @@ export async function refreshInMailQueue(days = 7): Promise<RefreshSummary> {
       e5_sent_at: e5Day,
       e1_task_id: e1?.Id ?? null,
       e1_body: e1Body,
-      linkedin_url: linkedInByWho.get(whoId) ?? null,
+      linkedin_url: linkedInByWho.get(whoId) ?? fromOutreach.get((e5.Who?.Email ?? "").toLowerCase()) ?? null,
       navigator_url: contactName ? recruiterSearchUrl(contactName, e5.Account?.Name ?? null) : null,
       status: "pending",
       subject: inmailSubject(e5.Account?.Name ?? null),
@@ -254,7 +268,21 @@ export async function refreshInMailQueue(days = 7): Promise<RefreshSummary> {
     if (error) throw new Error(`Could not save the InMail queue: ${error.message}`);
     summary.added = rows.length;
   }
+  await backfillLinkedIn().catch(() => undefined);
   return summary;
+}
+
+/** Rows queued before the Outreach lookup existed: fill in the profile URL where Outreach has one. */
+async function backfillLinkedIn(): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase.from("inmail_queue").select("who_id, contact_email").is("linkedin_url", null).neq("status", "dismissed").not("contact_email", "is", null).limit(300);
+  const rows = (data ?? []) as Array<{ who_id: string; contact_email: string }>;
+  if (rows.length === 0) return;
+  const found = await findProspectLinkedInByEmails(rows.map((r) => r.contact_email));
+  for (const r of rows) {
+    const url = found.get(r.contact_email.toLowerCase());
+    if (url) await supabase.from("inmail_queue").update({ linkedin_url: url }).eq("who_id", r.who_id);
+  }
 }
 
 export async function listInMailQueue(): Promise<InMailQueueRow[]> {

@@ -143,8 +143,10 @@ export function firstNameOf(fullName: string | null | undefined): string | null 
  * Recruiter InMail compose (and its scheduled follow-up).
  */
 export function recruiterSearchUrl(fullName: string, company: string | null): string {
-  const keywords = [fullName, company].filter(Boolean).join(" ");
-  return `https://www.linkedin.com/talent/search?keywords=${encodeURIComponent(keywords)}`;
+  // Recruiter ignores ?keywords= and just shows "Start a search", so the link
+  // runs the plain people search instead, which does execute from the URL.
+  // The profile it lands on still opens with the Recruiter InMail button.
+  return linkedInPeopleSearchUrl(fullName, company);
 }
 
 /** Plain LinkedIn people search, as a fallback when Recruiter search misses. */
