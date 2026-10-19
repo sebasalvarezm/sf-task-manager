@@ -19,7 +19,7 @@ import { Button } from "@/app/components/ui/Button";
 
 type RuleStatus = "eligible" | "wait" | "blocked";
 type ReviewStatus = "open" | "pushed" | "skipped";
-type ScreenStatus = "pending" | "software" | "not_software" | "acquired" | "unclear" | "error";
+type ScreenStatus = "pending" | "software" | "not_software" | "wrong_market" | "acquired" | "unclear" | "error";
 type Send = { date: string; type: string; by: string | null };
 
 type Row = {
@@ -84,7 +84,13 @@ const VIEW_LABEL: Record<View, string> = {
   rules: "Rules",
 };
 
-const SKIP_REASONS = ["Not software", "Services-heavy", "Acquired", "Wrong size", "Wrong geography", "Rule exception", "Other"];
+const SKIP_REASONS = ["Not software", "Services-heavy", "Wrong end market", "Acquired", "Wrong size", "Wrong geography", "Rule exception", "Other"];
+
+/** "Wrong end market: dental labs" shows as "wrong end market: dental labs" (only the reason is lowercased). */
+function skipLabel(reason: string): string {
+  const i = reason.indexOf(":");
+  return i < 0 ? reason.toLowerCase() : reason.slice(0, i).toLowerCase() + reason.slice(i);
+}
 
 function fmtDate(d: string | null | undefined): string {
   if (!d) return "";
@@ -300,7 +306,7 @@ function OutreachInner() {
   }, [eligibleAll]);
   const unchecked = useMemo(() => eligibleAll.filter((r) => r.screen_status === "pending" || r.screen_status === "error").length, [eligibleAll]);
   const waiting = useMemo(() => open.filter((r) => r.rule_status !== "eligible").sort((a, b) => ((a.eligible_on ?? "9999") < (b.eligible_on ?? "9999") ? -1 : 1)), [open]);
-  const filtered = useMemo(() => eligibleAll.filter((r) => r.screen_status === "not_software" || r.screen_status === "acquired"), [eligibleAll]);
+  const filtered = useMemo(() => eligibleAll.filter((r) => r.screen_status === "not_software" || r.screen_status === "wrong_market" || r.screen_status === "acquired"), [eligibleAll]);
   const done = useMemo(() => items.filter((r) => r.review_status !== "open").sort((a, b) => ((a.reviewed_at ?? "") < (b.reviewed_at ?? "") ? 1 : -1)), [items]);
   readyRef.current = next.filter((r) => r.screen_status === "software").length;
   linkedinRef.current = next.filter((r) => r.screen_status === "software" && !r.screen_facts?.linkedin && !r.screen_facts?.linkedinChecked).length;
@@ -465,12 +471,15 @@ function CandidateRow({
         : view === "done"
           ? row.review_status === "pushed"
             ? `Pushed to Weekly Outreach, week of ${fmtDate(row.pushed_week_start)}`
-            : `Skipped${row.skip_reason ? `, ${row.skip_reason.toLowerCase()}` : ""}`
+            : `Skipped${row.skip_reason ? `, ${skipLabel(row.skip_reason)}` : ""}`
           : row.screen_status === "unclear"
             ? `Check was unclear: ${row.screen_reason ?? ""}`
             : null;
   const pushLabel = view === "next" ? "Push" : "Push anyway";
   const stop = (e: MouseEvent) => e.stopPropagation();
+  // A few words with the skip ("dental labs", "consumer app"): saved with the reason and fed back into the check.
+  const [note, setNote] = useState("");
+  const skipWith = (reason: string) => onSkip(note.trim() ? `${reason}: ${note.trim()}` : reason);
 
   return (
     <div className="border-b border-line last:border-b-0">
@@ -538,12 +547,23 @@ function CandidateRow({
         </div>
       </div>
       {skipOpen && isOpen ? (
-        <div className="flex flex-wrap gap-1.5 border-t border-line bg-surface-3 px-4 py-2">
-          {SKIP_REASONS.map((reason) => (
-            <button key={reason} type="button" disabled={busy} onClick={() => onSkip(reason)} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink hover:bg-surface-3">
-              {reason}
-            </button>
-          ))}
+        <div className="border-t border-line bg-surface-3 px-4 py-2">
+          <div className="flex flex-wrap gap-1.5">
+            {SKIP_REASONS.map((reason) => (
+              <button key={reason} type="button" disabled={busy} onClick={() => skipWith(reason)} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink hover:bg-surface-3">
+                {reason}
+              </button>
+            ))}
+          </div>
+          <input
+            type="text"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onClick={stop}
+            maxLength={120}
+            placeholder="Optional: a few words on why (e.g. dental labs, consumer app). The check learns from these."
+            className="mt-2 w-full rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink placeholder:text-ink-muted focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4"
+          />
         </div>
       ) : null}
       {expanded ? (

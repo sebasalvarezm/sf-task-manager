@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS outreach_candidates (
   rule_reason        TEXT        NOT NULL DEFAULT '',
   eligible_on        DATE,
   sends_in_window    INTEGER     NOT NULL DEFAULT 0,
-  screen_status      TEXT        NOT NULL DEFAULT 'pending',     -- pending | software | not_software | acquired | unclear | error
+  screen_status      TEXT        NOT NULL DEFAULT 'pending',     -- pending | software | not_software | wrong_market | acquired | unclear | error
   screen_reason      TEXT,
   screen_facts       JSONB,
   screened_at        TIMESTAMPTZ,

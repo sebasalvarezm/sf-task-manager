@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findLinkedInCompanyUrl } from "../lib/outreach-screen";
+import { findLinkedInCompanyUrl, formatExcluded } from "../lib/outreach-screen";
 
 describe("LinkedIn company page from site text", () => {
   it("finds a company page in Jina markdown", () => {
@@ -17,5 +17,16 @@ describe("LinkedIn company page from site text", () => {
 describe("LinkedIn lookup reply parsing", () => {
   it("pulls the company URL out of a chatty reply and strips tracking", () => {
     expect(findLinkedInCompanyUrl("The page is https://www.linkedin.com/company/tronia-systems/?trk=foo for Tronia.")).toBe("https://www.linkedin.com/company/tronia-systems");
+  });
+});
+
+describe("formatExcluded", () => {
+  it("turns Seb's wrong-market skips into one example line each, without repeats", () => {
+    const text = formatExcluded([
+      { account_name: "Acme Dental", skip_reason: "Wrong end market: dental labs", screen_facts: { softwareType: "lab scheduling" } },
+      { account_name: "Acme Dental", skip_reason: "Wrong end market: dental labs", screen_facts: { softwareType: "lab scheduling" } },
+      { account_name: "Church Hub", skip_reason: "Wrong end market", screen_facts: null },
+    ]);
+    expect(text).toBe("- Acme Dental (lab scheduling): dental labs\n- Church Hub");
   });
 });

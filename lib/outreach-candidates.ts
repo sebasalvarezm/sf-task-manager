@@ -99,7 +99,7 @@ export async function saveCandidateSettings(raw: unknown): Promise<CandidateSett
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type ReviewStatus = "open" | "pushed" | "skipped";
-export type ScreenStatus = "pending" | "software" | "not_software" | "acquired" | "unclear" | "error";
+export type ScreenStatus = "pending" | "software" | "not_software" | "wrong_market" | "acquired" | "unclear" | "error";
 
 export type CandidateRow = {
   sf_account_id: string;

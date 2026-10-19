@@ -37,21 +37,23 @@ export type ScreenVerdict = {
   };
 };
 
-const SYSTEM = `You screen companies for Valstone, a permanent-capital acquirer of vertical market software (VMS) businesses serving industrial sectors. Given a company's website text and basic facts, answer two questions only:
+const SYSTEM = `You screen companies for Valstone, a permanent-capital acquirer of vertical market software (VMS) businesses serving industrial sectors. Given a company's website text and basic facts, answer three questions only:
 
 1. Is this a software business? "software" means the company's core offering is its own software product (SaaS or on-premise) that customers run or subscribe to. "software_plus_services" means a real product plus implementation or managed services around it (still fine). "services" means consulting, integration of other vendors' software, staffing, agencies, or IT services with no product of their own. "hardware" means the revenue is devices or equipment with software as a feature. "other" is everything else (distributor, media, non-profit, marketplace).
-2. Has the company been acquired or merged in the last 18 months, taken outside investment (a funding round, PE or VC money) in the last 18 months, or is it now a subsidiary or brand of a larger group? Look for "part of", "a [Group] company", "acquired by", "now [New name]", "joined", "backed by", "raised", press releases, or a redirect to a parent site. If the page does not settle it, you may run ONE web search for "<company name> acquired OR investment" and use only clear, dated results.
+2. Is the end market one Valstone goes after? Valstone buys software that runs an industrial, agricultural, construction, transportation, manufacturing, or similar B2B operating business. Consumer apps, software for dentists, lawyers, schools, churches, gyms, restaurants, real estate agents, marketing teams, HR, and generic horizontal tools are not the target. Below the facts you may get a list of markets Seb has excluded by hand before, with his own words on why; treat those as the rule, and apply the same judgement to close cousins. Otherwise lean to "software": a wrong_market verdict needs a clear, specific reason, not a hunch.
+3. Has the company been acquired or merged in the last 18 months, taken outside investment (a funding round, PE or VC money) in the last 18 months, or is it now a subsidiary or brand of a larger group? Look for "part of", "a [Group] company", "acquired by", "now [New name]", "joined", "backed by", "raised", press releases, or a redirect to a parent site. If the page does not settle it, you may run ONE web search for "<company name> acquired OR investment" and use only clear, dated results.
 
 Verdict rules:
 - "acquired": clear evidence of an acquisition or merger in the last 18 months, or now owned by a PE firm or strategic group since then.
 - "not_software": business model is services, hardware, or other.
-- "software": software or software_plus_services, and no acquisition evidence.
+- "wrong_market": it is software, but the end market is one Valstone does not go after (question 2).
+- "software": software or software_plus_services, a target end market, and no acquisition evidence (question 3).
 - "unclear": the site text is too thin, blocked, parked, or you cannot tell. Never guess.
 
 Also classify ownership: "bootstrapped" (founder or privately owned, no outside capital found), "pe_backed", "vc_backed", "public", "subsidiary", or "unknown".
 
 Output ONLY a JSON object:
-{"verdict":"software|not_software|acquired|unclear","business_model":"software|software_plus_services|services|hardware|other|null","software_type":"<one short phrase, e.g. 'fleet maintenance software for rail'>|null","acquired_by":"<name>|null","acquired_when":"<month year or year>|null","ownership":"bootstrapped|pe_backed|vc_backed|public|subsidiary|unknown","investment":"<e.g. 'Series A, March 2026'>|null","employees_on_site":<number|null>,"confidence":"high|medium|low","summary":"<what they sell in 3 to 6 words, then ownership and deal status, e.g. 'Ag retailer ERP, bootstrapped, no acquisition or investment on record'>","reason":"<one plain sentence, max 160 characters, no dashes>"}`;
+{"verdict":"software|not_software|wrong_market|acquired|unclear","business_model":"software|software_plus_services|services|hardware|other|null","software_type":"<one short phrase, e.g. 'fleet maintenance software for rail'>|null","acquired_by":"<name>|null","acquired_when":"<month year or year>|null","ownership":"bootstrapped|pe_backed|vc_backed|public|subsidiary|unknown","investment":"<e.g. 'Series A, March 2026'>|null","employees_on_site":<number|null>,"confidence":"high|medium|low","summary":"<what they sell in 3 to 6 words, then ownership and deal status, e.g. 'Ag retailer ERP, bootstrapped, no acquisition or investment on record'>","reason":"<one plain sentence, max 160 characters, no dashes>"}`;
 
 function parseVerdict(raw: string): ScreenVerdict | null {
   const m = raw.match(/\{[\s\S]*\}/);
@@ -63,7 +65,7 @@ function parseVerdict(raw: string): ScreenVerdict | null {
     return null;
   }
   const verdict = typeof o.verdict === "string" ? o.verdict : "unclear";
-  const status: ScreenStatus = verdict === "software" || verdict === "not_software" || verdict === "acquired" ? verdict : "unclear";
+  const status: ScreenStatus = verdict === "software" || verdict === "not_software" || verdict === "wrong_market" || verdict === "acquired" ? verdict : "unclear";
   const str = (v: unknown) => (typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "null" ? v.trim() : null);
   const bm = str(o.business_model);
   const confidence = o.confidence === "high" || o.confidence === "medium" ? o.confidence : "low";
@@ -141,11 +143,13 @@ export async function screenCompany(input: { name: string; website: string | nul
       facts: { ...emptyFacts(), source: site.pages },
     };
   }
+  const excluded = await excludedMarkets().catch(() => "");
   const user = [
     `Company: ${input.name}`,
     `Website: ${input.website ?? "unknown"}`,
     `Salesforce industry: ${input.industry ?? "unknown"}`,
     `Salesforce employees: ${input.employees ?? "unknown"}`,
+    ...(excluded ? ["", "Markets Seb has excluded by hand (company: his note):", excluded] : []),
     "",
     "Website text:",
     site.text.slice(0, 7000),
@@ -179,6 +183,42 @@ export async function screenCompany(input: { name: string; website: string | nul
     parsed.facts.group = await matchGroup(client, site.text, loadGroupFiles()).catch(() => null);
   }
   return parsed;
+}
+
+/**
+ * Seb's own "Wrong end market: <note>" skips, newest first, as examples for
+ * the check. Cached for ten minutes so a batch of 60 screens reads them once.
+ */
+let excludedCache: { at: number; text: string } | null = null;
+export async function excludedMarkets(): Promise<string> {
+  if (excludedCache && Date.now() - excludedCache.at < 10 * 60 * 1000) return excludedCache.text;
+  const { data, error } = await getSupabaseAdmin()
+    .from("outreach_candidates")
+    .select("account_name, skip_reason, screen_facts")
+    .eq("review_status", "skipped")
+    .ilike("skip_reason", "Wrong end market%")
+    .order("reviewed_at", { ascending: false })
+    .limit(60);
+  if (error) throw new Error(error.message);
+  const text = formatExcluded((data ?? []) as Array<{ account_name: string; skip_reason: string | null; screen_facts: { softwareType?: string | null } | null }>);
+  excludedCache = { at: Date.now(), text };
+  return text;
+}
+
+export function formatExcluded(rows: Array<{ account_name: string; skip_reason: string | null; screen_facts: { softwareType?: string | null } | null }>): string {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const note = (r.skip_reason ?? "").replace(/^wrong end market:?\s*/i, "").trim();
+    const what = r.screen_facts?.softwareType?.trim();
+    const line = note ? `${r.account_name}${what ? ` (${what})` : ""}: ${note}` : what ? `${r.account_name} (${what})` : r.account_name;
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`- ${line}`);
+    if (lines.length >= 40) break;
+  }
+  return lines.join("\n");
 }
 
 /** Jina keeps links in its markdown, so the footer's LinkedIn icon is findable. Company pages only, never a person. */
@@ -317,7 +357,7 @@ export async function screenAndStore(row: QueueRow): Promise<ScreenVerdict> {
 /** Screen up to `limit` accounts, a few at a time. Returns counts by verdict. */
 export async function runScreenBatch(limit: number, onProgress?: (done: number, total: number) => Promise<void>): Promise<Record<ScreenStatus, number> & { total: number }> {
   const rows = await nextToScreen(limit);
-  const counts: Record<ScreenStatus, number> & { total: number } = { pending: 0, software: 0, not_software: 0, acquired: 0, unclear: 0, error: 0, total: rows.length };
+  const counts: Record<ScreenStatus, number> & { total: number } = { pending: 0, software: 0, not_software: 0, wrong_market: 0, acquired: 0, unclear: 0, error: 0, total: rows.length };
   let done = 0;
   const width = 4;
   for (let i = 0; i < rows.length; i += width) {
