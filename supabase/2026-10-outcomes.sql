@@ -52,3 +52,6 @@ CREATE INDEX IF NOT EXISTS outreach_sends_sent_on_idx ON outreach_sends (sent_on
 ALTER TABLE outreach_sends ENABLE ROW LEVEL SECURITY;
 
 ALTER TYPE job_kind ADD VALUE IF NOT EXISTS 'outcomes_build';
+
+-- Company quality at send time (clean | potential | flagged | unknown), from the BS meter rules.
+ALTER TABLE outreach_sends ADD COLUMN IF NOT EXISTS quality TEXT;

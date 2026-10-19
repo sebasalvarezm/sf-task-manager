@@ -1,10 +1,10 @@
 import { getSupabaseAdmin } from "./supabase";
 import { sfQuery } from "./sf-query";
 import { getOutreachValidCredentials } from "./outreach";
-import { getAnthropicClient, MODELS } from "./anthropic";
-import { extractYear } from "./outreach-quality";
+import { extractYear, scoreAccountQuality } from "./outreach-quality";
+import { getQualityThresholds } from "./outreach-quality-settings";
 import { upstreamErrorText } from "./upstream-error";
-import { buildReport, headlineLevels, type OutcomesReport, type SendRow } from "./outcomes-analysis";
+import { buildReport, plainFindings, type OutcomesReport, type SendRow } from "./outcomes-analysis";
 
 /**
  * Outcomes: the table that puts "what we sent" next to "what happened".
@@ -214,7 +214,8 @@ const addDays = (ymd: string, days: number) => {
 /** Rebuild outreach_sends from Salesforce plus the mailings cache. Returns counts for the job log. */
 export async function buildSends(): Promise<{ sends: number; matched: number; replies: number; calls: number }> {
   const supabase = getSupabaseAdmin();
-  const [sends, calls] = await Promise.all([fetchSfSends(), fetchSfCalls()]);
+  const [sends, calls, thresholds] = await Promise.all([fetchSfSends(), fetchSfCalls(), getQualityThresholds()]);
+  const foundedAvailable = sends.some((s) => s.Account && "Year_Established__c" in s.Account);
 
   const callsByAccount = new Map<string, string[]>();
   for (const c of calls) {
@@ -298,7 +299,15 @@ export async function buildSends(): Promise<{ sends: number; matched: number; re
     if (callOn) callCount++;
     const acc = s.Account ?? {};
     const responded = acc.Responded__c === true || (typeof acc.Responded__c === "string" && /^(yes|y|true)$/i.test(acc.Responded__c));
+    // Same rules as the BS meter: 2+ flags is flagged, exactly 1 is potential, 0 is clean.
+    const verdict = scoreAccountQuality(
+      { country: acc.BillingCountry ?? null, yearEstablished: acc.Year_Established__c ?? null, numberOfEmployees: typeof acc.NumberOfEmployees === "number" ? acc.NumberOfEmployees : null },
+      thresholds,
+      { foundedFieldAvailable: foundedAvailable },
+    );
+    const quality = verdict.isBs ? "flagged" : verdict.flags.length > 0 ? "potential" : "clean";
     rows.push({
+      quality,
       sf_task_id: s.Id,
       account_id: s.AccountId,
       account_name: acc.Name ?? null,
@@ -341,7 +350,7 @@ async function loadSendRows(): Promise<SendRow[]> {
   for (let from = 0; ; from += page) {
     const { data, error } = await supabase
       .from("outreach_sends")
-      .select("sent_on, sender, subject_type, country, employees, founded, industry, prior_sends, weekday, hour_et, mailing_id, sequence_name, subject, opened, replied_at, call_on")
+      .select("sent_on, sender, subject_type, country, employees, founded, industry, prior_sends, weekday, hour_et, mailing_id, sequence_name, subject, opened, replied_at, call_on, quality")
       .order("sent_on", { ascending: true })
       .range(from, from + page - 1);
     if (error) throw new Error(error.message);
@@ -367,32 +376,8 @@ export async function loadReport(): Promise<OutcomesReport | null> {
   return (data?.value as OutcomesReport | undefined) ?? null;
 }
 
-/** Five short findings in plain English. The numbers come from the report; the model only words them. */
+/** Findings come straight from the numbers (lib/outcomes-analysis.ts); no model call, nothing invented. */
 async function writeFindings(report: OutcomesReport): Promise<string[] | null> {
-  const client = getAnthropicClient();
-  if (!client || report.sends < 50 || report.replies === 0) return null;
-  const heads = headlineLevels(report).slice(0, 12);
-  const facts = [
-    `Sends: ${report.sends} between ${report.firstSend} and ${report.lastSend}. Reply rate ${(report.replyRate * 100).toFixed(1)}%, call rate ${(report.callRate * 100).toFixed(1)}%.`,
-    `Matched to an Outreach mailing: ${report.matchedToOutreach} of ${report.sends}.`,
-    `Model check on the last quarter: AUC ${report.model.auc == null ? "n/a" : report.model.auc.toFixed(2)}. ${report.model.verdict}`,
-    `Levels that clearly differ from average (with sends, reply rate, lift vs average, and whether the pattern held on the most recent quarter):`,
-    ...heads.map((h) => `- ${h.feature}: ${h.level}. ${h.sends} sends, ${(h.rate * 100).toFixed(1)}% reply, ${h.lift.toFixed(2)}x average, held on holdout: ${h.holds == null ? "too few to say" : h.holds ? "yes" : "no"}.`),
-  ].join("\n");
-  const response = await client.messages.create({
-    model: MODELS.drafting,
-    max_tokens: 600,
-    system:
-      "You turn outreach statistics into findings for an M&A sourcing lead. Write 4 to 6 findings, one per line, no bullets or numbering, plain English a smart 13-year-old would follow, no em dashes. Each finding states the fact with its numbers and what it suggests doing. Flag when a pattern did not hold on the recent quarter or rests on few sends. Say plainly when the evidence is weak. Do not invent numbers that are not in the input.",
-    messages: [{ role: "user", content: facts }],
-  });
-  const text = response.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .join("")
-    .trim();
-  const lines = text
-    .split(/\n+/)
-    .map((l) => l.replace(/^[-•\d.)\s]+/, "").trim())
-    .filter((l) => l.length > 20);
-  return lines.length ? lines.slice(0, 6) : null;
+  const lines = plainFindings(report);
+  return lines.length ? lines : null;
 }

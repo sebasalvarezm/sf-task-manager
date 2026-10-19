@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auc, buildReport, employeesBand, fitLogistic, foundedBand, headlineLevels, wilson, type SendRow } from "../lib/outcomes-analysis";
+import { auc, buildReport, employeesBand, fitLogistic, foundedBand, headlineLevels, plainFindings, wilson, type SendRow } from "../lib/outcomes-analysis";
 
 function row(i: number, over: Partial<SendRow> = {}): SendRow {
   const d = new Date(Date.UTC(2025, 9, 1) + i * 86_400_000 * 0.5).toISOString().slice(0, 10);
@@ -20,6 +20,7 @@ function row(i: number, over: Partial<SendRow> = {}): SendRow {
     opened: true,
     replied_at: null,
     call_on: null,
+    quality: "clean",
     ...over,
   };
 }
@@ -110,5 +111,22 @@ describe("report", () => {
     const r = buildReport([]);
     expect(r.sends).toBe(0);
     expect(r.model.auc).toBeNull();
+    expect(plainFindings(r)).toEqual([]);
+  });
+
+  it("keeps untracked sends out of the reply rate and credits clean replies", () => {
+    const rows: SendRow[] = [];
+    for (let i = 0; i < 200; i++) rows.push(row(i, { replied_at: i % 5 === 0 ? "2026-01-01T00:00:00Z" : null, quality: i % 2 ? "clean" : "flagged" }));
+    for (let i = 200; i < 300; i++) rows.push(row(i, { mailing_id: null }));
+    const r = buildReport(rows);
+    expect(r.sends).toBe(300);
+    expect(r.matchedToOutreach).toBe(200);
+    expect(r.untracked).toBe(100);
+    expect(r.replyRate).toBeCloseTo(0.2, 5);
+    expect(r.qualityMix.clean).toBe(100);
+    // Replies land on even i (i % 5 === 0 includes odd multiples too): 40 replies, 20 of them clean.
+    expect(r.cleanRepliesPer100).toBeCloseTo(10, 5);
+    const findings = plainFindings(r);
+    expect(findings[0]).toMatch(/200 could be tracked/);
   });
 });

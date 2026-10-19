@@ -31,6 +31,8 @@ export type SendRow = {
   opened: boolean | null;
   replied_at: string | null;
   call_on: string | null;
+  /** clean | potential | flagged, from the BS meter rules at build time. */
+  quality?: string | null;
 };
 
 export type LevelStat = {
@@ -45,6 +47,11 @@ export type LevelStat = {
   holdoutSends: number;
   holdoutRate: number | null;
   holds: boolean | null; // null when the holdout is too small to say
+  /** Sends to companies that pass all three BS checks, and replies from them. */
+  cleanSends: number;
+  cleanReplies: number;
+  /** Calls that followed a reply: how well answers turn into meetings. */
+  callsAfterReply: number;
 };
 
 export type FeatureReport = {
@@ -60,9 +67,16 @@ export type OutcomesReport = {
   sends: number;
   replies: number;
   calls: number;
+  /** Reply rate over tracked sends (the ones matched to an Outreach mailing). */
   replyRate: number;
   callRate: number;
   matchedToOutreach: number;
+  /** Sends with no Outreach mailing: replies cannot be seen for these, so they sit outside every reply figure. */
+  untracked: number;
+  qualityMix: { clean: number; potential: number; flagged: number };
+  /** Replies from clean companies per 100 tracked sends: the number that rewards quality, not just volume. */
+  cleanRepliesPer100: number;
+  replyToCall: number;
   firstSend: string | null;
   lastSend: string | null;
   holdoutFrom: string | null;
@@ -124,7 +138,10 @@ export function priorBand(n: number): string {
   return "Contacted 3+ times before";
 }
 
+const QUALITY_LABEL: Record<string, string> = { clean: "Clean (passes all 3 checks)", potential: "Potential (fails 1 check)", flagged: "Flagged (fails 2+)" };
+
 export const FEATURES: FeatureDef[] = [
+  { key: "quality", label: "Company quality (BS meter)", of: (r) => (r.quality ? QUALITY_LABEL[r.quality] ?? r.quality : "Unknown") },
   { key: "sender", label: "Sender", of: (r) => r.sender ?? "Unknown" },
   { key: "subject_type", label: "Kind of send", of: (r) => r.subject_type },
   { key: "prior", label: "Contact history", of: (r) => priorBand(r.prior_sends) },
@@ -196,43 +213,49 @@ function predict(w: number[], row: number[]): number {
 
 // ── Report ───────────────────────────────────────────────────────────────────
 
-const MODEL_FEATURES = ["sender", "subject_type", "prior", "weekday", "hour", "country", "employees", "founded"];
+const MODEL_FEATURES = ["quality", "sender", "subject_type", "prior", "weekday", "hour", "country", "employees", "founded", "sequence"];
 
 export function buildReport(rows: SendRow[], builtAt = new Date().toISOString()): OutcomesReport {
-  const sorted = [...rows].sort((a, b) => (a.sent_on < b.sent_on ? -1 : a.sent_on > b.sent_on ? 1 : 0));
+  const all = [...rows].sort((a, b) => (a.sent_on < b.sent_on ? -1 : a.sent_on > b.sent_on ? 1 : 0));
+  // Only sends matched to an Outreach mailing can show a reply, so every reply
+  // figure uses that set. Mixing the rest in would drag the average down and
+  // make every sequence look twice as good as it is.
+  const sorted = all.filter((r) => r.mailing_id);
   const n = sorted.length;
   const replied = (r: SendRow) => (r.replied_at ? 1 : 0);
   const called = (r: SendRow) => (r.call_on ? 1 : 0);
+  const clean = (r: SendRow) => (r.quality === "clean" ? 1 : 0);
   const replies = sorted.reduce((s, r) => s + replied(r), 0);
-  const calls = sorted.reduce((s, r) => s + called(r), 0);
+  const calls = all.reduce((s, r) => s + called(r), 0);
   const base = n ? replies / n : 0;
   const splitAt = Math.floor(n * 0.75);
   const train = sorted.slice(0, splitAt);
   const holdout = sorted.slice(splitAt);
+  const trainBase = train.length ? train.reduce((s, r) => s + replied(r), 0) / train.length : 0;
   const holdoutBase = holdout.length ? holdout.reduce((s, r) => s + replied(r), 0) / holdout.length : 0;
 
+  type Acc = { sends: number; replies: number; calls: number; hSends: number; hReplies: number; cleanSends: number; cleanReplies: number; callsAfterReply: number };
+  const blank = (): Acc => ({ sends: 0, replies: 0, calls: 0, hSends: 0, hReplies: 0, cleanSends: 0, cleanReplies: 0, callsAfterReply: 0 });
   const features: FeatureReport[] = FEATURES.map((f) => {
-    const acc = new Map<string, { sends: number; replies: number; calls: number; hSends: number; hReplies: number }>();
-    for (const r of train) {
+    const acc = new Map<string, Acc>();
+    const add = (r: SendRow, inHoldout: boolean) => {
       const level = f.of(r);
-      if (level == null) continue;
-      const a = acc.get(level) ?? { sends: 0, replies: 0, calls: 0, hSends: 0, hReplies: 0 };
+      if (level == null) return;
+      const a = acc.get(level) ?? blank();
       a.sends++;
       a.replies += replied(r);
       a.calls += called(r);
+      a.cleanSends += clean(r);
+      a.cleanReplies += clean(r) && replied(r) ? 1 : 0;
+      a.callsAfterReply += replied(r) && called(r) ? 1 : 0;
+      if (inHoldout) {
+        a.hSends++;
+        a.hReplies += replied(r);
+      }
       acc.set(level, a);
-    }
-    for (const r of holdout) {
-      const level = f.of(r);
-      if (level == null) continue;
-      const a = acc.get(level) ?? { sends: 0, replies: 0, calls: 0, hSends: 0, hReplies: 0 };
-      a.sends++;
-      a.replies += replied(r);
-      a.calls += called(r);
-      a.hSends++;
-      a.hReplies += replied(r);
-      acc.set(level, a);
-    }
+    };
+    for (const r of train) add(r, false);
+    for (const r of holdout) add(r, true);
     const levels: LevelStat[] = [...acc.entries()]
       .map(([level, a]) => {
         const rate = a.sends ? a.replies / a.sends : 0;
@@ -240,14 +263,28 @@ export function buildReport(rows: SendRow[], builtAt = new Date().toISOString())
         const trainReplies = a.replies - a.hReplies;
         const trainRate = trainSends ? trainReplies / trainSends : null;
         const hRate = a.hSends ? a.hReplies / a.hSends : null;
-        const trainBase = train.length ? train.reduce((s, r) => s + replied(r), 0) / train.length : 0;
         let holds: boolean | null = null;
         if (trainRate != null && hRate != null && a.hSends >= MIN_HOLDOUT && trainSends >= MIN_LEVEL && trainBase > 0 && holdoutBase > 0) {
           const up = trainRate >= trainBase;
           holds = up ? hRate >= holdoutBase : hRate <= holdoutBase;
         }
         const ci = wilson(a.replies, a.sends);
-        return { level, sends: a.sends, replies: a.replies, calls: a.calls, rate, lift: base ? rate / base : 0, low: ci.low, high: ci.high, holdoutSends: a.hSends, holdoutRate: hRate, holds };
+        return {
+          level,
+          sends: a.sends,
+          replies: a.replies,
+          calls: a.calls,
+          rate,
+          lift: base ? rate / base : 0,
+          low: ci.low,
+          high: ci.high,
+          holdoutSends: a.hSends,
+          holdoutRate: hRate,
+          holds,
+          cleanSends: a.cleanSends,
+          cleanReplies: a.cleanReplies,
+          callsAfterReply: a.callsAfterReply,
+        };
       })
       .sort((x, y) => y.sends - x.sends);
     const solid = levels.filter((l) => l.sends >= MIN_LEVEL);
@@ -291,23 +328,35 @@ export function buildReport(rows: SendRow[], builtAt = new Date().toISOString())
   }
   const verdict =
     modelAuc == null
-      ? "Not enough sends to test a model yet."
+      ? "Not enough tracked sends to test a model yet."
       : modelAuc >= 0.7
         ? "The facts we know at send time predict replies well. Worth acting on."
         : modelAuc >= 0.6
           ? "Some signal: these facts tilt the odds but don't decide them."
           : "Little to no signal. Who replies looks mostly unrelated to these facts, so keep testing the message itself.";
 
+  const qualityMix = {
+    clean: sorted.filter((r) => r.quality === "clean").length,
+    potential: sorted.filter((r) => r.quality === "potential").length,
+    flagged: sorted.filter((r) => r.quality === "flagged").length,
+  };
+  const cleanReplies = sorted.reduce((s, r) => s + (clean(r) && replied(r) ? 1 : 0), 0);
+  const callsAfterReply = sorted.reduce((s, r) => s + (replied(r) && called(r) ? 1 : 0), 0);
+
   return {
     builtAt,
-    sends: n,
+    sends: all.length,
     replies,
     calls,
     replyRate: base,
-    callRate: n ? calls / n : 0,
-    matchedToOutreach: sorted.filter((r) => r.mailing_id).length,
-    firstSend: sorted[0]?.sent_on ?? null,
-    lastSend: sorted[n - 1]?.sent_on ?? null,
+    callRate: all.length ? calls / all.length : 0,
+    matchedToOutreach: n,
+    untracked: all.length - n,
+    qualityMix,
+    cleanRepliesPer100: n ? (cleanReplies / n) * 100 : 0,
+    replyToCall: replies ? callsAfterReply / replies : 0,
+    firstSend: all[0]?.sent_on ?? null,
+    lastSend: all[all.length - 1]?.sent_on ?? null,
     holdoutFrom: holdout[0]?.sent_on ?? null,
     features,
     model: { auc: modelAuc, trainSends: train.length, holdoutSends: holdout.length, verdict },
@@ -328,4 +377,62 @@ export function headlineLevels(report: OutcomesReport): Array<{ feature: string;
     }
   }
   return out.sort((a, b) => Math.abs(Math.log(b.lift || 1e-9)) - Math.abs(Math.log(a.lift || 1e-9)));
+}
+
+const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+/**
+ * Findings written from the numbers alone. Each one names its figures so a
+ * reader can check it against the cards below. Nothing here is guessed.
+ */
+export function plainFindings(report: OutcomesReport): string[] {
+  const out: string[] = [];
+  if (report.matchedToOutreach < 100) return out;
+  const feat = (key: string) => report.features.find((f) => f.key === key);
+  const solid = (f: FeatureReport | undefined) => (f ? f.levels.filter((l) => l.sends >= Math.max(MIN_LEVEL, 50)) : []);
+
+  out.push(
+    `Of ${report.sends.toLocaleString()} sequence starts, ${report.matchedToOutreach.toLocaleString()} could be tracked in Outreach. Among those, ${pct(report.replyRate)} got a reply within 45 days and ${pct(report.replyToCall)} of replies turned into a call within 90 days. The ${report.untracked.toLocaleString()} untracked sends (no matching mailing, usually no contact on the Salesforce task) sit outside every reply figure here.`,
+  );
+
+  const q = feat("quality");
+  const qClean = q?.levels.find((l) => l.level.startsWith("Clean"));
+  const qFlag = q?.levels.find((l) => l.level.startsWith("Flagged"));
+  const qPot = q?.levels.find((l) => l.level.startsWith("Potential"));
+  if (qClean && qClean.sends >= 50) {
+    const share = report.matchedToOutreach ? qClean.sends / report.matchedToOutreach : 0;
+    const parts = [`${pct(share)} of tracked sends went to clean companies (pass all three BS checks), and those replied at ${pct(qClean.rate)}`];
+    if (qPot && qPot.sends >= 50) parts.push(`potential companies at ${pct(qPot.rate)}`);
+    if (qFlag && qFlag.sends >= 50) parts.push(`flagged companies at ${pct(qFlag.rate)}`);
+    const flaggedHigher = qFlag && qFlag.sends >= 50 && qFlag.rate > qClean.rate * 1.15;
+    out.push(`${parts.join(", ")}. ${flaggedHigher ? "Flagged companies answer more readily, so a raw reply rate flatters anyone emailing outside the target profile. Judge sequences and senders on clean replies per 100 sends, shown on each row." : "Quality and reply rate move together here, so the raw rates are not being propped up by off-profile companies."}`);
+  }
+
+  const seq = solid(feat("sequence")).filter((l) => l.cleanSends >= 30);
+  if (seq.length >= 3) {
+    const byClean = [...seq].sort((a, b) => b.cleanReplies / b.sends - a.cleanReplies / a.sends);
+    const top = byClean.slice(0, 3);
+    const bottom = byClean.slice(-2);
+    const fmt = (l: LevelStat) => `${l.level.replace(/^\[[^\]]*\]\s*-?\s*/, "")} (${((l.cleanReplies / l.sends) * 100).toFixed(1)} clean replies per 100 sends, ${pct(l.rate)} raw${l.holds === true ? ", held this summer" : l.holds === false ? ", slipped this summer" : ""})`;
+    out.push(`Sequences ranked on replies from clean companies: ${top.map(fmt).join("; ")} lead. ${bottom.map(fmt).join("; ")} trail. The gap between first and last is ${(((top[0].cleanReplies / top[0].sends) - (bottom[bottom.length - 1].cleanReplies / bottom[bottom.length - 1].sends)) * 100).toFixed(1)} clean replies per 100 sends, the largest lever on this page.`);
+  }
+
+  const snd = solid(feat("sender")).filter((l) => l.replies >= 20);
+  if (snd.length >= 2) {
+    const byConv = [...snd].sort((a, b) => b.callsAfterReply / b.replies - a.callsAfterReply / a.replies);
+    const byClean = [...snd].sort((a, b) => b.cleanReplies / b.sends - a.cleanReplies / a.sends);
+    const best = byConv[0];
+    const worst = byConv[byConv.length - 1];
+    out.push(`On turning answers into meetings, ${best.level} converts ${pct(best.callsAfterReply / best.replies)} of replies to a call versus ${pct(worst.callsAfterReply / worst.replies)} for ${worst.level}. On quality-adjusted volume, ${byClean[0].level} leads with ${((byClean[0].cleanReplies / byClean[0].sends) * 100).toFixed(1)} clean replies per 100 sends${byClean[0].cleanSends / byClean[0].sends < 0.5 ? ` (only ${pct(byClean[0].cleanSends / byClean[0].sends)} of their sends were to clean companies)` : ""}.`);
+  }
+
+  const weak: string[] = [];
+  for (const key of ["weekday", "hour", "employees", "founded"]) {
+    const f = feat(key);
+    if (f && f.spread > 0 && f.spread < 0.04 && solid(f).length >= 3) weak.push(f.label.toLowerCase());
+  }
+  if (weak.length) out.push(`${weak.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(", ")} barely move the reply rate (under 4 points between best and worst). Not worth optimising; spend the effort on which companies get the email and what it says.`);
+
+  if (report.model.auc != null) out.push(`Predictability check on sends after ${report.holdoutFrom}: ${report.model.auc.toFixed(2)} (0.5 is a coin flip). ${report.model.verdict}`);
+  return out;
 }

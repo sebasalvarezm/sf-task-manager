@@ -122,10 +122,16 @@ export default function RepliesPage() {
         {report ? (
           <>
             {/* Headline numbers */}
-            <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Stat label="Sequence starts" value={report.sends.toLocaleString()} note={`${report.matchedToOutreach.toLocaleString()} matched to Outreach`} />
-              <Stat label="Reply rate" value={pct(report.replyRate)} note={`${report.replies.toLocaleString()} replies within 45 days`} />
-              <Stat label="Call rate" value={pct(report.callRate)} note={`${report.calls.toLocaleString()} C1 or RCC within 90 days`} />
+            <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
+              <Stat label="Sequence starts" value={report.sends.toLocaleString()} note={`${report.matchedToOutreach.toLocaleString()} tracked in Outreach · ${report.untracked.toLocaleString()} untracked`} />
+              <Stat label="Reply rate (tracked)" value={pct(report.replyRate)} note={`${report.replies.toLocaleString()} replies within 45 days`} />
+              <Stat label="Reply → call" value={pct(report.replyToCall)} note="replies that became a C1 or RCC within 90 days" />
+              <Stat label="Clean replies per 100 sends" value={report.cleanRepliesPer100.toFixed(1)} note="replies from companies passing all 3 BS checks" />
+              <Stat
+                label="Quality of tracked sends"
+                value={`${report.matchedToOutreach ? Math.round((report.qualityMix.clean / report.matchedToOutreach) * 100) : 0}% clean`}
+                note={`${report.qualityMix.potential.toLocaleString()} potential · ${report.qualityMix.flagged.toLocaleString()} flagged`}
+              />
               <Stat
                 label="Can we predict replies?"
                 value={report.model.auc == null ? "n/a" : report.model.auc.toFixed(2)}
@@ -161,7 +167,7 @@ export default function RepliesPage() {
             </div>
 
             <p className="mt-6 text-[13px] text-ink-muted">
-              How to read a row: reply rate with its 95% range, lift against the {pct(report.replyRate)} average, and whether the direction held on the most recent quarter. Rows under {MIN_LEVEL} sends are shown but not trusted. A reply anywhere in the sequence within 45 days counts for the start that opened it.
+              How to read a row: reply rate with its 95% range, lift against the {pct(report.replyRate)} tracked average, whether the direction held on the most recent quarter, then the quality line: what share of the sends went to clean companies, replies from clean companies per 100 sends (the number that rewards quality over volume), and how many replies became calls. Rows under {MIN_LEVEL} sends are shown but not trusted. Only sends matched to an Outreach mailing are counted; a reply anywhere in the sequence within 45 days counts for the start that opened it.
             </p>
           </>
         ) : null}
@@ -223,13 +229,20 @@ function LevelRow({ level, base, maxRate }: { level: LevelStat; base: number; ma
         <div className={`h-1.5 rounded-sm ${thin ? "bg-ink-muted" : above ? "bg-ok" : "bg-danger"}`} style={{ width: `${width}%` }} />
         <div className="absolute top-[-2px] h-[10px] w-px bg-ink" style={{ left: `${baseX}%` }} title="Average" />
       </div>
-      <div className="mt-1 flex items-center gap-2 text-[12px] text-ink-muted">
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-muted">
         <span>{level.lift ? `${level.lift.toFixed(2)}x average` : ""}</span>
         {level.holds === true ? <Badge variant="ok" size="sm">Held on recent quarter</Badge> : null}
         {level.holds === false ? <Badge variant="warn" size="sm">Did not hold recently</Badge> : null}
         {level.holds == null && !thin ? <span>too few recent sends to check</span> : null}
-        {level.calls > 0 ? <span>· {level.calls} calls</span> : null}
       </div>
+      {!thin ? (
+        <div className="mt-0.5 flex flex-wrap gap-x-2 text-[12px] tabular-nums text-ink-muted">
+          <span>{Math.round((level.cleanSends / level.sends) * 100)}% clean companies</span>
+          <span>· <span className="text-ink-secondary">{((level.cleanReplies / level.sends) * 100).toFixed(1)}</span> clean replies / 100 sends</span>
+          <span>· {level.replies > 0 ? `${Math.round((level.callsAfterReply / level.replies) * 100)}% of replies → call` : "no replies"}</span>
+          {level.calls > 0 ? <span>· {level.calls} calls</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
