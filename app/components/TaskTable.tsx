@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, type ReactNode } from "react";
 import { SalesforceTask } from "@/lib/salesforce";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -196,15 +196,15 @@ export default function TaskTable({
 
   // ── Badge display ─────────────────────────────────────────────────────────────
 
+  // Always one line tall, even when empty, so the buttons below never move
+  // when a code appears: stacking +7d or +30d taps needs the target to stay put.
   function renderBadge(taskId: string) {
     const action = getAction(taskId);
-    if (action.actionType === "hard_delete")
-      return <span className="text-xs text-danger font-normal">→ Delete</span>;
-    if (action.actionType === "complete_reschedule")
-      return <span className="text-xs text-ok font-normal">→ RCE in {action.days}d</span>;
-    if (action.actionType === "delay")
-      return <span className="text-xs text-info font-normal">→ Push {action.days}d</span>;
-    return null;
+    let inner: ReactNode = "\u00a0";
+    if (action.actionType === "hard_delete") inner = <span className="text-danger">→ Delete</span>;
+    else if (action.actionType === "complete_reschedule") inner = <span className="text-ok">→ RCE in {action.days}d</span>;
+    else if (action.actionType === "delay") inner = <span className="text-info">→ Push {action.days}d</span>;
+    return <div className="min-h-[16px] text-xs font-normal leading-4">{inner}</div>;
   }
 
   function getInputBorderClass(taskId: string) {
@@ -240,7 +240,7 @@ export default function TaskTable({
         <button type="button" onClick={() => bumpDelay(task, 7)} className={`min-h-[34px] rounded-sm border px-2 text-xs font-normal transition-colors ${action.actionType === "delay" ? "border-ink bg-surface-4 text-ink" : "border-line-strong bg-white text-ink hover:bg-surface-3"}`}>+7d</button>
         <button type="button" onClick={() => bumpDelay(task, 30)} className={`min-h-[34px] rounded-sm border px-2 text-xs font-normal transition-colors ${action.actionType === "delay" ? "border-ink bg-surface-4 text-ink" : "border-line-strong bg-white text-ink hover:bg-surface-3"}`}>+30d</button>
         <button type="button" onClick={() => writeAction(task, "RCE7", "complete_reschedule", 7)} className={`min-h-[34px] rounded-sm border px-2 text-xs font-normal transition-colors ${action.actionType === "complete_reschedule" ? "border-ink bg-surface-4 text-ink" : "border-line-strong bg-white text-ink hover:bg-surface-3"}`}>Complete+Recreate</button>
-        {action.actionType !== "none" && <button type="button" onClick={() => clearAction(task)} aria-label="Clear action" className="min-h-[34px] w-8 rounded-sm border border-line text-ink-secondary hover:bg-surface-3 hover:text-ink transition-colors">×</button>}
+        <button type="button" onClick={() => clearAction(task)} aria-label="Clear action" tabIndex={action.actionType === "none" ? -1 : 0} className={`min-h-[34px] w-8 rounded-sm border border-line text-ink-secondary hover:bg-surface-3 hover:text-ink transition-colors ${action.actionType === "none" ? "invisible" : ""}`}>×</button>
       </div>
     );
   }
@@ -560,7 +560,7 @@ export default function TaskTable({
               className={`w-full border rounded-sm px-3 min-h-[44px] text-sm focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4 transition-colors mt-2 ${getInputBorderClass(task.Id)}`}
             />
             {isInvalidCode(task.Id) && <div className="mt-1 text-xs font-normal text-danger" role="alert">Invalid code. Use D, P7, P30, RCE7, RCE12, etc.</div>}
-            <div className="mt-1">{renderBadge(task.Id)}</div>
+            {renderBadge(task.Id)}
           </div>
         );
       })}
