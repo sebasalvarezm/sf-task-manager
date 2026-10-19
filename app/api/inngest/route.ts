@@ -9,6 +9,7 @@ import { prepJob } from "@/lib/inngest/functions/prep";
 import { accountsEnrichJob } from "@/lib/inngest/functions/accounts-enrich";
 import { granolaSyncJob } from "@/lib/inngest/functions/granola-sync";
 import { outreachScreenJob } from "@/lib/inngest/functions/outreach-screen";
+import { outcomesBuildJob } from "@/lib/inngest/functions/outcomes-build";
 
 export const maxDuration = 300;
 
@@ -24,5 +25,6 @@ export const { GET, POST, PUT } = serve({
     accountsEnrichJob,
     granolaSyncJob,
     outreachScreenJob,
+    outcomesBuildJob,
   ],
 });

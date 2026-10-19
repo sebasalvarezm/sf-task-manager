@@ -9,7 +9,8 @@ export type JobKind =
   | "trip_search"
   | "calls_log"
   | "accounts_enrich"
-  | "outreach_screen";
+  | "outreach_screen"
+  | "outcomes_build";
 
 export type JobStatus =
   | "queued"

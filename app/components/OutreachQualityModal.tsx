@@ -230,8 +230,11 @@ export function OutreachQualityModal({
     }
   }
 
+  const potential = target.severity === "warn";
   const description = thresholds
-    ? `Outside ${thresholds.tierOneCountries.length} core countries · founded after ${thresholds.foundedAfterYear} · under ${thresholds.minEmployees} staff. Any ${thresholds.bsFlagCount} of the 3.`
+    ? `Outside ${thresholds.tierOneCountries.length} core countries · founded after ${thresholds.foundedAfterYear} · under ${thresholds.minEmployees} staff. ${
+        potential ? `Exactly 1 of the 3 (${thresholds.bsFlagCount} or more is flagged).` : `Any ${thresholds.bsFlagCount} of the 3.`
+      }`
     : undefined;
 
   return (
@@ -261,15 +264,16 @@ export function OutreachQualityModal({
 
       {rows !== null && rows.length === 0 && !error && (
         <p className="py-10 text-center text-sm text-ink-muted">
-          No flagged emails in this period. Every email went to a company that
-          clears at least two of the three checks.
+          {potential
+            ? "No potential emails in this period. Nothing failed exactly one check."
+            : "No flagged emails in this period. Every email went to a company that clears at least two of the three checks."}
         </p>
       )}
 
       {rows !== null && rows.length > 0 && (
         <>
           <p className="mb-3 text-sm text-ink-secondary">
-            {rows.length} flagged {rows.length === 1 ? "email" : "emails"}. An
+            {rows.length} {potential ? "potential" : "flagged"} {rows.length === 1 ? "email" : "emails"}. An
             amber field is blank in Salesforce — fill in the real value and it
             saves straight to the account.
           </p>

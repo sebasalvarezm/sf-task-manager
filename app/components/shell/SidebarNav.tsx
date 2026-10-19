@@ -11,6 +11,7 @@ import {
   Building2,
   Search,
   BarChart3,
+  FlaskConical,
   MapPin,
   CalendarRange,
   MessageSquare,
@@ -35,6 +36,7 @@ const NAV = [
   { href: "/inbox",    label: "Inbox",        icon: Inbox },
   { href: "/accounts", label: "Accounts",     icon: Building2 },
   { href: "/stats",    label: "Stats",        icon: BarChart3 },
+  { href: "/replies",  label: "What gets replies", icon: FlaskConical },
   { href: "/trip",     label: "Trip planner", icon: MapPin },
 ] as const;
 
