@@ -2014,28 +2014,35 @@ export async function matchGroup(
     .map(([name, content]) => `FILE: ${name}\n${content.slice(0, 700)}`)
     .join("\n\n");
 
+  // The instructions and the group files are identical on every call and run
+  // to a few thousand tokens, so they go first, as a cached system block: the
+  // prescreen and Sourcing classify companies in bursts, and each call after
+  // the first re-reads that block at a tenth of the price. Only the company
+  // text changes per call, so it stays in the user turn.
   const resp = await callClaude(client, 2, {
     model: MODELS.extraction,
     max_tokens: 100,
-    messages: [
+    system: [
       {
-        role: "user",
-        content: `Based on this company's website content, which group file is the best fit?
-
-The files are organized as "Main Industry Group/sub-vertical.md" — the folder is the main industry group (e.g. Construction and Diversified Materials, Agriculture, Logistics, Manufacturing) and the file is the specific sub-vertical within it. Pick the single best-fitting FILE.
-
-COMPANY WEBSITE:
-${currentText.slice(0, 8000)}
-
-GROUP FILES:
-${summaries}
+        type: "text",
+        text: `You classify companies into Valstone's portfolio groups. The files are organized as "Main Industry Group/sub-vertical.md" — the folder is the main industry group (e.g. Construction and Diversified Materials, Agriculture, Logistics, Manufacturing) and the file is the specific sub-vertical within it. Given a company's website content, pick the single best-fitting FILE.
 
 Return a JSON object (no markdown) with this format:
 {"file":"Construction and Diversified Materials/mining.md","confidence":85}
 
 - "file" is the exact file key (including its folder) of the best-matching group, or "NO_MATCH" if none fit.
 - "confidence" is a number from 0-100 representing how confident you are in the match.
-  90+ = very clear fit, 70-89 = reasonable fit, 50-69 = borderline, <50 = weak.`,
+  90+ = very clear fit, 70-89 = reasonable fit, 50-69 = borderline, <50 = weak.
+
+GROUP FILES:
+${summaries}`,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [
+      {
+        role: "user",
+        content: `COMPANY WEBSITE:\n${currentText.slice(0, 8000)}\n\nWhich group file is the best fit? Reply with the JSON object only.`,
       },
     ],
   });

@@ -4,6 +4,7 @@ import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { loadReport } from "@/lib/outcomes";
+import { sfQuery } from "@/lib/sf-query";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,8 @@ export async function GET(request: NextRequest) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const [report, job] = await Promise.all([loadReport(), runningJob()]);
+    const sender = new URL(request.url).searchParams.get("sender");
+    if (sender) return NextResponse.json({ sender, rows: await senderRows(sender) });
     if (new URL(request.url).searchParams.get("diag")) {
       return NextResponse.json({ report: report ? { sends: report.sends, matchedToOutreach: report.matchedToOutreach, replies: report.replies } : null, job, diag: await diagnostics() });
     }
@@ -49,6 +52,27 @@ function friendly(err: unknown): string {
   if (message === "OUTREACH_NOT_CONNECTED") return "Outreach isn't connected. Connect it from Stats first.";
   if (message === "NOT_CONNECTED") return "Salesforce isn't connected.";
   return message;
+}
+
+/** One sender's tracked sends with the account's website, for a by-hand look at list quality. */
+async function senderRows(sender: string) {
+  const db = getSupabaseAdmin();
+  const { data, error } = await db
+    .from("outreach_sends")
+    .select("account_id, account_name, sent_on, subject_type, industry, country, employees, founded, quality, sequence_name, replied_at, call_on")
+    .eq("sender", sender)
+    .not("mailing_id", "is", null)
+    .order("sent_on", { ascending: false })
+    .limit(1000);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<Record<string, unknown> & { account_id: string }>;
+  const ids = Array.from(new Set(rows.map((r) => r.account_id)));
+  const websites = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += 300) {
+    const recs = await sfQuery<{ Id: string; Website: string | null }>(`SELECT Id, Website FROM Account WHERE Id IN (${ids.slice(i, i + 300).map((x) => `'${x}'`).join(",")})`);
+    for (const r of recs) websites.set(r.Id, r.Website ?? null);
+  }
+  return rows.map((r) => ({ ...r, website: websites.get(r.account_id) ?? null, replied: !!r.replied_at, called: !!r.call_on }));
 }
 
 async function diagnostics() {
