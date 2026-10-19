@@ -524,7 +524,12 @@ async function recentSentReplies(): Promise<SentExample[]> {
 export type InboxDraft = { body: string; issues: string[]; source: "model" | "fallback" };
 
 /** Write Seb's reply for one row and store it on the row. */
-export async function draftInboxReply(messageId: string, nextTouchDate: string | null | undefined): Promise<{ item: InboxRow; draft: InboxDraft }> {
+/**
+ * mode "natural" (default): the model writes the reply to what they said, for
+ * every reply type. mode "template": Seb's fixed positive structure (the one
+ * the scheduling bot expects), with an optional model-written detail line.
+ */
+export async function draftInboxReply(messageId: string, nextTouchDate: string | null | undefined, mode: "natural" | "template" = "natural"): Promise<{ item: InboxRow; draft: InboxDraft }> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("inbox_replies").select("*").eq("message_id", messageId).single();
   if (error) throw new Error(error.message);
@@ -537,7 +542,7 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
   let body: string | null = null;
   let source: InboxDraft["source"] = "model";
   const client = getAnthropicClient();
-  if (sentiment === "positive" && !row.is_broker_intro) {
+  if (sentiment === "positive" && !row.is_broker_intro && mode === "template") {
     // Seb's fixed structure; the model only contributes an optional detail sentence.
     let detail: string | null = null;
     if (client) {

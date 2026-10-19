@@ -298,7 +298,7 @@ export default function InboxPage() {
       void draft(row.message_id);
     }
   }
-  async function draft(messageId: string, rceDaysOverride?: number | null) {
+  async function draft(messageId: string, rceDaysOverride?: number | null, mode: "natural" | "template" = "natural") {
     setDrafting(true);
     setSheetError(null);
     try {
@@ -306,7 +306,7 @@ export default function InboxPage() {
       const res = await fetch("/api/inbox/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messageId, nextTouchDate: typeof days === "number" ? addDaysIso(new Date().toISOString(), days) : null }),
+        body: JSON.stringify({ messageId, nextTouchDate: typeof days === "number" ? addDaysIso(new Date().toISOString(), days) : null, mode }),
       });
       const data = await res.json().catch(() => null);
       if (!data) throw new Error("The draft took too long. Tap Redraft.");
@@ -555,9 +555,16 @@ export default function InboxPage() {
                   <div className="flex items-center justify-between">
                     <p className="text-[13px] text-ink-secondary">{isSent ? "Reply sent" : "Your reply"}</p>
                     {!isSent ? (
-                      <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-[13px] text-info underline underline-offset-2 disabled:text-ink-muted">
-                        <Asterisk size={16} /> {drafting ? "Drafting…" : "Redraft"}
-                      </button>
+                      <div className="flex items-center gap-3">
+                        {open.sentiment === "positive" && !open.is_broker_intro ? (
+                          <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id, undefined, "template")} title="Seb's fixed positive reply: scheduling tool sends times and the Teams invite" className="text-[13px] text-ink-secondary underline underline-offset-2 disabled:text-ink-muted">
+                            Standard reply
+                          </button>
+                        ) : null}
+                        <button type="button" disabled={drafting || sending} onClick={() => void draft(open.message_id)} className="flex items-center gap-1 text-[13px] text-info underline underline-offset-2 disabled:text-ink-muted">
+                          <Asterisk size={16} /> {drafting ? "Drafting…" : "Redraft"}
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                   <textarea
