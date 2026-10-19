@@ -329,7 +329,7 @@ export async function loadReport(): Promise<OutcomesReport | null> {
 /** Five short findings in plain English. The numbers come from the report; the model only words them. */
 async function writeFindings(report: OutcomesReport): Promise<string[] | null> {
   const client = getAnthropicClient();
-  if (!client || report.sends < 50) return null;
+  if (!client || report.sends < 50 || report.replies === 0) return null;
   const heads = headlineLevels(report).slice(0, 12);
   const facts = [
     `Sends: ${report.sends} between ${report.firstSend} and ${report.lastSend}. Reply rate ${(report.replyRate * 100).toFixed(1)}%, call rate ${(report.callRate * 100).toFixed(1)}%.`,

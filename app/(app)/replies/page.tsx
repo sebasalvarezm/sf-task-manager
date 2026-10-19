@@ -113,6 +113,12 @@ export default function RepliesPage() {
           </Card>
         ) : null}
 
+        {report && report.sends > 0 && report.matchedToOutreach === 0 ? (
+          <Alert variant="warn" className="mb-4" title="No Outreach mailings matched">
+            Salesforce sends loaded, but none could be joined to an Outreach mailing, so reply rates are all zero. Until that's fixed only the call rate means anything.
+          </Alert>
+        ) : null}
+
         {report ? (
           <>
             {/* Headline numbers */}

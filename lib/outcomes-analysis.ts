@@ -242,7 +242,7 @@ export function buildReport(rows: SendRow[], builtAt = new Date().toISOString())
         const hRate = a.hSends ? a.hReplies / a.hSends : null;
         const trainBase = train.length ? train.reduce((s, r) => s + replied(r), 0) / train.length : 0;
         let holds: boolean | null = null;
-        if (trainRate != null && hRate != null && a.hSends >= MIN_HOLDOUT && trainSends >= MIN_LEVEL) {
+        if (trainRate != null && hRate != null && a.hSends >= MIN_HOLDOUT && trainSends >= MIN_LEVEL && trainBase > 0 && holdoutBase > 0) {
           const up = trainRate >= trainBase;
           holds = up ? hRate >= holdoutBase : hRate <= holdoutBase;
         }
