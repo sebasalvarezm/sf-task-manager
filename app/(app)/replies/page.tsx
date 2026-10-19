@@ -9,6 +9,8 @@ import { Card } from "@/app/components/ui/Card";
 import { Alert } from "@/app/components/ui/Alert";
 import { Badge } from "@/app/components/ui/Badge";
 import { Spinner } from "@/app/components/ui/Spinner";
+import { Table } from "@/app/components/ui/Table";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { MIN_LEVEL, type OutcomesReport, type FeatureReport, type LevelStat } from "@/lib/outcomes-analysis";
 
 /**
@@ -22,7 +24,20 @@ type Job = { id: string; status: string; progress?: { step?: string; pct?: numbe
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const fmtDate = (ymd: string | null) => (ymd ? new Date(`${ymd}T00:00:00`).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric" }) : "");
 
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setNarrow(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return narrow;
+}
+
 export default function RepliesPage() {
+  const narrow = useNarrow();
   const [report, setReport] = useState<OutcomesReport | null>(null);
   const [job, setJob] = useState<Job>(null);
   const [loading, setLoading] = useState(true);
@@ -138,6 +153,62 @@ export default function RepliesPage() {
                 note={report.model.auc == null ? "needs more sends" : "0.5 = coin flip · 1.0 = perfect"}
               />
             </div>
+
+            {/* Sender scorecard */}
+            {report.senders.length > 0 ? (
+              <Card padded={false} className="mb-6">
+                <div className="px-4 pt-4">
+                  <h2 className="text-[15px] font-medium text-ink">Sender scorecard</h2>
+                  <p className="mt-0.5 text-[13px] text-ink-muted">Ranked on replies from clean companies per 100 sends. Raw reply rate is shown for reference only; it rewards emailing small or off-profile companies.</p>
+                </div>
+                <div className="mt-3 overflow-x-auto">
+                  <Table>
+                    <Table.Head>
+                      <Table.HeadRow>
+                        <Table.HeadCell>Sender</Table.HeadCell>
+                        <Table.HeadCell className="text-right">Sends</Table.HeadCell>
+                        <Table.HeadCell className="text-right">Clean share</Table.HeadCell>
+                        <Table.HeadCell className="text-right">Clean replies / 100</Table.HeadCell>
+                        <Table.HeadCell className="text-right">Reply → call</Table.HeadCell>
+                        <Table.HeadCell className="text-right">Calls</Table.HeadCell>
+                        <Table.HeadCell className="text-right text-ink-muted">Raw reply</Table.HeadCell>
+                      </Table.HeadRow>
+                    </Table.Head>
+                    <Table.Body>
+                      {report.senders.map((p, i) => (
+                        <Table.Row key={p.sender}>
+                          <Table.Cell className="font-medium text-ink">{i + 1}. {p.sender}</Table.Cell>
+                          <Table.Cell className="text-right tabular-nums text-ink-secondary">{p.sends.toLocaleString()}</Table.Cell>
+                          <Table.Cell className={`text-right tabular-nums ${p.cleanShare < 0.6 ? "text-warn" : "text-ink-secondary"}`}>{Math.round(p.cleanShare * 100)}%</Table.Cell>
+                          <Table.Cell className="text-right tabular-nums font-medium text-ink">{p.cleanPer100.toFixed(1)}</Table.Cell>
+                          <Table.Cell className="text-right tabular-nums text-ink-secondary">{p.replyToCall == null ? "–" : `${Math.round(p.replyToCall * 100)}%`}</Table.Cell>
+                          <Table.Cell className="text-right tabular-nums text-ink-secondary">{p.calls}</Table.Cell>
+                          <Table.Cell className="text-right tabular-nums text-ink-muted">{pct(p.replyRate)}</Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </Table>
+                </div>
+              </Card>
+            ) : null}
+
+            {/* Weekly trend */}
+            {report.weekly.length >= 4 ? (
+              <Card className="mb-6">
+                <h2 className="text-[15px] font-medium text-ink">Clean replies per 100 sends, by week</h2>
+                <p className="mb-3 mt-0.5 text-[13px] text-ink-muted">Tracked sends only, weeks with {MIN_LEVEL}+ sends. The last six weeks are still collecting replies, so they read low for now.</p>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={report.weekly.map((w) => ({ ...w, label: new Date(`${w.week}T00:00:00`).toLocaleDateString("en-CA", { month: "short", day: "numeric" }), cleanPer100: Number(w.cleanPer100.toFixed(1)), replyPct: Number((w.replyRate * 100).toFixed(1)) }))} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
+                    <CartesianGrid stroke="#E7E5E0" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#5F5E5A" }} axisLine={false} tickLine={false} interval={narrow ? Math.max(0, Math.ceil(report.weekly.length / 5) - 1) : "preserveStartEnd"} minTickGap={12} />
+                    <YAxis tick={{ fontSize: 11, fill: "#5F5E5A" }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #E7E5E0" }} formatter={(v: number, name: string) => [name === "cleanPer100" ? v.toFixed(1) : `${v}%`, name === "cleanPer100" ? "Clean replies / 100" : "Raw reply rate"]} labelFormatter={(l, payload) => `Week of ${l} · ${(payload?.[0]?.payload as { sends?: number } | undefined)?.sends ?? ""} sends`} />
+                    <Line type="monotone" dataKey="cleanPer100" stroke="#2F6B3F" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="replyPct" stroke="#B9B6AE" strokeWidth={1.5} dot={false} strokeDasharray="4 3" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </Card>
+            ) : null}
 
             {/* Findings */}
             <Card className="mb-6">

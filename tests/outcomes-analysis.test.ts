@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auc, buildReport, employeesBand, fitLogistic, foundedBand, headlineLevels, plainFindings, wilson, type SendRow } from "../lib/outcomes-analysis";
+import { auc, buildReport, employeesBand, fitLogistic, foundedBand, headlineLevels, plainFindings, weekStart, wilson, type SendRow } from "../lib/outcomes-analysis";
 
 function row(i: number, over: Partial<SendRow> = {}): SendRow {
   const d = new Date(Date.UTC(2025, 9, 1) + i * 86_400_000 * 0.5).toISOString().slice(0, 10);
@@ -128,5 +128,18 @@ describe("report", () => {
     expect(r.cleanRepliesPer100).toBeCloseTo(10, 5);
     const findings = plainFindings(r);
     expect(findings[0]).toMatch(/200 could be tracked/);
+    expect(r.senders[0].sender).toBe("Sebastian Alvarez");
+    expect(r.senders[0].cleanPer100).toBeCloseTo(10, 5);
+    // Two sends a day is 14 a week: below the 20-send floor, so no weekly points.
+    expect(r.weekly).toEqual([]);
+  });
+
+  it("buckets weeks from Monday and keeps only weeks with enough sends", () => {
+    expect(weekStart("2026-10-19")).toBe("2026-10-19"); // a Monday
+    expect(weekStart("2026-10-25")).toBe("2026-10-19"); // the Sunday after
+    const rows = Array.from({ length: 140 }, (_, i) => row(Math.floor(i / 2), { replied_at: i % 4 === 0 ? "2026-01-01T00:00:00Z" : null }));
+    const r = buildReport(rows);
+    expect(r.weekly.length).toBeGreaterThan(0);
+    expect(r.weekly.every((w) => w.sends >= 20)).toBe(true);
   });
 });

@@ -314,6 +314,19 @@ export default function StatsPage() {
 
   const [drill, setDrill] = useState<DrillTarget | null>(null);
 
+  // The honest sender measures from "What gets replies" (last 12 months of tracked
+  // sends), shown next to the flagged rate so the page everyone reads carries them.
+  const [senderScores, setSenderScores] = useState<Map<string, { cleanPer100: number; replyToCall: number | null }>>(new Map());
+  useEffect(() => {
+    fetch("/api/outcomes", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const list = (d?.report?.senders ?? []) as Array<{ sender: string; cleanPer100: number; replyToCall: number | null }>;
+        setSenderScores(new Map(list.map((p) => [p.sender, { cleanPer100: p.cleanPer100, replyToCall: p.replyToCall }])));
+      })
+      .catch(() => undefined);
+  }, []);
+
   // Ranges already loaded this visit come back instantly when you switch to
   // them again; Refresh always goes to Salesforce. The sequence counters drop
   // a slow answer for a range you have since moved away from.
@@ -1286,7 +1299,7 @@ export default function StatsPage() {
                 </div>
 
                 <div className="mb-10">
-                  <ChartCard title="Flagged rate by sender">
+                  <ChartCard title="By sender">
                     {qualityByPerson.length === 0 ? (
                       <p className="py-8 text-center text-sm text-ink-muted">
                         No outreach in this period.
@@ -1306,6 +1319,16 @@ export default function StatsPage() {
                               <Table.HeadCell className="text-right">
                                 Potential
                               </Table.HeadCell>
+                            ) : null}
+                            {senderScores.size > 0 ? (
+                              <>
+                                <Table.HeadCell className="text-right" title="Replies from companies passing all 3 checks, per 100 tracked sends, last 12 months">
+                                  Clean replies / 100
+                                </Table.HeadCell>
+                                <Table.HeadCell className="text-right" title="Share of replies that became a C1 or RCC within 90 days, last 12 months">
+                                  Reply → call
+                                </Table.HeadCell>
+                              </>
                             ) : null}
                           </Table.HeadRow>
                         </Table.Head>
@@ -1338,6 +1361,16 @@ export default function StatsPage() {
                                 >
                                   {fmtNumber(p.warn ?? 0)} · {fmtPct(p.sent > 0 ? (p.warn ?? 0) / p.sent : 0)}
                                 </Table.Cell>
+                              ) : null}
+                              {senderScores.size > 0 ? (
+                                <>
+                                  <Table.Cell className="text-right tabular-nums text-ink">
+                                    {senderScores.get(p.owner) ? senderScores.get(p.owner)!.cleanPer100.toFixed(1) : <span className="text-ink-muted">–</span>}
+                                  </Table.Cell>
+                                  <Table.Cell className="text-right tabular-nums text-ink-secondary">
+                                    {senderScores.get(p.owner)?.replyToCall != null ? `${Math.round(senderScores.get(p.owner)!.replyToCall! * 100)}%` : <span className="text-ink-muted">–</span>}
+                                  </Table.Cell>
+                                </>
                               ) : null}
                             </Table.Row>
                           ))}

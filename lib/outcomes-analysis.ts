@@ -83,7 +83,32 @@ export type OutcomesReport = {
   features: FeatureReport[];
   model: { auc: number | null; trainSends: number; holdoutSends: number; verdict: string };
   findings: string[] | null;
+  /** One row per sender over tracked sends, the honest scorecard. Sorted by clean replies per 100. */
+  senders: SenderScore[];
+  /** Tracked sends by week (Monday start), for the trend line. Weeks under 20 sends are left out. */
+  weekly: WeekPoint[];
 };
+
+export type SenderScore = {
+  sender: string;
+  sends: number;
+  cleanShare: number;
+  replies: number;
+  replyRate: number;
+  cleanPer100: number;
+  replyToCall: number | null;
+  calls: number;
+};
+
+export type WeekPoint = { week: string; sends: number; replyRate: number; cleanPer100: number; cleanShare: number };
+
+/** Monday of the ISO week that holds `ymd`. */
+export function weekStart(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  const day = (d.getUTCDay() + 6) % 7; // Monday = 0
+  d.setUTCDate(d.getUTCDate() - day);
+  return d.toISOString().slice(0, 10);
+}
 
 export const MIN_LEVEL = 20;
 export const MIN_HOLDOUT = 30;
@@ -343,6 +368,49 @@ export function buildReport(rows: SendRow[], builtAt = new Date().toISOString())
   const cleanReplies = sorted.reduce((s, r) => s + (clean(r) && replied(r) ? 1 : 0), 0);
   const callsAfterReply = sorted.reduce((s, r) => s + (replied(r) && called(r) ? 1 : 0), 0);
 
+  // Sender scorecard.
+  const bySender = new Map<string, { sends: number; clean: number; replies: number; cleanReplies: number; callsAfterReply: number; calls: number }>();
+  for (const r of sorted) {
+    const k = r.sender ?? "Unknown";
+    const a = bySender.get(k) ?? { sends: 0, clean: 0, replies: 0, cleanReplies: 0, callsAfterReply: 0, calls: 0 };
+    a.sends++;
+    a.clean += clean(r);
+    a.replies += replied(r);
+    a.cleanReplies += clean(r) && replied(r) ? 1 : 0;
+    a.callsAfterReply += replied(r) && called(r) ? 1 : 0;
+    a.calls += called(r);
+    bySender.set(k, a);
+  }
+  const senders: SenderScore[] = [...bySender.entries()]
+    .filter(([, a]) => a.sends >= MIN_LEVEL)
+    .map(([sender, a]) => ({
+      sender,
+      sends: a.sends,
+      cleanShare: a.clean / a.sends,
+      replies: a.replies,
+      replyRate: a.replies / a.sends,
+      cleanPer100: (a.cleanReplies / a.sends) * 100,
+      replyToCall: a.replies >= 10 ? a.callsAfterReply / a.replies : null,
+      calls: a.calls,
+    }))
+    .sort((x, y) => y.cleanPer100 - x.cleanPer100);
+
+  // Weekly trend.
+  const byWeek = new Map<string, { sends: number; replies: number; cleanReplies: number; clean: number }>();
+  for (const r of sorted) {
+    const w = weekStart(r.sent_on);
+    const a = byWeek.get(w) ?? { sends: 0, replies: 0, cleanReplies: 0, clean: 0 };
+    a.sends++;
+    a.replies += replied(r);
+    a.cleanReplies += clean(r) && replied(r) ? 1 : 0;
+    a.clean += clean(r);
+    byWeek.set(w, a);
+  }
+  const weekly: WeekPoint[] = [...byWeek.entries()]
+    .filter(([, a]) => a.sends >= MIN_LEVEL)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([week, a]) => ({ week, sends: a.sends, replyRate: a.replies / a.sends, cleanPer100: (a.cleanReplies / a.sends) * 100, cleanShare: a.clean / a.sends }));
+
   return {
     builtAt,
     sends: all.length,
@@ -361,6 +429,8 @@ export function buildReport(rows: SendRow[], builtAt = new Date().toISOString())
     features,
     model: { auc: modelAuc, trainSends: train.length, holdoutSends: holdout.length, verdict },
     findings: null,
+    senders,
+    weekly,
   };
 }
 
