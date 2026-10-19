@@ -86,7 +86,9 @@ export default function RepliesPage() {
     }
   }
 
-  const ranked = useMemo(() => (report ? [...report.features].sort((a, b) => b.spread - a.spread) : []), [report]);
+  const ranked = useMemo(() => (report ? [...(report.features ?? [])].sort((a, b) => b.spread - a.spread) : []), [report]);
+  // A report saved by an older build lacks newer fields; a rebuild fills them in.
+  const stale = !!report && (report.senders == null || report.qualityMix == null);
 
   return (
     <>
@@ -128,6 +130,12 @@ export default function RepliesPage() {
           </Card>
         ) : null}
 
+        {stale && !job ? (
+          <Alert variant="warn" className="mb-4">
+            This report was built by an older version. Press Quick rebuild to refresh it (about a minute).
+          </Alert>
+        ) : null}
+
         {report && report.sends > 0 && report.matchedToOutreach === 0 ? (
           <Alert variant="warn" className="mb-4" title="No Outreach mailings matched">
             Salesforce sends loaded, but none could be joined to an Outreach mailing, so reply rates are all zero. Until that's fixed only the call rate means anything.
@@ -138,14 +146,14 @@ export default function RepliesPage() {
           <>
             {/* Headline numbers */}
             <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
-              <Stat label="Sequence starts" value={report.sends.toLocaleString()} note={`${report.matchedToOutreach.toLocaleString()} tracked in Outreach · ${report.untracked.toLocaleString()} untracked`} />
+              <Stat label="Sequence starts" value={report.sends.toLocaleString()} note={`${report.matchedToOutreach.toLocaleString()} tracked in Outreach · ${(report.untracked ?? report.sends - report.matchedToOutreach).toLocaleString()} untracked`} />
               <Stat label="Reply rate (tracked)" value={pct(report.replyRate)} note={`${report.replies.toLocaleString()} replies within 45 days`} />
-              <Stat label="Reply → call" value={pct(report.replyToCall)} note="replies that became a C1 or RCC within 90 days" />
-              <Stat label="Clean replies per 100 sends" value={report.cleanRepliesPer100.toFixed(1)} note="replies from companies passing all 3 BS checks" />
+              <Stat label="Reply → call" value={pct(report.replyToCall ?? 0)} note="replies that became a C1 or RCC within 90 days" />
+              <Stat label="Clean replies per 100 sends" value={(report.cleanRepliesPer100 ?? 0).toFixed(1)} note="replies from companies passing all 3 BS checks" />
               <Stat
                 label="Quality of tracked sends"
-                value={`${report.matchedToOutreach ? Math.round((report.qualityMix.clean / report.matchedToOutreach) * 100) : 0}% clean`}
-                note={`${report.qualityMix.potential.toLocaleString()} potential · ${report.qualityMix.flagged.toLocaleString()} flagged`}
+                value={`${report.matchedToOutreach && report.qualityMix ? Math.round((report.qualityMix.clean / report.matchedToOutreach) * 100) : 0}% clean`}
+                note={report.qualityMix ? `${report.qualityMix.potential.toLocaleString()} potential · ${report.qualityMix.flagged.toLocaleString()} flagged` : "rebuild to fill in"}
               />
               <Stat
                 label="Can we predict replies?"
@@ -155,7 +163,7 @@ export default function RepliesPage() {
             </div>
 
             {/* Sender scorecard */}
-            {report.senders.length > 0 ? (
+            {(report.senders ?? []).length > 0 ? (
               <Card padded={false} className="mb-6">
                 <div className="px-4 pt-4">
                   <h2 className="text-[15px] font-medium text-ink">Sender scorecard</h2>
@@ -175,7 +183,7 @@ export default function RepliesPage() {
                       </Table.HeadRow>
                     </Table.Head>
                     <Table.Body>
-                      {report.senders.map((p, i) => (
+                      {(report.senders ?? []).map((p, i) => (
                         <Table.Row key={p.sender}>
                           <Table.Cell className="font-medium text-ink">{i + 1}. {p.sender}</Table.Cell>
                           <Table.Cell className="text-right tabular-nums text-ink-secondary">{p.sends.toLocaleString()}</Table.Cell>
@@ -193,14 +201,14 @@ export default function RepliesPage() {
             ) : null}
 
             {/* Weekly trend */}
-            {report.weekly.length >= 4 ? (
+            {(report.weekly ?? []).length >= 4 ? (
               <Card className="mb-6">
                 <h2 className="text-[15px] font-medium text-ink">Clean replies per 100 sends, by week</h2>
                 <p className="mb-3 mt-0.5 text-[13px] text-ink-muted">Tracked sends only, weeks with {MIN_LEVEL}+ sends. The last six weeks are still collecting replies, so they read low for now.</p>
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={report.weekly.map((w) => ({ ...w, label: new Date(`${w.week}T00:00:00`).toLocaleDateString("en-CA", { month: "short", day: "numeric" }), cleanPer100: Number(w.cleanPer100.toFixed(1)), replyPct: Number((w.replyRate * 100).toFixed(1)) }))} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
                     <CartesianGrid stroke="#E7E5E0" vertical={false} />
-                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#5F5E5A" }} axisLine={false} tickLine={false} interval={narrow ? Math.max(0, Math.ceil(report.weekly.length / 5) - 1) : "preserveStartEnd"} minTickGap={12} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#5F5E5A" }} axisLine={false} tickLine={false} interval={narrow ? Math.max(0, Math.ceil((report.weekly ?? []).length / 5) - 1) : "preserveStartEnd"} minTickGap={12} />
                     <YAxis tick={{ fontSize: 11, fill: "#5F5E5A" }} axisLine={false} tickLine={false} />
                     <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #E7E5E0" }} formatter={(v: number, name: string) => [name === "cleanPer100" ? v.toFixed(1) : `${v}%`, name === "cleanPer100" ? "Clean replies / 100" : "Raw reply rate"]} labelFormatter={(l, payload) => `Week of ${l} · ${(payload?.[0]?.payload as { sends?: number } | undefined)?.sends ?? ""} sends`} />
                     <Line type="monotone" dataKey="cleanPer100" stroke="#2F6B3F" strokeWidth={2} dot={false} />
@@ -308,9 +316,9 @@ function LevelRow({ level, base, maxRate }: { level: LevelStat; base: number; ma
       </div>
       {!thin ? (
         <div className="mt-0.5 flex flex-wrap gap-x-2 text-[12px] tabular-nums text-ink-muted">
-          <span>{Math.round((level.cleanSends / level.sends) * 100)}% clean companies</span>
-          <span>· <span className="text-ink-secondary">{((level.cleanReplies / level.sends) * 100).toFixed(1)}</span> clean replies / 100 sends</span>
-          <span>· {level.replies > 0 ? `${Math.round((level.callsAfterReply / level.replies) * 100)}% of replies → call` : "no replies"}</span>
+          <span>{Math.round(((level.cleanSends ?? 0) / level.sends) * 100)}% clean companies</span>
+          <span>· <span className="text-ink-secondary">{(((level.cleanReplies ?? 0) / level.sends) * 100).toFixed(1)}</span> clean replies / 100 sends</span>
+          <span>· {level.replies > 0 ? `${Math.round(((level.callsAfterReply ?? 0) / level.replies) * 100)}% of replies → call` : "no replies"}</span>
           {level.calls > 0 ? <span>· {level.calls} calls</span> : null}
         </div>
       ) : null}
