@@ -131,7 +131,7 @@ type SfSend = {
   Subject_Type__c: string;
   AccountId: string;
   Owner?: { Name?: string | null } | null;
-  Who?: { Email?: string | null } | null;
+  WhoId: string | null;
   Account?: {
     Name?: string | null;
     BillingCountry?: string | null;
@@ -144,7 +144,7 @@ type SfSend = {
 
 async function fetchSfSends(): Promise<SfSend[]> {
   const q = (withFounded: boolean) =>
-    `SELECT Id, ActivityDate, CompletedDateTime, Subject_Type__c, AccountId, Owner.Name, Who.Email, ` +
+    `SELECT Id, ActivityDate, CompletedDateTime, Subject_Type__c, AccountId, Owner.Name, WhoId, ` +
     `Account.Name, Account.BillingCountry, Account.NumberOfEmployees, Account.Industry, Account.Responded__c` +
     (withFounded ? `, Account.Year_Established__c` : ``) +
     ` FROM Task WHERE Subject_Type__c IN (${SEND_TYPES.map((t) => `'${t}'`).join(",")}) AND Status = 'Completed' ` +
@@ -162,6 +162,35 @@ async function fetchSfCalls(): Promise<Array<{ AccountId: string; ActivityDate: 
     `SELECT AccountId, ActivityDate FROM Task WHERE Subject_Type__c IN (${CALL_TYPES.map((t) => `'${t}'`).join(",")}) ` +
       `AND Status = 'Completed' AND AccountId != null AND ActivityDate = LAST_N_MONTHS:${LOOKBACK_MONTHS + 3}`,
   );
+}
+
+/**
+ * Emails for the task's contact and for every contact on the account.
+ * Who.Email cannot be read through the task's polymorphic link, and many
+ * Outreach-logged tasks carry no WhoId at all, so the join uses any address
+ * on the account. M&A accounts have a handful of contacts, so this is safe.
+ */
+async function fetchContactEmails(whoIds: string[], accountIds: string[]): Promise<{ byContact: Map<string, string>; byAccount: Map<string, string[]> }> {
+  const byContact = new Map<string, string>();
+  const byAccount = new Map<string, string[]>();
+  type C = { Id: string; AccountId: string | null; Email: string | null };
+  const chunk = 300;
+  const ids = Array.from(new Set(whoIds.filter((id) => /^003/.test(id))));
+  for (let i = 0; i < ids.length; i += chunk) {
+    const rows = await sfQuery<C>(`SELECT Id, AccountId, Email FROM Contact WHERE Id IN (${ids.slice(i, i + chunk).map((x) => `'${x}'`).join(",")})`);
+    for (const c of rows) if (c.Email) byContact.set(c.Id, c.Email.toLowerCase());
+  }
+  const accts = Array.from(new Set(accountIds));
+  for (let i = 0; i < accts.length; i += chunk) {
+    const rows = await sfQuery<C>(`SELECT Id, AccountId, Email FROM Contact WHERE Email != null AND AccountId IN (${accts.slice(i, i + chunk).map((x) => `'${x}'`).join(",")})`);
+    for (const c of rows) {
+      if (!c.AccountId || !c.Email) continue;
+      const list = byAccount.get(c.AccountId) ?? [];
+      list.push(c.Email.toLowerCase());
+      byAccount.set(c.AccountId, list);
+    }
+  }
+  return { byContact, byAccount };
 }
 
 function etParts(iso: string | null): { weekday: number | null; hour: number | null } {
@@ -195,8 +224,18 @@ export async function buildSends(): Promise<{ sends: number; matched: number; re
     callsByAccount.set(c.AccountId, list);
   }
 
-  // Mailings for the emails we actually sent to, in chunks (PostgREST URL length).
-  const emails = Array.from(new Set(sends.map((s) => (s.Who?.Email ?? "").toLowerCase()).filter(Boolean)));
+  const contacts = await fetchContactEmails(
+    sends.map((s) => s.WhoId).filter((id): id is string => !!id),
+    sends.map((s) => s.AccountId),
+  );
+  const emailsFor = (s: SfSend): string[] => {
+    const who = s.WhoId ? contacts.byContact.get(s.WhoId) : null;
+    const acct = contacts.byAccount.get(s.AccountId) ?? [];
+    return Array.from(new Set([...(who ? [who] : []), ...acct]));
+  };
+
+  // Mailings for the addresses we could have written to, in chunks (PostgREST URL length).
+  const emails = Array.from(new Set(sends.flatMap(emailsFor)));
   const mailingsByEmail = new Map<string, MailingRow[]>();
   for (let i = 0; i < emails.length; i += 200) {
     const { data, error } = await supabase
@@ -221,7 +260,7 @@ export async function buildSends(): Promise<{ sends: number; matched: number; re
   for (const s of sends) {
     const sentOn = s.ActivityDate ?? s.CompletedDateTime?.slice(0, 10);
     if (!sentOn) continue;
-    const email = (s.Who?.Email ?? "").toLowerCase() || null;
+    const candidates = emailsFor(s);
     const prior = seen.get(s.AccountId) ?? 0;
     seen.set(s.AccountId, prior + 1);
     const { weekday, hour } = etParts(s.CompletedDateTime);
@@ -230,8 +269,9 @@ export async function buildSends(): Promise<{ sends: number; matched: number; re
     let mailing: MailingRow | null = null;
     let repliedAt: string | null = null;
     let opened: boolean | null = null;
-    if (email) {
-      const list = mailingsByEmail.get(email) ?? [];
+    let email: string | null = candidates[0] ?? null;
+    if (candidates.length > 0) {
+      const list = candidates.flatMap((e) => mailingsByEmail.get(e) ?? []);
       const lo = addDays(sentOn, -1);
       const hi = addDays(sentOn, 2);
       const replyLimit = addDays(sentOn, REPLY_DAYS);
@@ -244,6 +284,7 @@ export async function buildSends(): Promise<{ sends: number; matched: number; re
       }
       if (mailing) {
         matched++;
+        email = mailing.email ?? email;
         // Any open on any step of this sequence within the reply window counts as opened.
         opened = list.some((m) => {
           const day = (m.delivered_at ?? m.created_at ?? "").slice(0, 10);
