@@ -298,17 +298,17 @@ Return ONLY valid JSON: {"recentNews":["item 1", "item 2"]}`;
         messages: [{ role: "user", content: newsPrompt }],
       }),
     ]);
-    const staticText = staticMessage.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n");
-    const newsText = newsMessage.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n");
-    const stable = parseOnePagerJson(staticText);
-    if (!stable) throw new Error("Failed to parse AI briefing sections");
+    const staticText = stripCites(staticMessage.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n"));
+    const newsText = stripCites(newsMessage.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n"));
+    const stable = parseOnePagerJson(staticText) ?? (await repairJson(anthropic, staticText));
+    if (!stable) throw new Error(`Failed to parse AI briefing sections. It began: ${staticText.slice(0, 160).replace(/\s+/g, " ")}`);
     let recentNews: string[] = [];
     try {
       const json = newsText.match(/\{[\s\S]*\}/)?.[0] ?? newsText;
       const parsed = JSON.parse(json) as { recentNews?: unknown };
       if (Array.isArray(parsed.recentNews)) recentNews = parsed.recentNews.filter((x): x is string => typeof x === "string").map(stripCites);
     } catch {
-      throw new Error("Failed to parse recent news response");
+      recentNews = [];
     }
     return applyPrepMode(
       await tightenSections(anthropic, { ...stable, generatedOn: new Date().toISOString(), recentNews }),
@@ -372,13 +372,33 @@ Return ONLY valid JSON, no explanation, no markdown fences. Use this exact struc
     throw new Error("AI returned no text response");
   }
 
-  const lastText = textBlocks[textBlocks.length - 1];
-  const responseText = lastText.type === "text" ? stripCites(lastText.text) : "";
+  // With web search on, 5.5 can split the answer across several text blocks
+  // (a sentence, a search, the JSON, a closing line), so read them all, not the last.
+  const responseText = stripCites(textBlocks.map((b) => (b.type === "text" ? b.text : "")).join("\n"));
 
-  const parsed = parseOnePagerJson(responseText);
+  let parsed = parseOnePagerJson(responseText);
+  if (!parsed) parsed = await repairJson(anthropic, responseText);
   if (!parsed) {
-    throw new Error("Failed to parse AI response");
+    throw new Error(`Failed to parse AI response. It began: ${responseText.slice(0, 160).replace(/\s+/g, " ")}`);
   }
 
   return applyPrepMode(await tightenSections(anthropic, parsed), prepMode);
+}
+
+/** The answer had the content but not clean JSON: one cheap call to reshape it, no new facts. */
+async function repairJson(
+  anthropic: NonNullable<ReturnType<typeof getAnthropicClient>>,
+  raw: string,
+): Promise<OnePagerContent | null> {
+  if (!raw.trim()) return null;
+  try {
+    const res = await anthropic.messages.create({
+      model: MODELS.extraction,
+      max_tokens: 3072,
+      messages: [{ role: "user", content: `Convert the text below into this exact JSON shape, copying the wording for each section without adding, dropping, or rephrasing facts. Missing sections become "" and recentNews becomes []. Return only the JSON.\n{"companyName":"","quickBrief":"","businessModel":"","relationshipCatchUp":"","whatTheyDo":"","customers":"","companyHistory":"","recentNews":[]}\n\n${raw.slice(0, 12000)}` }],
+    });
+    return parseOnePagerJson(res.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
+  } catch {
+    return null;
+  }
 }
