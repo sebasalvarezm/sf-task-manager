@@ -164,7 +164,9 @@ export async function screenCompany(input: { name: string; website: string | nul
     });
     return stripCites(response.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
   };
-  // A search that eats the whole answer now and then leaves no JSON; ask once more from the site text alone.
+  // Always search: many small VMS companies never put an acquisition or an
+  // investor on their site, so the site text alone would miss them (Seb, Oct 2026).
+  // A search that eats the whole answer now and then leaves no JSON; ask once more without it.
   let parsed = parseVerdict(await ask(true));
   if (!parsed) parsed = parseVerdict(await ask(false));
   if (!parsed) return { status: "error", reason: "The model did not return a readable verdict.", facts: { ...emptyFacts(), source: site.pages } };

@@ -59,6 +59,7 @@ type Settings = {
   excludedUsers: string[];
   recordType: string;
   batchSize: number;
+  refillBelow: number;
 };
 
 type CheckRow = {
@@ -163,6 +164,7 @@ function OutreachInner() {
   const [shown, setShown] = useState(50);
   const [screen, setScreen] = useState<{ pending: number; running: boolean; step: string | null }>({ pending: 0, running: false, step: null });
   const readyRef = useRef(0);
+  const settingsRef = useRef<Settings | null>(null);
   /** Ready rows still without a LinkedIn page and never looked up: the check job fills them in. */
   const linkedinRef = useRef(0);
 
@@ -179,12 +181,13 @@ function OutreachInner() {
     }
   }, []);
 
-  /** Keep one batch of checked rows ahead of Seb. Each check costs a site read and a model call, so the rest waits. */
+  /** Check one batch at a time, and only when the checked pile runs low. Each check costs a model call, so the rest waits. */
   const ensureScreened = useCallback(
     async (batch: number, force = false) => {
       const running = await pollScreen();
       if (running) return;
-      if (!force && readyRef.current >= batch && linkedinRef.current === 0) return;
+      const low = settingsRef.current?.refillBelow ?? 20;
+      if (!force && readyRef.current >= low && linkedinRef.current === 0) return;
       try {
         const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch }) });
         const data = await res.json();
@@ -210,6 +213,7 @@ function OutreachInner() {
       const set = await setRes.json().catch(() => null);
       if (set?.settings) {
         setSettings(set.settings);
+        settingsRef.current = set.settings;
         setShown(set.settings.batchSize ?? 50);
       }
       setError(null);
@@ -379,7 +383,7 @@ function OutreachInner() {
       {notice ? <p className="mb-4 text-sm text-ink-secondary">{notice}</p> : null}
 
       {view === "rules" && settings ? (
-        <RulesPanel settings={settings} onSaved={(s) => { setSettings(s); setShown(s.batchSize); setNotice("Rules saved. Rebuild the pool to apply them."); setView("next"); }} />
+        <RulesPanel settings={settings} onSaved={(s) => { setSettings(s); settingsRef.current = s; setShown(s.batchSize); setNotice("Rules saved. Rebuild the pool to apply them."); setView("next"); }} />
       ) : view === "check" ? (
         <CheckList onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
       ) : loading ? (
@@ -610,7 +614,8 @@ function RulesPanel({ settings, onSaved }: { settings: Settings; onSaved: (s: Se
         <label className={label}>Window (days)<input type="number" className={field} value={form.windowDays} onChange={num("windowDays")} /></label>
         <label className={label}>Max sends in window<input type="number" className={field} value={form.maxSendsInWindow} onChange={num("maxSendsInWindow")} /></label>
         <label className={label}>Sequence in flight (days)<input type="number" className={field} value={form.inFlightDays} onChange={num("inFlightDays")} /></label>
-        <label className={label}>Rows per batch<input type="number" className={field} value={form.batchSize} onChange={num("batchSize")} /></label>
+        <label className={label}>Rows checked per batch<input type="number" className={field} value={form.batchSize} onChange={num("batchSize")} /></label>
+        <label className={label}>Check more when ready drops below<input type="number" className={field} value={form.refillBelow} onChange={num("refillBelow")} /></label>
         <label className={label}>E1 lookback (months)<input type="number" className={field} value={form.lookbackMonths} onChange={num("lookbackMonths")} /></label>
         <label className={label}>Account record type<input type="text" className={field} value={form.recordType} onChange={(e) => setForm((f) => ({ ...f, recordType: e.target.value }))} /></label>
         <label className={label}>Min employees<input type="number" className={field} value={form.minEmployees} onChange={num("minEmployees")} /></label>

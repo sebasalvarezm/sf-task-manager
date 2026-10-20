@@ -39,8 +39,10 @@ export type CandidateSettings = RuleSettings & {
   excludedUsers: string[];
   /** Account record type name; empty means no filter. */
   recordType: string;
-  /** How many eligible cards to keep in front of Seb. */
+  /** How many rows each check batch screens (and how many cards show at once). */
   batchSize: number;
+  /** Start the next check batch only when fewer than this many checked rows are left; spaces the cost out. */
+  refillBelow: number;
 };
 
 export const DEFAULT_CANDIDATE_SETTINGS: CandidateSettings = {
@@ -54,6 +56,7 @@ export const DEFAULT_CANDIDATE_SETTINGS: CandidateSettings = {
   excludedUsers: ["Bennett Fahey"],
   recordType: "Valstone",
   batchSize: 50,
+  refillBelow: 20,
 };
 
 const SETTINGS_KEY = "outreach_candidate_settings";
@@ -75,6 +78,7 @@ export function coerceCandidateSettings(raw: unknown): CandidateSettings {
     excludedUsers: strings(o.excludedUsers, d.excludedUsers),
     recordType: typeof o.recordType === "string" ? o.recordType.trim() : d.recordType,
     batchSize: num(o.batchSize, d.batchSize, 5, 200),
+    refillBelow: num(o.refillBelow, d.refillBelow, 0, 200),
   };
 }
 
