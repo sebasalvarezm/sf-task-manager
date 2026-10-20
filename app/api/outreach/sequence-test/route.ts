@@ -8,33 +8,32 @@ export const maxDuration = 120;
 /**
  * One-off probe of the Outreach API path the sequence pipeline depends on.
  *
- * Learned so far: a manual email step creates no draft mailing, and a mailing
- * cannot be created with sequence, sequenceState or sequenceStep relationships
- * (private). So the remaining door is the task Outreach creates for the manual
- * step: a mailing created against that task. This run looks for the task two
- * ways, reports the sequence state's timing, creates the mailing on the task
- * if found, and tries a standalone mailing as a fallback. Everything created
- * is removed again unless keep=1.
+ * Learned so far: a manual email step creates no draft mailing; a mailing
+ * cannot carry sequence/sequenceState/sequenceStep relationships (private); a
+ * sequence state stays "pending" outside the sequence schedule, so the manual
+ * step's task only appears once the schedule activates it; a standalone
+ * mailing (prospect + mailbox + subject/body/scheduledAt) is accepted and comes
+ * back "drafted".
  *
- * GET /api/outreach/sequence-test?email=<prospect email>&sequence=<sequence name>[&keep=1]
+ * Two-part run:
+ *   1. GET ...?email=<prospect>&sequence=<name>&keep=1
+ *      Enrols and leaves the state in place. Returns stateId.
+ *   2. GET ...?continue=<stateId>  (during sequence schedule hours)
+ *      Finds the task, creates a mailing on it, reads back the mailing and
+ *      task, re-tests a standalone mailing, then removes everything.
  */
 export async function GET(request: NextRequest) {
   if (!(await isAdmin())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const q = new URL(request.url).searchParams;
-  const email = q.get("email")?.trim().toLowerCase();
-  const sequenceName = q.get("sequence")?.trim();
-  const keep = q.get("keep") === "1";
-  if (!email || !sequenceName) return NextResponse.json({ error: "Pass ?email=<prospect email>&sequence=<sequence name>" }, { status: 400 });
-
   const report: Record<string, unknown> = {};
   const note = (key: string, value: unknown) => {
     report[key] = value;
   };
   const text = async (res: Response) => (await res.text()).slice(0, 1500);
   const json = async (res: Response) => (res.ok ? ((await res.json()) as { data?: unknown }).data : `${res.status}: ${await text(res)}`);
+  const sendAt = new Date(Date.now() + 7 * 86_400_000);
+  sendAt.setUTCHours(10, 45, 0, 0);
   const createMailing = async (label: string, relationships: Record<string, unknown>) => {
-    const sendAt = new Date(Date.now() + 7 * 86_400_000);
-    sendAt.setUTCHours(10, 45, 0, 0); // 06:45 Toronto in October
     const res = await outreachRequest(`/mailings`, {
       method: "POST",
       body: JSON.stringify({
@@ -46,113 +45,122 @@ export async function GET(request: NextRequest) {
       }),
     });
     const body = await text(res);
-    note(label, { status: res.status, body });
-    if (!res.ok) return null;
+    let id: string | null = null;
     try {
-      return (JSON.parse(body) as { data?: { id?: string } }).data?.id ?? null;
+      id = (JSON.parse(body) as { data?: { id?: string; attributes?: { state?: string; mailingType?: string } } }).data?.id ?? null;
     } catch {
-      return null;
+      id = null;
     }
+    note(label, { status: res.status, id, body: res.ok ? body.slice(0, 400) : body });
+    return id;
   };
+  const mailingState = async (id: string) => json(await outreachRequest(`/mailings/${id}?fields[mailing]=state,subject,scheduledAt,mailingType,errorReason,deliveredAt`));
+
+  const mailboxes = await listMailboxes();
+  const mailbox = mailboxes.find((m) => m.email.toLowerCase() === "sebastian@valstonecorp.com") ?? mailboxes[0];
+  if (!mailbox) return NextResponse.json({ error: "No mailbox on the Outreach connection." }, { status: 500 });
+
+  // ── Part 2: continue a kept enrolment ────────────────────────────────────
+  const continueId = q.get("continue");
+  if (continueId) {
+    const mailingIds: string[] = [];
+    try {
+      const stateRes = await outreachRequest(`/sequenceStates/${continueId}?fields[sequenceState]=state,activeAt,errorReason,createdAt&include=prospect&fields[prospect]=emails`);
+      if (!stateRes.ok) return NextResponse.json({ error: `State ${continueId}: ${await text(stateRes)}` }, { status: 500 });
+      const stateBody = (await stateRes.json()) as { data: { attributes?: Record<string, unknown>; relationships?: { prospect?: { data?: { id?: string } } } } };
+      const prospectId = stateBody.data.relationships?.prospect?.data?.id ?? null;
+      note("state", stateBody.data.attributes);
+      note("prospectId", prospectId);
+      if (!prospectId) throw new Error("State has no prospect.");
+
+      const tasksRes = await outreachRequest(`/tasks?filter[sequenceState][id]=${continueId}&page[size]=5&fields[task]=taskType,state,action,dueAt,createdAt,subject,completed`);
+      const tasks = (await json(tasksRes)) as Array<{ id: string; attributes?: Record<string, unknown> }> | string;
+      note("tasks", tasks);
+      const task = Array.isArray(tasks) ? tasks.find((t) => t.attributes?.taskType === "manual_email") ?? tasks[0] : null;
+
+      if (task) {
+        const onTask = await createMailing("createMailingOnTask", {
+          prospect: { data: { type: "prospect", id: prospectId } },
+          mailbox: { data: { type: "mailbox", id: mailbox.id } },
+          task: { data: { type: "task", id: task.id } },
+        });
+        if (onTask) {
+          mailingIds.push(onTask);
+          await new Promise((r) => setTimeout(r, 12000));
+          note("mailingOnTaskAfter12s", await mailingState(onTask));
+          note("taskAfter", await json(await outreachRequest(`/tasks/${task.id}?fields[task]=state,completed,completedAt`)));
+          note("stateAfterMailing", await json(await outreachRequest(`/sequenceStates/${continueId}?fields[sequenceState]=state,activeAt,deliverCount`)));
+        }
+      } else {
+        note("taskMissing", "No task on this state yet. Is the state active (see state.state) and the sequence schedule open right now?");
+      }
+
+      const standalone = await createMailing("createStandaloneMailing", {
+        prospect: { data: { type: "prospect", id: prospectId } },
+        mailbox: { data: { type: "mailbox", id: mailbox.id } },
+      });
+      if (standalone) {
+        mailingIds.push(standalone);
+        await new Promise((r) => setTimeout(r, 15000));
+        note("standaloneAfter15s", await mailingState(standalone));
+        const state = (report.standaloneAfter15s as { attributes?: { state?: string } } | undefined)?.attributes?.state;
+        if (state === "drafted") {
+          const nudge = await outreachRequest(`/mailings/${standalone}`, { method: "PATCH", body: JSON.stringify({ data: { type: "mailing", id: standalone, attributes: { state: "scheduled" } } }) });
+          note("standalonePatchStateScheduled", { status: nudge.status, body: await text(nudge) });
+          note("standaloneAfterNudge", await mailingState(standalone));
+        }
+      }
+
+      if (q.get("keep") !== "1") {
+        for (const id of mailingIds) {
+          const del = await outreachRequest(`/mailings/${id}`, { method: "DELETE" });
+          note(`cleanupMailing_${id}`, { status: del.status, body: del.status === 204 ? "" : await text(del) });
+        }
+        const del = await outreachRequest(`/sequenceStates/${continueId}`, { method: "DELETE" });
+        note("cleanupRemovedFromSequence", { status: del.status, body: del.status === 204 ? "" : await text(del) });
+      }
+      return NextResponse.json(report);
+    } catch (err) {
+      for (const id of mailingIds) await outreachRequest(`/mailings/${id}`, { method: "DELETE" }).catch(() => null);
+      return NextResponse.json({ ...report, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    }
+  }
+
+  // ── Part 1: enrol (and keep when asked) ──────────────────────────────────
+  const email = q.get("email")?.trim().toLowerCase();
+  const sequenceName = q.get("sequence")?.trim();
+  const keep = q.get("keep") === "1";
+  if (!email || !sequenceName) return NextResponse.json({ error: "Pass ?email=<prospect email>&sequence=<sequence name>[&keep=1], or ?continue=<stateId>" }, { status: 400 });
 
   let stateId: string | null = null;
-  const mailingIds: string[] = [];
   try {
-    const mailboxes = await listMailboxes();
-    const mailbox = mailboxes.find((m) => m.email.toLowerCase() === "sebastian@valstonecorp.com") ?? mailboxes[0];
-    note("mailbox", mailbox ?? null);
-    if (!mailbox) throw new Error("No mailbox found on the Outreach connection.");
-
     const sequences = await listSequences();
     const sequence = sequences.find((s) => s.name.trim().toLowerCase() === sequenceName.toLowerCase());
     if (!sequence) throw new Error(`No sequence named "${sequenceName}".`);
     note("sequence", sequence);
-    note("sequenceSettings", await json(await outreachRequest(`/sequences/${sequence.id}?fields[sequence]=scheduleIntervalType,sequenceType,maxActivations,enabled`)));
+    note("sequenceSettings", await json(await outreachRequest(`/sequences/${sequence.id}?fields[sequence]=scheduleIntervalType,sequenceType,enabled&include=schedule`)));
 
     const prospect = await findProspectByEmail(email);
-    if (!prospect) throw new Error("Prospect not found in Outreach; use the email of an existing prospect.");
+    if (!prospect) throw new Error("Prospect not found in Outreach.");
     note("prospect", prospect);
-
-    // Any tasks already on the prospect before we enrol, to tell old from new.
-    const before = await outreachRequest(`/tasks?filter[prospect][id]=${prospect.id}&page[size]=20&fields[task]=taskType,state,action,dueAt,createdAt`);
-    const beforeData = await json(before);
-    const beforeIds = new Set(Array.isArray(beforeData) ? (beforeData as Array<{ id: string }>).map((t) => t.id) : []);
-    note("tasksBefore", Array.isArray(beforeData) ? beforeIds.size : beforeData);
 
     const state = await addProspectToSequence({ prospectId: prospect.id, sequenceId: sequence.id, mailboxId: mailbox.id });
     stateId = state.id;
     note("sequenceState", state);
-    note("stateRightAfter", await json(await outreachRequest(`/sequenceStates/${state.id}?fields[sequenceState]=state,activeAt,createdAt,errorReason`)));
+    await new Promise((r) => setTimeout(r, 5000));
+    note("stateAfter5s", await json(await outreachRequest(`/sequenceStates/${state.id}?fields[sequenceState]=state,activeAt,errorReason`)));
+    note("tasks", await json(await outreachRequest(`/tasks?filter[sequenceState][id]=${state.id}&page[size]=5&fields[task]=taskType,state,dueAt,createdAt`)));
 
-    // Look for the manual step's task, two ways, for up to ~45 seconds.
-    let task: { id: string; attributes?: Record<string, unknown> } | null = null;
-    for (let attempt = 0; attempt < 15 && !task; attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 3000));
-      const byState = await outreachRequest(`/tasks?filter[sequenceState][id]=${state.id}&page[size]=5&fields[task]=taskType,state,action,dueAt,createdAt,subject`);
-      if (byState.ok) {
-        const body = (await byState.json()) as { data?: Array<{ id: string; attributes?: Record<string, unknown> }> };
-        task = body.data?.[0] ?? null;
-      } else {
-        note("tasksByStateError", await text(byState));
-      }
-      if (!task) {
-        const byProspect = await outreachRequest(`/tasks?filter[prospect][id]=${prospect.id}&sort=-createdAt&page[size]=10&fields[task]=taskType,state,action,dueAt,createdAt,subject`);
-        if (byProspect.ok) {
-          const body = (await byProspect.json()) as { data?: Array<{ id: string; attributes?: Record<string, unknown> }> };
-          task = (body.data ?? []).find((t) => !beforeIds.has(t.id)) ?? null;
-          if (attempt === 14) note("tasksByProspectLast", body.data ?? []);
-        } else {
-          note("tasksByProspectError", await text(byProspect));
-        }
-      }
-    }
-    note("task", task);
-    note("stateAfterWait", await json(await outreachRequest(`/sequenceStates/${state.id}?fields[sequenceState]=state,activeAt,errorReason`)));
-
-    if (task) {
-      const id = await createMailing("createMailingOnTask", {
-        prospect: { data: { type: "prospect", id: prospect.id } },
-        mailbox: { data: { type: "mailbox", id: mailbox.id } },
-        task: { data: { type: "task", id: task.id } },
-      });
-      if (id) {
-        mailingIds.push(id);
-        await new Promise((r) => setTimeout(r, 3000));
-        note("mailingOnTaskAfter", await json(await outreachRequest(`/mailings/${id}?fields[mailing]=state,subject,scheduledAt,mailingType,errorReason`)));
-        note("taskAfter", await json(await outreachRequest(`/tasks/${task.id}?fields[task]=state,completed,completedAt`)));
-      }
-    }
-
-    // Fallback knowledge: can we at least schedule a plain mailing to the prospect?
-    const standalone = await createMailing("createStandaloneMailing", {
-      prospect: { data: { type: "prospect", id: prospect.id } },
-      mailbox: { data: { type: "mailbox", id: mailbox.id } },
-    });
-    if (standalone) {
-      mailingIds.push(standalone);
-      await new Promise((r) => setTimeout(r, 2000));
-      note("standaloneAfter", await json(await outreachRequest(`/mailings/${standalone}?fields[mailing]=state,subject,scheduledAt,mailingType,errorReason`)));
-    }
-
-    if (!keep) {
-      for (const id of mailingIds) {
-        const delM = await outreachRequest(`/mailings/${id}`, { method: "DELETE" });
-        note(`cleanupDeleteMailing_${id}`, { status: delM.status, body: delM.status === 204 ? "" : await text(delM) });
-        note(`mailingAfterCleanup_${id}`, await json(await outreachRequest(`/mailings/${id}?fields[mailing]=state,scheduledAt`)));
-      }
+    if (keep) {
+      note("next", `Kept. During the sequence's schedule hours, open ...?continue=${state.id}`);
+    } else {
       const del = await outreachRequest(`/sequenceStates/${state.id}`, { method: "DELETE" });
       stateId = null;
       note("cleanupRemovedFromSequence", { status: del.status, body: del.status === 204 ? "" : await text(del) });
     }
     return NextResponse.json(report);
   } catch (err) {
-    if (!keep) {
-      for (const id of mailingIds) await outreachRequest(`/mailings/${id}`, { method: "DELETE" }).catch(() => null);
-      if (stateId) {
-        const del = await outreachRequest(`/sequenceStates/${stateId}`, { method: "DELETE" }).catch(() => null);
-        note("cleanupAfterError", del ? del.status : "failed");
-      }
-    }
+    if (!keep && stateId) await outreachRequest(`/sequenceStates/${stateId}`, { method: "DELETE" }).catch(() => null);
     return NextResponse.json({ ...report, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }
