@@ -65,11 +65,13 @@ export async function GET(request: NextRequest) {
   if (continueId) {
     const mailingIds: string[] = [];
     try {
-      const stateRes = await outreachRequest(`/sequenceStates/${continueId}?fields[sequenceState]=state,activeAt,errorReason,createdAt&include=prospect&fields[prospect]=emails`);
+      // No sparse fieldset here: it drops the relationships, and the prospect link is the point.
+      const stateRes = await outreachRequest(`/sequenceStates/${continueId}`);
       if (!stateRes.ok) return NextResponse.json({ error: `State ${continueId}: ${await text(stateRes)}` }, { status: 500 });
       const stateBody = (await stateRes.json()) as { data: { attributes?: Record<string, unknown>; relationships?: { prospect?: { data?: { id?: string } } } } };
       const prospectId = stateBody.data.relationships?.prospect?.data?.id ?? null;
-      note("state", stateBody.data.attributes);
+      const a = stateBody.data.attributes ?? {};
+      note("state", { state: a.state, activeAt: a.activeAt, errorReason: a.errorReason, createdAt: a.createdAt });
       note("prospectId", prospectId);
       if (!prospectId) throw new Error("State has no prospect.");
 
