@@ -43,6 +43,8 @@ export type CandidateSettings = RuleSettings & {
   batchSize: number;
   /** Start the next check batch only when fewer than this many checked rows are left; spaces the cost out. */
   refillBelow: number;
+  /** Hard ceiling on rows checked per UTC day, enforced on the server whatever the page asks for. */
+  maxChecksPerDay: number;
 };
 
 export const DEFAULT_CANDIDATE_SETTINGS: CandidateSettings = {
@@ -57,6 +59,7 @@ export const DEFAULT_CANDIDATE_SETTINGS: CandidateSettings = {
   recordType: "Valstone",
   batchSize: 50,
   refillBelow: 20,
+  maxChecksPerDay: 150,
 };
 
 const SETTINGS_KEY = "outreach_candidate_settings";
@@ -79,6 +82,7 @@ export function coerceCandidateSettings(raw: unknown): CandidateSettings {
     recordType: typeof o.recordType === "string" ? o.recordType.trim() : d.recordType,
     batchSize: num(o.batchSize, d.batchSize, 5, 200),
     refillBelow: num(o.refillBelow, d.refillBelow, 0, 200),
+    maxChecksPerDay: num(o.maxChecksPerDay, d.maxChecksPerDay, 0, 2000),
   };
 }
 

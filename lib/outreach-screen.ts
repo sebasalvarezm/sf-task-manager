@@ -322,6 +322,18 @@ export async function nextToScreen(limit: number): Promise<QueueRow[]> {
   return (data ?? []) as QueueRow[];
 }
 
+/** Rows the check has written a verdict on since midnight UTC: the number the daily cap is measured against. */
+export async function countScreenedToday(): Promise<number> {
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  const { count, error } = await getSupabaseAdmin()
+    .from("outreach_candidates")
+    .select("sf_account_id", { count: "exact", head: true })
+    .gte("screened_at", start.toISOString());
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
 export async function countUnscreenedEligible(): Promise<number> {
   const { count, error } = await getSupabaseAdmin()
     .from("outreach_candidates")

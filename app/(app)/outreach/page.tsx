@@ -60,6 +60,7 @@ type Settings = {
   recordType: string;
   batchSize: number;
   refillBelow: number;
+  maxChecksPerDay: number;
 };
 
 type CheckRow = {
@@ -162,9 +163,17 @@ function OutreachInner() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [shown, setShown] = useState(50);
-  const [screen, setScreen] = useState<{ pending: number; running: boolean; step: string | null }>({ pending: 0, running: false, step: null });
+  const [screen, setScreen] = useState<{ pending: number; running: boolean; step: string | null; checkedToday: number; dailyCap: number; capped: boolean }>({ pending: 0, running: false, step: null, checkedToday: 0, dailyCap: 0, capped: false });
   const readyRef = useRef(0);
   const settingsRef = useRef<Settings | null>(null);
+  const cappedRef = useRef(false);
+  cappedRef.current = screen.capped;
+  /** The refill rule reads these, so they must track the rows after every batch, not only the first load. */
+  const countReady = (rows: Row[]) => {
+    const ready = rows.filter((r) => r.review_status === "open" && r.rule_status === "eligible" && r.screen_status === "software");
+    readyRef.current = ready.length;
+    linkedinRef.current = ready.filter((r) => !r.screen_facts?.linkedin && !r.screen_facts?.linkedinChecked).length;
+  };
   /** Ready rows still without a LinkedIn page and never looked up: the check job fills them in. */
   const linkedinRef = useRef(0);
 
@@ -174,7 +183,9 @@ function OutreachInner() {
       const data = await res.json();
       if (!res.ok) return false;
       const job = data.job as { status: string; progress?: { step?: string } | null } | null;
-      setScreen({ pending: data.pending ?? 0, running: !!job, step: job?.progress?.step ?? null });
+      const checkedToday = Number(data.checkedToday ?? 0);
+      const dailyCap = Number(data.dailyCap ?? 0);
+      setScreen((s) => ({ pending: data.pending ?? 0, running: !!job, step: job?.progress?.step ?? null, checkedToday, dailyCap, capped: s.capped || (dailyCap > 0 && checkedToday >= dailyCap) }));
       return !!job;
     } catch {
       return false;
@@ -188,10 +199,12 @@ function OutreachInner() {
       if (running) return;
       const low = settingsRef.current?.refillBelow ?? 20;
       if (!force && readyRef.current >= low && linkedinRef.current === 0) return;
+      if (cappedRef.current) return;
       try {
         const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch }) });
         const data = await res.json();
         if (res.ok && data.jobId) setScreen((s) => ({ ...s, running: true, step: null }));
+        else if (res.ok && data.status === "daily_cap") setScreen((s) => ({ ...s, capped: true, checkedToday: data.checkedToday ?? s.checkedToday, dailyCap: data.dailyCap ?? s.dailyCap }));
         else if (!res.ok && data.error) setError(data.error);
       } catch {
         /* next poll retries */
@@ -217,9 +230,7 @@ function OutreachInner() {
         setShown(set.settings.batchSize ?? 50);
       }
       setError(null);
-      const ready = rows.filter((r) => r.review_status === "open" && r.rule_status === "eligible" && r.screen_status === "software");
-      readyRef.current = ready.length;
-      linkedinRef.current = ready.filter((r) => !r.screen_facts?.linkedin && !r.screen_facts?.linkedinChecked).length;
+      countReady(rows);
       void ensureScreened(set?.settings?.batchSize ?? 50);
     } catch (err) {
       setError(err instanceof Error && !/load failed|failed to fetch/i.test(err.message) ? err.message : "The connection dropped while loading. Reopen the page.");
@@ -238,7 +249,11 @@ function OutreachInner() {
       try {
         const res = await fetch("/api/outreach/candidates");
         const data = await res.json();
-        if (res.ok) setItems(data.items ?? []);
+        if (res.ok) {
+          const rows = (data.items ?? []) as Row[];
+          setItems(rows);
+          countReady(rows);
+        }
       } catch {
         /* keep polling */
       }
@@ -432,6 +447,9 @@ function OutreachInner() {
           </Button>
         </div>
       ) : null}
+      {view === "next" && !screen.running && screen.capped && screen.pending > 0 ? (
+        <p className="mt-4 text-xs text-ink-muted">Daily check limit reached ({screen.checkedToday} of {screen.dailyCap}). {screen.pending} still waiting; checking resumes tomorrow, or raise the limit in Rules.</p>
+      ) : null}
       {view === "next" && screen.running ? (
         <p className="mt-4 text-xs text-ink-muted">Checking websites{screen.step ? `, ${screen.step.toLowerCase()}` : ""}…</p>
       ) : null}
@@ -616,6 +634,7 @@ function RulesPanel({ settings, onSaved }: { settings: Settings; onSaved: (s: Se
         <label className={label}>Sequence in flight (days)<input type="number" className={field} value={form.inFlightDays} onChange={num("inFlightDays")} /></label>
         <label className={label}>Rows checked per batch<input type="number" className={field} value={form.batchSize} onChange={num("batchSize")} /></label>
         <label className={label}>Check more when ready drops below<input type="number" className={field} value={form.refillBelow} onChange={num("refillBelow")} /></label>
+        <label className={label}>Max rows checked per day<input type="number" className={field} value={form.maxChecksPerDay} onChange={num("maxChecksPerDay")} /></label>
         <label className={label}>E1 lookback (months)<input type="number" className={field} value={form.lookbackMonths} onChange={num("lookbackMonths")} /></label>
         <label className={label}>Account record type<input type="text" className={field} value={form.recordType} onChange={(e) => setForm((f) => ({ ...f, recordType: e.target.value }))} /></label>
         <label className={label}>Min employees<input type="number" className={field} value={form.minEmployees} onChange={num("minEmployees")} /></label>
