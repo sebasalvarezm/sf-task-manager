@@ -51,12 +51,14 @@ Voice: plain English a smart 12-year-old would follow, with no loss of precision
 
 Discipline: no preamble, no concluding or summary sentence, no "notably", "importantly", "it is worth noting", "interestingly". Do not repeat the company name every sentence; use "they" or "the company". Do not stack adjectives. Do not copy slogans from the website. Do not speculate about fit with Valstone, valuation, or deal angle unless a field asks for a call angle. Do not pad a thin fact base: write "Not available" for what the evidence does not cover rather than filling space. No dashes as punctuation; use commas, full stops, or parentheses. No bullet points, headers, markdown, or citation tags inside any field; each field is one plain paragraph.
 
-Length is a hard limit, not a target: whatTheyDo 70 to 120 words; customers 70 to 120 words including the "For example, ..." sentence; companyHistory 90 to 150 words; quickBrief 5 to 7 sentences; businessModel and relationshipCatchUp at most 80 words each; each recentNews item one sentence under 30 words with a month and year.`;
+The use case: the customers field ends with a worked example that starts "For example, ..." and runs 60 to 100 words on its own. It is a short scene, not a statistic: a named kind of user on a real day, what the job looked like without the software (the time lost, the paper, the drive, the guesswork), then what it looks like with it, step by step, ending with the downstream payoff (the invoice, the report, the compliance record). Model it on this one, matching its shape and concreteness: "For example, imagine a paving subcontractor showing up at dawn to place asphalt on a 12-mile interstate widening project. Without OnStation, a foreman might spend 20 to 30 minutes driving the corridor trying to locate the exact station marker where yesterday's paving ended. With OnStation, the crew opens the app, sees their precise position overlaid on the project alignment, navigates directly to the right spot, and immediately begins work, then documents the footage paved with geo-tagged photos that automatically feed into the prime contractor's payment application for that pay period." Invent the scene only from the kind of work the evidence shows the software does; never invent a named customer or a number the evidence does not support.
+
+Length is a hard limit, not a target: whatTheyDo 70 to 120 words; customers 140 to 220 words, of which the "For example, ..." scene is 60 to 100; companyHistory 90 to 150 words; quickBrief 5 to 7 sentences; businessModel and relationshipCatchUp at most 80 words each; each recentNews item one sentence under 30 words with a month and year.`;
 
 /** Word caps the code enforces after the model answers. */
 const WORD_CAPS: Partial<Record<keyof OnePagerContent, number>> = {
   whatTheyDo: 130,
-  customers: 130,
+  customers: 240,
   companyHistory: 165,
   quickBrief: 160,
   businessModel: 90,
@@ -254,7 +256,7 @@ Return ONLY valid JSON:
 {
   "companyName": "The common/short name of the target company",
   "whatTheyDo": "One plain-language paragraph on what the company does, 70 to 120 words",
-  "customers": "One paragraph on who buys and why, ending with a concrete use case beginning 'For example, ...', 70 to 120 words",
+  "customers": "One paragraph on who buys and why (60 to 100 words), then the worked 'For example, ...' scene (60 to 100 words) as described in the style rules",
   "companyHistory": "One paragraph on founding, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words",
   "recentNews": []
 }`;
@@ -328,7 +330,7 @@ Return ONLY valid JSON, no explanation, no markdown fences. Use this exact struc
   "businessModel": "${prepMode === "reconnect" ? "2-4 sentences explaining products/services, how the company earns money, and who pays" : ""}",
   "relationshipCatchUp": "${prepMode === "reconnect" ? "2-4 sentences based on Salesforce relationship activity; explicitly say when no history is available" : ""}",
   "whatTheyDo": "One plain-language paragraph on what the TARGET company does, 70 to 120 words.",
-  "customers": "One paragraph on who buys from the TARGET company and why, ending with a concrete use case beginning 'For example, ...', 70 to 120 words",
+  "customers": "One paragraph on who buys from the TARGET company and why (60 to 100 words), then the worked 'For example, ...' scene (60 to 100 words) as described in the style rules",
   "companyHistory": "One paragraph on when the TARGET company was founded, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words.",
   "recentNews": ["News item 1 about the target, one sentence with month and year", "News item 2", "News item 3"]
 }`;
