@@ -60,6 +60,61 @@ async function scrapeWebsite(baseUrl: string): Promise<string> {
   return results.join("\n\n");
 }
 
+/**
+ * House style for the one-pager. Sonnet 5.5 writes well but pads and editorialises
+ * when left alone, so the format is pinned here as rules, with word caps the code
+ * enforces below.
+ */
+const PREP_STYLE = `You write Valstone's call-prep one-pagers. They are read in two minutes before an M&A call, so every sentence must earn its place.
+
+Voice: plain English a smart 12-year-old would follow, with no loss of precision. Short sentences, one idea each. Say what the company does, who pays, and why; do not sell it. Write "VMS" for vertical market software. Use "software", "customers", "owner", "founder", "acquisition"; never "solutions", "leverage", "ecosystem", "robust", "cutting-edge", "positions itself", "best-in-class", "seamless", "empowers", "end-to-end", "mission-critical" (unless quoting), or any banker or marketing phrasing.
+
+Discipline: no preamble, no concluding or summary sentence, no "notably", "importantly", "it is worth noting", "interestingly". Do not repeat the company name every sentence; use "they" or "the company". Do not stack adjectives. Do not copy slogans from the website. Do not speculate about fit with Valstone, valuation, or deal angle unless a field asks for a call angle. Do not pad a thin fact base: write "Not available" for what the evidence does not cover rather than filling space. No dashes as punctuation; use commas, full stops, or parentheses. No bullet points, headers, or markdown inside any field; each field is one plain paragraph.
+
+Length is a hard limit, not a target: whatTheyDo 70 to 120 words; customers 70 to 120 words including the "For example, ..." sentence; companyHistory 90 to 150 words; quickBrief 5 to 7 sentences; businessModel and relationshipCatchUp at most 80 words each; each recentNews item one sentence under 30 words with a month and year.`;
+
+/** Word caps the code enforces after the model answers. */
+const WORD_CAPS: Partial<Record<keyof OnePagerContent, number>> = {
+  whatTheyDo: 130,
+  customers: 130,
+  companyHistory: 165,
+  quickBrief: 160,
+  businessModel: 90,
+  relationshipCatchUp: 90,
+};
+
+function wordCount(text: string): number {
+  return text.trim() ? text.trim().split(/\s+/).length : 0;
+}
+
+/**
+ * A section that ran long gets one rewrite to its cap, facts kept, nothing added.
+ * Rare after the style rules, so the extra call is the exception, not the rule.
+ */
+async function tightenSections(
+  anthropic: NonNullable<ReturnType<typeof getAnthropicClient>>,
+  content: OnePagerContent,
+): Promise<OnePagerContent> {
+  const out = { ...content };
+  for (const [field, cap] of Object.entries(WORD_CAPS) as Array<[keyof OnePagerContent, number]>) {
+    const value = out[field];
+    if (typeof value !== "string" || wordCount(value) <= cap) continue;
+    try {
+      const res = await anthropic.messages.create({
+        model: MODELS.drafting,
+        max_tokens: 600,
+        system: PREP_STYLE,
+        messages: [{ role: "user", content: `Rewrite this one-pager section to at most ${Math.round(cap * 0.85)} words. Keep every fact, name, number, and date; cut filler, repetition, and commentary. Return only the rewritten paragraph.\n\n${value}` }],
+      });
+      const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
+      if (text && wordCount(text) < wordCount(value)) (out as Record<string, unknown>)[field] = text;
+    } catch {
+      /* keep the long version rather than fail the prep */
+    }
+  }
+  return out;
+}
+
 function tryParse(text: string): OnePagerContent | null {
   try {
     const obj = JSON.parse(text);
@@ -217,9 +272,9 @@ ${sfContext}${scrapedContext}
 Return ONLY valid JSON:
 {
   "companyName": "The common/short name of the target company",
-  "whatTheyDo": "A substantial plain-language paragraph explaining what the company does so a non-industry expert can understand it",
-  "customers": "A substantial paragraph describing customer types and a concrete use case beginning 'For example, ...'",
-  "companyHistory": "A substantial paragraph covering founding, headquarters, leadership, milestones, ownership/funding, growth, and M&A where supported",
+  "whatTheyDo": "One plain-language paragraph on what the company does, 70 to 120 words",
+  "customers": "One paragraph on who buys and why, ending with a concrete use case beginning 'For example, ...', 70 to 120 words",
+  "companyHistory": "One paragraph on founding, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words",
   "recentNews": []
 }`;
     const newsPrompt = `${commonGuard}
@@ -231,11 +286,13 @@ Return ONLY valid JSON: {"recentNews":["item 1", "item 2"]}`;
       anthropic.messages.create({
         model: MODELS.drafting,
         max_tokens: 3072,
+        system: PREP_STYLE,
         messages: [{ role: "user", content: staticPrompt }],
       }),
       anthropic.messages.create({
         model: MODELS.drafting,
         max_tokens: 1536,
+        system: PREP_STYLE,
         tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
         messages: [{ role: "user", content: newsPrompt }],
       }),
@@ -253,7 +310,7 @@ Return ONLY valid JSON: {"recentNews":["item 1", "item 2"]}`;
       throw new Error("Failed to parse recent news response");
     }
     return applyPrepMode(
-      { ...stable, generatedOn: new Date().toISOString(), recentNews },
+      await tightenSections(anthropic, { ...stable, generatedOn: new Date().toISOString(), recentNews }),
       prepMode,
     );
   }
@@ -274,7 +331,7 @@ You MUST write the one-pager about THIS exact target company. If the Salesforce 
 What does this company do, what type of companies would be customers, and give a use case example. Use everyday language that a non-industry expert can understand. Give me a one pager on the company and its history ahead of an M&A call.
 
 Also include 2-3 relevant recent news items about this company (new product releases, big announcements, partnerships, funding rounds, etc.).
-${prepMode === "first_call" ? "\nFor a First Call, match the established concise four-section format only: What They Do, Customers & Use Case, Company History, and Recent News. Do not add or repeat an executive summary, business-model section, relationship section, or suggested call angle. Make each of the first three sections a useful, substantial paragraph like the established call-prep documents." : "\nFor a Reconnect, include the 60-second refresher, business model, and relationship catch-up in addition to the four core sections."}
+${prepMode === "first_call" ? "\nFor a First Call, match the established concise four-section format only: What They Do, Customers & Use Case, Company History, and Recent News. Do not add or repeat an executive summary, business-model section, relationship section, or suggested call angle. Keep each of the first three sections to one tight paragraph like the established call-prep documents." : "\nFor a Reconnect, include the 60-second refresher, business model, and relationship catch-up in addition to the four core sections."}
 ${sfContext}${scrapedContext}${
     !scrapedContext && !sfContext
       ? "\n\nNo website or Salesforce data is available. Use web search to find information about this company."
@@ -289,10 +346,10 @@ Return ONLY valid JSON, no explanation, no markdown fences. Use this exact struc
   "quickBrief": "${prepMode === "reconnect" ? "A 60-second refresher covering the business, business model, buyer, relationship status, and useful call angle" : ""}",
   "businessModel": "${prepMode === "reconnect" ? "2-4 sentences explaining products/services, how the company earns money, and who pays" : ""}",
   "relationshipCatchUp": "${prepMode === "reconnect" ? "2-4 sentences based on Salesforce relationship activity; explicitly say when no history is available" : ""}",
-  "whatTheyDo": "A substantial paragraph in plain language explaining what the TARGET company does. A non-industry expert should be able to understand.",
-  "customers": "A substantial paragraph describing the TARGET company's customer types, followed by a concrete use case example beginning 'For example, ...'",
-  "companyHistory": "A substantial paragraph covering when the TARGET company was founded, headquarters, leadership, key milestones, ownership/funding, growth, and any M&A activity where supported.",
-  "recentNews": ["News item 1 about the target — brief description with approximate date", "News item 2 about the target — brief description with approximate date", "News item 3 about the target — brief description with approximate date"]
+  "whatTheyDo": "One plain-language paragraph on what the TARGET company does, 70 to 120 words.",
+  "customers": "One paragraph on who buys from the TARGET company and why, ending with a concrete use case beginning 'For example, ...', 70 to 120 words",
+  "companyHistory": "One paragraph on when the TARGET company was founded, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words.",
+  "recentNews": ["News item 1 about the target, one sentence with month and year", "News item 2", "News item 3"]
 }`;
 
   // Step 4: Claude with web search enabled
@@ -304,6 +361,7 @@ Return ONLY valid JSON, no explanation, no markdown fences. Use this exact struc
   const message = await anthropic.messages.create({
     model: MODELS.drafting,
     max_tokens: 4096,
+    system: PREP_STYLE,
     tools,
     messages: [{ role: "user", content: prompt }],
   });
@@ -321,5 +379,5 @@ Return ONLY valid JSON, no explanation, no markdown fences. Use this exact struc
     throw new Error("Failed to parse AI response");
   }
 
-  return applyPrepMode(parsed, prepMode);
+  return applyPrepMode(await tightenSections(anthropic, parsed), prepMode);
 }
