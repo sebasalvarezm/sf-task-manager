@@ -165,7 +165,7 @@ function replyMatchNote(item: WeeklyOutreachItem): string {
   }
   if (item.outlook_reply_reason) return item.outlook_reply_reason;
   if (item.outlook_reply_subject) {
-    return "This chain was picked before thread checking existed, so it has not been verified. Re-prepare the draft to check it.";
+    return "This chain was picked before thread checking existed, so it has not been verified. Dismiss the draft and prepare it again to check it.";
   }
   return "No Outlook chain attached. Paste this into the right chain yourself.";
 }
