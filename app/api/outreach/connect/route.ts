@@ -24,7 +24,7 @@ export async function GET() {
     response_type: "code",
     redirect_uri: callbackUrl,
     scope:
-      "accounts.all prospects.all sequences.read sequenceStates.all mailboxes.read mailings.all users.read events.read",
+      "accounts.all prospects.all sequences.read sequenceSteps.read sequenceStates.all mailboxes.read mailings.all tasks.all users.read events.read",
   });
 
   return redirectToOAuth("outreach", "https://api.outreach.io/oauth/authorize", params);
