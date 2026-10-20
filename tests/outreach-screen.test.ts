@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { findLinkedInCompanyUrl, formatExcluded } from "../lib/outreach-screen";
+import { stripCites } from "../lib/anthropic";
 
 describe("LinkedIn company page from site text", () => {
   it("finds a company page in Jina markdown", () => {
@@ -28,5 +29,12 @@ describe("formatExcluded", () => {
       { account_name: "Church Hub", skip_reason: "Wrong end market", screen_facts: null },
     ]);
     expect(text).toBe("- Acme Dental (lab scheduling): dental labs\n- Church Hub");
+  });
+});
+
+describe("stripCites", () => {
+  it("removes the search tool's cite tags and nothing else", () => {
+    expect(stripCites("<cite index='7-1'>Ecochain makes software.</cite> <cite index='6-5'>Two products.</cite>")).toBe("Ecochain makes software. Two products.");
+    expect(stripCites("plain text")).toBe("plain text");
   });
 });

@@ -7,7 +7,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import { MODELS } from "./anthropic";
+import { MODELS, stripCites } from "./anthropic";
 import { readSharedWaybackCooldown, writeSharedWaybackCooldown } from "./wayback-cooldown";
 import { guardAddress, guardTown } from "./location-guard";
 import fs from "fs";
@@ -775,7 +775,7 @@ If you cannot determine it, return exactly: null`,
       (b: { type: string }) => b.type === "text"
     );
     if (textBlocks.length === 0) return null;
-    const raw = textBlocks[textBlocks.length - 1].text.trim();
+    const raw = stripCites(textBlocks[textBlocks.length - 1].text);
     const match = raw.match(/\b(19|20)\d{2}\b/);
     if (match) {
       const year = parseInt(match[0]);
@@ -1465,7 +1465,7 @@ If you cannot find any location for this specific company, return exactly: null`
       (b: { type: string }) => b.type === "text"
     );
     if (textBlocks.length > 0) {
-      const raw = textBlocks[textBlocks.length - 1].text.trim();
+      const raw = stripCites(textBlocks[textBlocks.length - 1].text);
       const validated = validateAddress(raw);
       if (validated) {
         return {
@@ -1531,7 +1531,7 @@ Return ONLY a JSON object, no commentary:
         (b: { type: string }) => b.type === "text"
       );
       if (textBlocks.length > 0) {
-        const raw = textBlocks[textBlocks.length - 1].text.trim();
+        const raw = stripCites(textBlocks[textBlocks.length - 1].text);
         const parsedAnswer = (() => {
           try {
             return JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? raw) as {
@@ -1741,7 +1741,7 @@ async function runRestaurantSearch(
       (b: { type: string }) => b.type === "text"
     );
     if (textBlocks.length === 0) return { restaurants: [], city: null };
-    const raw = textBlocks[textBlocks.length - 1].text.trim();
+    const raw = stripCites(textBlocks[textBlocks.length - 1].text);
     return parseRestaurantJson(raw);
   } catch {
     return { restaurants: [], city: null };
@@ -3004,7 +3004,7 @@ If you genuinely cannot find anything specific via web search, still return the 
       return { companyName: fallbackName, anchors: [], searchCount };
     }
     const parsedJson = parseJsonObject(
-      textBlocks[textBlocks.length - 1].text.trim()
+      stripCites(textBlocks[textBlocks.length - 1].text)
     );
     if (!parsedJson) {
       log("Anchor research returned an unreadable answer — no anchors used.");
@@ -3134,7 +3134,7 @@ async function researchAnchorsCold(args: {
     );
     if (textBlocks.length === 0) return [];
     const parsedJson = parseJsonObject(
-      textBlocks[textBlocks.length - 1].text.trim()
+      stripCites(textBlocks[textBlocks.length - 1].text)
     );
     if (!parsedJson) {
       log("A research round returned an unreadable answer — skipping it.");

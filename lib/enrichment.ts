@@ -1,4 +1,4 @@
-import { getAnthropicClient, MODELS } from "./anthropic";
+import { getAnthropicClient, MODELS, stripCites } from "./anthropic";
 
 // What enrichment returns to the frontend
 export type EnrichedCompanyData = {
@@ -143,7 +143,7 @@ Return ONLY valid JSON with these fields (no explanation, no markdown, just JSON
     if (textBlocks.length === 0) return EMPTY_RESULT(normalizedUrl);
 
     const lastText = textBlocks[textBlocks.length - 1];
-    const responseText = lastText.type === "text" ? lastText.text.trim() : "";
+    const responseText = lastText.type === "text" ? stripCites(lastText.text) : "";
     if (!responseText) return EMPTY_RESULT(normalizedUrl);
 
     return parseEnrichmentJson(responseText, normalizedUrl);

@@ -1,4 +1,4 @@
-import { MODELS } from "@/lib/anthropic";
+import { MODELS, stripCites } from "@/lib/anthropic";
 import Anthropic from "@anthropic-ai/sdk";
 import { CDMAccount } from "./salesforce-trip";
 import {
@@ -38,7 +38,7 @@ function extractLastText(content: Anthropic.Messages.ContentBlock[]): string {
     (b): b is Anthropic.Messages.TextBlock => b.type === "text",
   );
   if (textBlocks.length === 0) return "";
-  return textBlocks[textBlocks.length - 1].text.trim();
+  return stripCites(textBlocks[textBlocks.length - 1].text);
 }
 
 // Lenient JSON-array extractor: tolerates models that wrap their answer in

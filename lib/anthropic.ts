@@ -17,6 +17,15 @@ export function getAnthropicClient(): Anthropic | null {
  * small model is as good and far cheaper. Override either from Vercel env
  * without a deploy: ANTHROPIC_MODEL_DRAFTING / ANTHROPIC_MODEL_EXTRACTION.
  */
+/**
+ * With the web search tool, Sonnet 5.5 wraps sentences in <cite index='..'>
+ * tags inside its text. They are for the API's citation feature, not for
+ * people, so every search-backed answer goes through this before use.
+ */
+export function stripCites(text: string): string {
+  return text.replace(/<\/?cite\b[^>]*>/gi, "").replace(/[ \t]{2,}/g, " ").trim();
+}
+
 export const MODELS = {
   drafting: process.env.ANTHROPIC_MODEL_DRAFTING?.trim() || "claude-sonnet-5-5",
   extraction: process.env.ANTHROPIC_MODEL_EXTRACTION?.trim() || "claude-haiku-5-5",

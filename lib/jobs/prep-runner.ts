@@ -1,4 +1,4 @@
-import { getAnthropicClient, MODELS } from "@/lib/anthropic";
+import { getAnthropicClient, MODELS, stripCites } from "@/lib/anthropic";
 import { fetchAccountDetails, fetchRecentAccountActivity } from "@/lib/salesforce-prep";
 
 export type OnePagerContent = {
@@ -69,7 +69,7 @@ const PREP_STYLE = `You write Valstone's call-prep one-pagers. They are read in 
 
 Voice: plain English a smart 12-year-old would follow, with no loss of precision. Short sentences, one idea each. Say what the company does, who pays, and why; do not sell it. Write "VMS" for vertical market software. Use "software", "customers", "owner", "founder", "acquisition"; never "solutions", "leverage", "ecosystem", "robust", "cutting-edge", "positions itself", "best-in-class", "seamless", "empowers", "end-to-end", "mission-critical" (unless quoting), or any banker or marketing phrasing.
 
-Discipline: no preamble, no concluding or summary sentence, no "notably", "importantly", "it is worth noting", "interestingly". Do not repeat the company name every sentence; use "they" or "the company". Do not stack adjectives. Do not copy slogans from the website. Do not speculate about fit with Valstone, valuation, or deal angle unless a field asks for a call angle. Do not pad a thin fact base: write "Not available" for what the evidence does not cover rather than filling space. No dashes as punctuation; use commas, full stops, or parentheses. No bullet points, headers, or markdown inside any field; each field is one plain paragraph.
+Discipline: no preamble, no concluding or summary sentence, no "notably", "importantly", "it is worth noting", "interestingly". Do not repeat the company name every sentence; use "they" or "the company". Do not stack adjectives. Do not copy slogans from the website. Do not speculate about fit with Valstone, valuation, or deal angle unless a field asks for a call angle. Do not pad a thin fact base: write "Not available" for what the evidence does not cover rather than filling space. No dashes as punctuation; use commas, full stops, or parentheses. No bullet points, headers, markdown, or citation tags inside any field; each field is one plain paragraph.
 
 Length is a hard limit, not a target: whatTheyDo 70 to 120 words; customers 70 to 120 words including the "For example, ..." sentence; companyHistory 90 to 150 words; quickBrief 5 to 7 sentences; businessModel and relationshipCatchUp at most 80 words each; each recentNews item one sentence under 30 words with a month and year.`;
 
@@ -106,7 +106,7 @@ async function tightenSections(
         system: PREP_STYLE,
         messages: [{ role: "user", content: `Rewrite this one-pager section to at most ${Math.round(cap * 0.85)} words. Keep every fact, name, number, and date; cut filler, repetition, and commentary. Return only the rewritten paragraph.\n\n${value}` }],
       });
-      const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
+      const text = stripCites(res.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
       if (text && wordCount(text) < wordCount(value)) (out as Record<string, unknown>)[field] = text;
     } catch {
       /* keep the long version rather than fail the prep */
@@ -118,6 +118,7 @@ async function tightenSections(
 function tryParse(text: string): OnePagerContent | null {
   try {
     const obj = JSON.parse(text);
+    for (const k of Object.keys(obj)) if (typeof obj[k] === "string") obj[k] = stripCites(obj[k]);
     return {
       companyName: obj.companyName || "Unknown Company",
       generatedOn: obj.generatedOn || new Date().toISOString(),
@@ -127,7 +128,7 @@ function tryParse(text: string): OnePagerContent | null {
       whatTheyDo: obj.whatTheyDo || "",
       customers: obj.customers || "",
       companyHistory: obj.companyHistory || "",
-      recentNews: Array.isArray(obj.recentNews) ? obj.recentNews : [],
+      recentNews: Array.isArray(obj.recentNews) ? obj.recentNews.map((x: unknown) => (typeof x === "string" ? stripCites(x) : x)) : [],
     };
   } catch {
     return null;
@@ -305,7 +306,7 @@ Return ONLY valid JSON: {"recentNews":["item 1", "item 2"]}`;
     try {
       const json = newsText.match(/\{[\s\S]*\}/)?.[0] ?? newsText;
       const parsed = JSON.parse(json) as { recentNews?: unknown };
-      if (Array.isArray(parsed.recentNews)) recentNews = parsed.recentNews.filter((x): x is string => typeof x === "string");
+      if (Array.isArray(parsed.recentNews)) recentNews = parsed.recentNews.filter((x): x is string => typeof x === "string").map(stripCites);
     } catch {
       throw new Error("Failed to parse recent news response");
     }
@@ -372,7 +373,7 @@ Return ONLY valid JSON, no explanation, no markdown fences. Use this exact struc
   }
 
   const lastText = textBlocks[textBlocks.length - 1];
-  const responseText = lastText.type === "text" ? lastText.text.trim() : "";
+  const responseText = lastText.type === "text" ? stripCites(lastText.text) : "";
 
   const parsed = parseOnePagerJson(responseText);
   if (!parsed) {

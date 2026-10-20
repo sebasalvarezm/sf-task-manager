@@ -1,4 +1,4 @@
-import { getAnthropicClient, MODELS } from "./anthropic";
+import { getAnthropicClient, MODELS, stripCites } from "./anthropic";
 import { getSupabaseAdmin } from "./supabase";
 import { fetchPageText, loadGroupFiles, matchGroup, type GroupMatch } from "./scout";
 import type { CandidateRow, ScreenStatus } from "./outreach-candidates";
@@ -162,10 +162,7 @@ export async function screenCompany(input: { name: string; website: string | nul
       ...(withSearch ? { tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 1 }] } : {}),
       messages: [{ role: "user", content: user }],
     });
-    return response.content
-      .map((b) => (b.type === "text" ? b.text : ""))
-      .join("")
-      .trim();
+    return stripCites(response.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
   };
   // A search that eats the whole answer now and then leaves no JSON; ask once more from the site text alone.
   let parsed = parseVerdict(await ask(true));
@@ -252,10 +249,7 @@ export async function lookupLinkedInUrl(name: string, website: string | null): P
     tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 1 }],
     messages: [{ role: "user", content: `Company: ${name}\nWebsite: ${host ?? website ?? "unknown"}` }],
   });
-  const text = response.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .join("")
-    .trim();
+  const text = stripCites(response.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
   if (/^\s*NONE\b/i.test(text)) return null;
   return findLinkedInCompanyUrl(text);
 }
