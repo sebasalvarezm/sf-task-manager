@@ -96,6 +96,11 @@ async function refreshOutreachToken(
 
 // ── Helper: authenticated Outreach fetch ─────────────────────────────────────
 
+/** Raw authenticated call against the Outreach API, for one-off probes and the sequence pipeline. */
+export async function outreachRequest(path: string, init: RequestInit = {}): Promise<Response> {
+  return outreachFetch(path, init);
+}
+
 async function outreachFetch(
   path: string,
   init: RequestInit = {}
