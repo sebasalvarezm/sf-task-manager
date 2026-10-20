@@ -71,7 +71,7 @@ describe("inmail generation guards", () => {
     expect(firstNameOf("Charles de Smet")).toBe("Charles");
     expect(firstNameOf(null)).toBeNull();
     expect(recruiterSearchUrl("Charles de Smet", "Cargosnap")).toBe(
-      "https://www.linkedin.com/talent/search?keywords=Charles%20de%20Smet%20Cargosnap",
+      "https://www.linkedin.com/search/results/people/?keywords=Charles%20de%20Smet%20Cargosnap",
     );
     expect(linkedInPeopleSearchUrl("Charles de Smet", "Cargosnap")).toBe(
       "https://www.linkedin.com/search/results/people/?keywords=Charles%20de%20Smet%20Cargosnap",

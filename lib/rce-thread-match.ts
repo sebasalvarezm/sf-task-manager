@@ -89,9 +89,18 @@ function containsWholeWord(haystack: string, word: string): boolean {
  * routinely shorten to it, so a hit there is enough. Otherwise two words must
  * match, which stops a lone generic word like "water" carrying a match by itself.
  */
+/** Leading words too ordinary to identify a company on their own ("Design Maintenance Systems" is not every "design" subject). */
+const GENERIC_LEAD_WORDS = new Set([
+  "design", "maintenance", "data", "cloud", "smart", "global", "digital", "first", "prime", "united", "general",
+  "national", "american", "canadian", "advanced", "total", "pro", "fleet", "field", "safety", "quality", "project",
+  "process", "control", "power", "energy", "water", "plant", "asset", "mobile", "net", "web", "open", "true", "new",
+  "north", "south", "east", "west", "blue", "red", "green", "black", "white", "gold", "silver", "one", "core", "main",
+  "central", "pacific", "atlantic", "alpha", "beta", "omega", "delta", "apex", "summit", "vertex", "vector", "matrix",
+]);
+
 function mentionsCompany(text: string, tokens: string[]): boolean {
   if (tokens.length === 0) return false;
-  if (containsWholeWord(text, tokens[0])) return true;
+  if (!GENERIC_LEAD_WORDS.has(tokens[0]) && tokens[0].length >= 4 && containsWholeWord(text, tokens[0])) return true;
   return tokens.filter((token) => containsWholeWord(text, token)).length >= 2;
 }
 
@@ -143,6 +152,12 @@ export function matchRceReplyThread(
       : undefined;
     const subjectHit = messages.some((message) => mentionsCompany(message.subject, tokens));
     const userReplied = messages.some((message) => message.fromEmail === mailbox);
+
+    // A thread with no contact, no company domain and no name in the subject is
+    // a stray body mention from the full-text search. Recency alone used to lift
+    // one of those over the floor (a fresh "LOI" chain with another company got
+    // picked for WIS), so it is out before scoring.
+    if (!contactParticipant && !domainParticipant && !subjectHit) continue;
 
     let score = 0;
     // The subject bonus is the fallback evidence for broker threads (no company

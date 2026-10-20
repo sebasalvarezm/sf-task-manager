@@ -5,6 +5,7 @@ import {
   firstNameFrom,
   firstNameFromGreeting,
   followUpCloser,
+  greetingName,
   pickTemplateIndex,
 } from "../lib/rce-followup";
 
@@ -58,5 +59,15 @@ describe("rce follow-up", () => {
   it("counts whole days", () => {
     expect(daysBetween("2026-09-19T15:00:00Z", new Date("2026-09-22T10:00:00Z"))).toBe(2);
     expect(daysBetween("garbage", new Date())).toBe(0);
+  });
+});
+
+describe("greetingName", () => {
+  it("takes the first name from the From header, or from a firstname.lastname address", () => {
+    expect(greetingName("Somnath Deb", "deb@teamqsi.com")).toBe("Somnath");
+    expect(greetingName("Deb, Somnath", "deb@teamqsi.com")).toBe("Somnath");
+    expect(greetingName("", "fearghal.murphy@wiswm.com")).toBe("Fearghal");
+    expect(greetingName("", "deb@teamqsi.com")).toBeNull();
+    expect(greetingName("Sales Team", "sales@acme.com")).toBeNull();
   });
 });

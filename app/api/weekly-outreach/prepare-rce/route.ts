@@ -16,6 +16,7 @@ import {
 } from "@/lib/microsoft";
 import { fetchAccountHistory, type AccountHistory } from "@/lib/salesforce-account-history";
 import { matchRceReplyThread } from "@/lib/rce-thread-match";
+import { greetingName } from "@/lib/rce-followup";
 import {
   extractOutreachParagraph,
   findGroupFileName,
@@ -102,7 +103,7 @@ async function classifyCompany(
   };
 }
 
-const SHARED_RULES = `Match Sebastian's actual sent-email voice in the evidence: concise, natural, personable, and specific. Use his vocabulary, sentence length, contractions, and level of formality. Never use an em dash. Never write "I would welcome a conversation", "I would value a conversation", "I hope this message finds you well", generic praise, AI jargon, hype, or anything corny. Do not invent history or claim the recipient said something unless the evidence supports it.`;
+const SHARED_RULES = `Match Sebastian's actual sent-email voice in the evidence: concise, natural, personable, and specific. Use his vocabulary, sentence length, contractions, and level of formality. Never use an em dash. Never write "circle back", "touch base", "I would welcome a conversation", "I would value a conversation", "I hope this message finds you well", "hope all is well", "at your earliest convenience", "looking forward to hearing from you", "please do not hesitate", generic praise, AI jargon, hype, or anything corny. Write "thank you", never "thanks". Open with the point ("Just checking in", "Wanted to follow up", "Thank you for the quick reply"), not a pleasantry. Do not invent history or claim the recipient said something unless the evidence supports it.`;
 
 function replyPrompt(input: {
   item: WeeklyOutreachItem;
@@ -340,9 +341,12 @@ export async function POST(request: Request) {
       subject?: string;
     };
     if (!isTakeover && typeof parsed.draft === "string") {
-      // The model is told not to greet, but "Hey Chris," still slips in now and
-      // then, and the name it picks can come from the wrong thread.
+      // The model is told not to greet, because the name it picks can come from
+      // the wrong thread. The greeting is added here from the person the reply
+      // actually goes to, so every draft opens "Hi <first name>,".
       parsed.draft = parsed.draft.replace(/^\s*(hi|hey|hello|dear|good (morning|afternoon|evening))\b[^\n]*\n+/i, "").trimStart();
+      const first = replyTarget ? greetingName(replyTarget.fromName, replyTarget.fromEmail) : null;
+      if (first) parsed.draft = `Hi ${first},\n\n${parsed.draft}`;
     }
 
     const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);

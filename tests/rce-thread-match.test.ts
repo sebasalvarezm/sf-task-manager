@@ -4,7 +4,7 @@ import type { OutlookRelationshipEmail } from "../lib/microsoft";
 
 const me = "sebastian@valstonecorp.com";
 function msg(partial: Partial<OutlookRelationshipEmail> & { id: string; sentDateTime: string }): OutlookRelationshipEmail {
-  return { subject: "", fromEmail: me, toEmails: [], bodyText: "", conversationId: partial.id.split("-")[0], ...partial };
+  return { subject: "", fromEmail: me, fromName: "", toEmails: [], bodyText: "", conversationId: partial.id.split("-")[0], ...partial };
 }
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 
@@ -71,5 +71,17 @@ describe("RCE reply thread choice", () => {
     ];
     const match = matchRceReplyThread(emails, "CropTrak", "croptrak.com", me, ["mtavorath@croptrak.com"]);
     expect(match.replyTarget?.id).toBe("f-1");
+  });
+});
+
+describe("generic lead words", () => {
+  it("does not let 'Design' alone claim a thread for Design Maintenance Systems", () => {
+    const r = matchRceReplyThread(
+      [msg({ id: "x-1", subject: "Web design proposal", fromEmail: "sam@agency.io", toEmails: [me], sentDateTime: daysAgo(10) })],
+      "Design Maintenance Systems",
+      "desmaint.com",
+      me,
+    );
+    expect(r.replyTarget).toBeNull();
   });
 });

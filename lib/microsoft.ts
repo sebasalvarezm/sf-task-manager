@@ -344,6 +344,8 @@ export type OutlookRelationshipEmail = {
   id: string;
   subject: string;
   fromEmail: string;
+  /** Display name on the From header ("Somnath Deb"), empty when Outlook has none. */
+  fromName: string;
   toEmails: string[];
   sentDateTime: string;
   bodyText: string;
@@ -378,7 +380,7 @@ export async function searchMailboxMessages(
     value?: Array<{
       id: string;
       subject?: string;
-      from?: { emailAddress?: { address?: string } };
+      from?: { emailAddress?: { address?: string; name?: string } };
       toRecipients?: Array<{ emailAddress?: { address?: string } }>;
       sentDateTime?: string;
       receivedDateTime?: string;
@@ -390,6 +392,7 @@ export async function searchMailboxMessages(
     id: m.id,
     subject: m.subject ?? "(No subject)",
     fromEmail: (m.from?.emailAddress?.address ?? "").toLowerCase(),
+    fromName: (m.from?.emailAddress?.name ?? "").trim(),
     toEmails: (m.toRecipients ?? []).map((r) => (r.emailAddress?.address ?? "").toLowerCase()).filter(Boolean),
     sentDateTime: m.sentDateTime ?? m.receivedDateTime ?? "",
     bodyText: (m.body?.content ?? "").slice(0, 5000),

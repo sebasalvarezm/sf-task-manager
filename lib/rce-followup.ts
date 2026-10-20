@@ -47,6 +47,24 @@ export function firstNameFrom(fullName: string | null | undefined): string | nul
 }
 
 /**
+ * Greeting name for a reply, from the From header first ("Somnath Deb" -> "Somnath"),
+ * else from a firstname.lastname address. A bare address, a role mailbox, or a
+ * company-looking name gives null, so the draft opens without a greeting rather
+ * than with a wrong one.
+ */
+export function greetingName(fromName: string | null | undefined, fromEmail: string | null | undefined): string | null {
+  const clean = (fromName ?? "").replace(/["']/g, "").trim();
+  if (clean && !clean.includes("@")) {
+    if (/^(info|sales|admin|office|team|support|hello|contact|noreply|no-reply)\b/i.test(clean)) return null;
+    if (/\b(inc|llc|ltd|corp|group|team|support|sales|info)\b/i.test(clean) && clean.split(/\s+/).length <= 2) return null;
+    return firstNameFrom(clean);
+  }
+  const local = (fromEmail ?? "").split("@")[0] ?? "";
+  const m = local.match(/^([a-z]{3,})[._-][a-z]+$/i);
+  return m ? firstNameFrom(m[1]) : null;
+}
+
+/**
  * The name the first email opened with: "Hi Charles," / "Charles," / "Dear Mr. Lee,".
  * Used when the recipient's display name is missing from Outlook.
  */
