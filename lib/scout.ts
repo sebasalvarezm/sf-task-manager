@@ -350,10 +350,35 @@ function looksLikeJinaError(status: number, text: string): boolean {
   );
 }
 
+/**
+ * Direct read first (free), Jina only when the direct read comes back thin or
+ * looks like a JavaScript shell. Most company sites read fine directly, so Jina
+ * tokens go only to the sites that need a real browser.
+ */
 export async function fetchPageText(
   url: string,
   timeoutMs = 10000,
   retries = 0,
+): Promise<string | null> {
+  const direct = await fetchDirectText(url, timeoutMs);
+  if (direct && isUsablePageText(direct)) return direct;
+  const viaJina = await fetchJinaText(url, timeoutMs, retries);
+  return viaJina ?? direct;
+}
+
+/** A real page has a few hundred characters of prose; a JS shell or a block page does not. */
+export function isUsablePageText(text: string): boolean {
+  if (text.length < 600) return false;
+  const head = text.slice(0, 1500).toLowerCase();
+  if (/enable javascript|javascript is (required|disabled)|please turn on javascript|you need to enable javascript/.test(head)) return false;
+  if (/access denied|attention required|verify you are human|checking your browser|just a moment\.\.\./.test(head)) return false;
+  return true;
+}
+
+async function fetchJinaText(
+  url: string,
+  timeoutMs: number,
+  retries: number,
 ): Promise<string | null> {
   for (let attempt = 0; ; attempt++) {
     let retryable = false;
@@ -371,13 +396,9 @@ export async function fetchPageText(
     } catch {
       retryable = true; // network hiccup or timeout
     }
-    if (!retryable || attempt >= retries) break;
+    if (!retryable || attempt >= retries) return null;
     await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1) + Math.random() * 500));
   }
-  // Jina is out (key over quota, outage, or it refused the site): read the page
-  // ourselves. Plain HTML stripped to text is rougher than Jina's markdown but
-  // plenty for a classifier or a one-pager, and it keeps the whole app working.
-  return fetchDirectText(url, timeoutMs);
 }
 
 /** Jina failures are logged once a minute per status so Vercel logs say why, without flooding. */

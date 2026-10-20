@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { findLinkedInCompanyUrl, formatExcluded } from "../lib/outreach-screen";
 import { stripCites } from "../lib/anthropic";
-import { htmlToText } from "../lib/scout";
+import { htmlToText, isUsablePageText } from "../lib/scout";
 
 describe("LinkedIn company page from site text", () => {
   it("finds a company page in Jina markdown", () => {
@@ -44,5 +44,13 @@ describe("htmlToText", () => {
   it("drops scripts, styles and tags and keeps the words", () => {
     const html = "<html><head><style>p{}</style><script>x=1</script></head><body><h1>Ricult</h1><p>Farm &amp; crop software for <b>agri lenders</b>.</p></body></html>";
     expect(htmlToText(html)).toBe("Ricult\nFarm & crop software for agri lenders.");
+  });
+});
+
+describe("isUsablePageText", () => {
+  it("rejects thin pages and JavaScript shells, accepts real prose", () => {
+    expect(isUsablePageText("short")).toBe(false);
+    expect(isUsablePageText("You need to enable JavaScript to run this app. " + "x".repeat(700))).toBe(false);
+    expect(isUsablePageText("Ricult builds credit scoring and farm management software for agricultural lenders. ".repeat(12))).toBe(true);
   });
 });
