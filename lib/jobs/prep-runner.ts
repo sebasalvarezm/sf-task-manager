@@ -97,48 +97,89 @@ async function tightenSections(
   return out;
 }
 
-function tryParse(text: string): OnePagerContent | null {
-  try {
-    const obj = JSON.parse(text);
-    for (const k of Object.keys(obj)) if (typeof obj[k] === "string") obj[k] = stripCites(obj[k]);
-    return {
-      companyName: obj.companyName || "Unknown Company",
-      generatedOn: obj.generatedOn || new Date().toISOString(),
-      quickBrief: obj.quickBrief || obj.whatTheyDo || "",
-      businessModel: obj.businessModel || "Not available",
-      relationshipCatchUp: obj.relationshipCatchUp || "No Salesforce relationship history available.",
-      whatTheyDo: obj.whatTheyDo || "",
-      customers: obj.customers || "",
-      companyHistory: obj.companyHistory || "",
-      recentNews: Array.isArray(obj.recentNews) ? obj.recentNews.map((x: unknown) => (typeof x === "string" ? stripCites(x) : x)) : [],
-    };
-  } catch {
-    return null;
+const SECTION_KEYS: Record<string, keyof OnePagerContent> = {
+  "company name": "companyName",
+  "quick brief": "quickBrief",
+  "business model": "businessModel",
+  "relationship": "relationshipCatchUp",
+  "what they do": "whatTheyDo",
+  "customers": "customers",
+  "company history": "companyHistory",
+  "recent news": "recentNews",
+};
+
+/**
+ * The model writes labelled sections, not JSON. A paragraph with a quote or a
+ * line break inside it broke JSON often enough to ship half-empty preps; a
+ * heading per section cannot break that way, and a missing section is visible
+ * instead of silently empty.
+ */
+export function parseSections(raw: string): OnePagerContent {
+  const text = stripCites(raw).replace(/\r/g, "");
+  const headingRe = /^[ \t]*(?:#{1,4}[ \t]*|\*\*)?(COMPANY NAME|QUICK BRIEF|BUSINESS MODEL|RELATIONSHIP|WHAT THEY DO|CUSTOMERS|COMPANY HISTORY|RECENT NEWS)(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*/gim;
+  const found: Array<{ key: keyof OnePagerContent; start: number; bodyStart: number }> = [];
+  for (const m of text.matchAll(headingRe)) {
+    const key = SECTION_KEYS[m[1].toLowerCase()];
+    if (key && m.index !== undefined) found.push({ key, start: m.index, bodyStart: m.index + m[0].length });
   }
+  const out: OnePagerContent = {
+    companyName: "",
+    generatedOn: new Date().toISOString(),
+    quickBrief: "",
+    businessModel: "",
+    relationshipCatchUp: "",
+    whatTheyDo: "",
+    customers: "",
+    companyHistory: "",
+    recentNews: [],
+  };
+  found.forEach((section, idx) => {
+    const end = idx + 1 < found.length ? found[idx + 1].start : text.length;
+    const body = text.slice(section.bodyStart, end).trim();
+    if (section.key === "recentNews") {
+      out.recentNews = body
+        .split("\n")
+        .map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
+        .filter((line) => line && !/^(none|n\/a|not available|no (recent|reliable) news( found)?)\.?$/i.test(line));
+    } else if (section.key !== "generatedOn") {
+      out[section.key] = body.replace(/\n{2,}/g, "\n\n").replace(/[ \t]*\n[ \t]*/g, " ").trim();
+    }
+  });
+  if (!out.companyName) out.companyName = "Unknown Company";
+  return out;
 }
 
-function parseOnePagerJson(raw: string): OnePagerContent | null {
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*\n?/i, "")
-    .replace(/\n?```\s*$/i, "")
-    .trim();
+/** Minimum words a section needs before a prep is allowed to save. */
+const MIN_WORDS: Partial<Record<keyof OnePagerContent, number>> = {
+  whatTheyDo: 40,
+  customers: 60,
+  companyHistory: 40,
+};
+const MIN_WORDS_RECONNECT: Partial<Record<keyof OnePagerContent, number>> = {
+  ...MIN_WORDS,
+  quickBrief: 30,
+  businessModel: 20,
+  relationshipCatchUp: 10,
+};
 
-  let parsed = tryParse(cleaned);
-  if (parsed) return parsed;
-
-  const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/i);
-  if (fenceMatch) {
-    parsed = tryParse(fenceMatch[1].trim());
-    if (parsed) return parsed;
+/** Names of the sections that are missing or cut short; empty when the prep is complete. */
+export function thinSections(content: OnePagerContent, prepMode: "first_call" | "reconnect"): string[] {
+  const mins = prepMode === "reconnect" ? MIN_WORDS_RECONNECT : MIN_WORDS;
+  const out: string[] = [];
+  for (const [field, min] of Object.entries(mins) as Array<[keyof OnePagerContent, number]>) {
+    const value = content[field];
+    const words = typeof value === "string" ? wordCount(value) : 0;
+    const allowedShort = typeof value === "string" && /^not available\.?$/i.test(value.trim()) && field !== "whatTheyDo";
+    if (words < min && !allowedShort) out.push(field);
   }
+  return out;
+}
 
-  const braceMatch = raw.match(/\{[\s\S]*"companyName"[\s\S]*\}/);
-  if (braceMatch) {
-    parsed = tryParse(braceMatch[0]);
-    if (parsed) return parsed;
-  }
-
-  return null;
+function sectionFormat(prepMode: "first_call" | "reconnect"): string {
+  const headings = prepMode === "reconnect"
+    ? ["COMPANY NAME", "QUICK BRIEF", "BUSINESS MODEL", "RELATIONSHIP", "WHAT THEY DO", "CUSTOMERS", "COMPANY HISTORY", "RECENT NEWS"]
+    : ["COMPANY NAME", "WHAT THEY DO", "CUSTOMERS", "COMPANY HISTORY", "RECENT NEWS"];
+  return `Write plain text with exactly these headings, each on its own line followed by a colon, in this order, with the section text under each. No JSON, no markdown, no other headings, nothing before the first heading or after the last section:\n${headings.map((h) => `${h}:`).join("\n")}\nUnder RECENT NEWS put one item per line starting with "- ", or the single word "None".`;
 }
 
 function applyPrepMode(
@@ -232,46 +273,28 @@ export async function runPrepGenerate(
     const commonGuard = `Target company: ${targetCompany}\nWebsite: ${siteUrl ?? "Not available"}\nMeeting mode: ${mode}\n\nWrite about this exact company only. Never pivot to a parent, acquirer, investor, sister company, or namesake.`;
     const staticPrompt = prepMode === "reconnect" ? `${commonGuard}
 
-Prepare the stable sections of an M&A call briefing from the supplied website and Salesforce evidence. The 60-second brief must refresh the reader on the business even for a reconnect. For Reconnect mode, relationshipCatchUp must summarize prior interactions, promises, objections, and the most useful reopening angle from Salesforce activity. Do not invent missing facts.
+Prepare the stable sections of an M&A call briefing from the supplied website and Salesforce evidence. The 60-second brief must refresh the reader on the business even for a reconnect. For Reconnect mode, RELATIONSHIP must summarize prior interactions, promises, objections, and the most useful reopening angle from Salesforce activity. Do not invent missing facts.
 ${sfContext}${scrapedContext}
 
-Return ONLY valid JSON:
-{
-  "companyName": "common short name",
-  "quickBrief": "A genuinely useful 60-second read: business, business model, who buys, relationship status, and suggested call angle in 5-7 concise sentences",
-  "businessModel": "2-4 sentences on products/services, how it earns money, recurring versus project revenue where supported, and likely buyer/customer",
-  "relationshipCatchUp": "2-4 sentences based only on Salesforce history; say no history is available if none was supplied",
-  "whatTheyDo": "2-4 plain-language sentences",
-  "customers": "2-4 sentences including a concrete example beginning 'For example, ...'",
-  "companyHistory": "3-5 sentences covering founding, milestones, leadership, growth, and M&A where supported",
-  "recentNews": []
-}` : `${commonGuard}
+${sectionFormat("reconnect")}
+
+Section guidance: COMPANY NAME is the common short name. QUICK BRIEF is a genuinely useful 60-second read: business, business model, who buys, relationship status, and suggested call angle in 5 to 7 sentences. BUSINESS MODEL is 2 to 4 sentences on products, how it earns money, recurring versus project revenue where supported, and the likely buyer. RELATIONSHIP is 2 to 4 sentences based only on Salesforce history, or "Not available" if none was supplied. WHAT THEY DO, CUSTOMERS and COMPANY HISTORY follow the style rules. Leave RECENT NEWS as "None"; it is researched separately.` : `${commonGuard}
 
 What does this company do, what type of companies would be customers, and give a use case example. Use everyday language that a non-industry expert can understand. Give me a one pager on the company and its history ahead of an M&A call.
 
 Match the established First Call format and level of detail: four useful sections only, without a separate executive summary, business-model section, relationship section, suggested call angle, or repeated information. Use the supplied website and Salesforce evidence and do not invent missing facts.
 ${sfContext}${scrapedContext}
 
-Return ONLY valid JSON:
-{
-  "companyName": "The common/short name of the target company",
-  "whatTheyDo": "One plain-language paragraph on what the company does, 70 to 120 words",
-  "customers": "One paragraph on who buys and why (60 to 100 words), then the worked 'For example, ...' scene (60 to 100 words) as described in the style rules",
-  "companyHistory": "One paragraph on founding, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words",
-  "recentNews": []
-}`;
+${sectionFormat("first_call")}
+
+Section guidance: WHAT THEY DO is one plain-language paragraph, 70 to 120 words. CUSTOMERS is one paragraph on who buys and why (60 to 100 words) followed by the worked "For example, ..." scene (60 to 100 words) from the style rules. COMPANY HISTORY is one paragraph on founding, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words. Leave RECENT NEWS as "None"; it is researched separately.`;
     const newsPrompt = `${commonGuard}
 
-Use web search to find 2-3 genuinely relevant recent news items about this exact company: product releases, material announcements, partnerships, funding, leadership, or acquisitions. Prefer the last 18 months, attach an approximate month/year, and do not substitute news about a similarly named company. If nothing reliable is found, return an empty list.
+Use web search to find 2-3 genuinely relevant recent news items about this exact company: product releases, material announcements, partnerships, funding, leadership, or acquisitions. Prefer the last 18 months, attach an approximate month/year, and do not substitute news about a similarly named company.
 
-Return ONLY valid JSON: {"recentNews":["item 1", "item 2"]}`;
-    const [staticMessage, newsMessage] = await Promise.all([
-      anthropic.messages.create({
-        model: MODELS.drafting,
-        max_tokens: 3072,
-        system: PREP_STYLE,
-        messages: [{ role: "user", content: staticPrompt }],
-      }),
+Answer with the heading "RECENT NEWS:" on its own line, then one item per line starting with "- " (one sentence each, month and year included), or the single word "None" if nothing reliable was found. Nothing else.`;
+    const [stable, newsMessage] = await Promise.all([
+      generateSections(anthropic, staticPrompt, prepMode, false),
       anthropic.messages.create({
         model: MODELS.drafting,
         max_tokens: 1536,
@@ -280,18 +303,8 @@ Return ONLY valid JSON: {"recentNews":["item 1", "item 2"]}`;
         messages: [{ role: "user", content: newsPrompt }],
       }),
     ]);
-    const staticText = stripCites(staticMessage.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n"));
-    const newsText = stripCites(newsMessage.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n"));
-    const stable = parseOnePagerJson(staticText) ?? (await repairJson(anthropic, staticText));
-    if (!stable) throw new Error(`Failed to parse AI briefing sections. It began: ${staticText.slice(0, 160).replace(/\s+/g, " ")}`);
-    let recentNews: string[] = [];
-    try {
-      const json = newsText.match(/\{[\s\S]*\}/)?.[0] ?? newsText;
-      const parsed = JSON.parse(json) as { recentNews?: unknown };
-      if (Array.isArray(parsed.recentNews)) recentNews = parsed.recentNews.filter((x): x is string => typeof x === "string").map(stripCites);
-    } catch {
-      recentNews = [];
-    }
+    const newsText = newsMessage.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n");
+    const recentNews = parseSections(newsText.includes("RECENT NEWS") ? newsText : `RECENT NEWS:\n${newsText}`).recentNews;
     return applyPrepMode(
       await tightenSections(anthropic, { ...stable, generatedOn: new Date().toISOString(), recentNews }),
       prepMode,
@@ -323,64 +336,46 @@ ${sfContext}${scrapedContext}${
         : "\n\nNo website could be scraped. Use web search to find additional information."
   }
 
-Return ONLY valid JSON, no explanation, no markdown fences. Use this exact structure:
-{
-  "companyName": "The common/short name of the target company (must be the target, not a parent/acquirer)",
-  "quickBrief": "${prepMode === "reconnect" ? "A 60-second refresher covering the business, business model, buyer, relationship status, and useful call angle" : ""}",
-  "businessModel": "${prepMode === "reconnect" ? "2-4 sentences explaining products/services, how the company earns money, and who pays" : ""}",
-  "relationshipCatchUp": "${prepMode === "reconnect" ? "2-4 sentences based on Salesforce relationship activity; explicitly say when no history is available" : ""}",
-  "whatTheyDo": "One plain-language paragraph on what the TARGET company does, 70 to 120 words.",
-  "customers": "One paragraph on who buys from the TARGET company and why (60 to 100 words), then the worked 'For example, ...' scene (60 to 100 words) as described in the style rules",
-  "companyHistory": "One paragraph on when the TARGET company was founded, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words.",
-  "recentNews": ["News item 1 about the target, one sentence with month and year", "News item 2", "News item 3"]
-}`;
+${sectionFormat(prepMode)}
 
-  // Step 4: Claude with web search enabled
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools: any[] = [
-    { type: "web_search_20250305", name: "web_search", max_uses: 5 },
-  ];
+Section guidance: ${prepMode === "reconnect" ? "QUICK BRIEF is a 60-second refresher covering the business, business model, buyer, relationship status, and useful call angle. BUSINESS MODEL is 2 to 4 sentences on products, how the company earns money, and who pays. RELATIONSHIP is 2 to 4 sentences based on Salesforce activity, or \"Not available\" when there is none. " : ""}WHAT THEY DO is one plain-language paragraph on what the TARGET company does, 70 to 120 words. CUSTOMERS is one paragraph on who buys from the TARGET company and why (60 to 100 words) followed by the worked "For example, ..." scene (60 to 100 words) from the style rules. COMPANY HISTORY is one paragraph on founding, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words. RECENT NEWS: 2 to 3 items, one per line, month and year included.`;
 
-  const message = await anthropic.messages.create({
-    model: MODELS.drafting,
-    max_tokens: 4096,
-    system: PREP_STYLE,
-    tools,
-    messages: [{ role: "user", content: prompt }],
-  });
-
-  const textBlocks = message.content.filter((b) => b.type === "text");
-  if (textBlocks.length === 0) {
-    throw new Error("AI returned no text response");
-  }
-
-  // With web search on, 5.5 can split the answer across several text blocks
-  // (a sentence, a search, the JSON, a closing line), so read them all, not the last.
-  const responseText = stripCites(textBlocks.map((b) => (b.type === "text" ? b.text : "")).join("\n"));
-
-  let parsed = parseOnePagerJson(responseText);
-  if (!parsed) parsed = await repairJson(anthropic, responseText);
-  if (!parsed) {
-    throw new Error(`Failed to parse AI response. It began: ${responseText.slice(0, 160).replace(/\s+/g, " ")}`);
-  }
-
+  // Step 4: one model call with web search, parsed by heading and checked for completeness.
+  const parsed = await generateSections(anthropic, prompt, prepMode, true);
   return applyPrepMode(await tightenSections(anthropic, parsed), prepMode);
 }
 
-/** The answer had the content but not clean JSON: one cheap call to reshape it, no new facts. */
-async function repairJson(
+/**
+ * Ask for the sections, check every required one has real text, and ask once
+ * more naming the thin ones if not. A prep that is still incomplete fails here,
+ * loudly, rather than saving with blank sections.
+ */
+async function generateSections(
   anthropic: NonNullable<ReturnType<typeof getAnthropicClient>>,
-  raw: string,
-): Promise<OnePagerContent | null> {
-  if (!raw.trim()) return null;
-  try {
+  prompt: string,
+  prepMode: "first_call" | "reconnect",
+  withSearch: boolean,
+): Promise<OnePagerContent> {
+  const ask = async (extra: string) => {
     const res = await anthropic.messages.create({
-      model: MODELS.extraction,
-      max_tokens: 3072,
-      messages: [{ role: "user", content: `Convert the text below into this exact JSON shape, copying the wording for each section without adding, dropping, or rephrasing facts. Missing sections become "" and recentNews becomes []. Return only the JSON.\n{"companyName":"","quickBrief":"","businessModel":"","relationshipCatchUp":"","whatTheyDo":"","customers":"","companyHistory":"","recentNews":[]}\n\n${raw.slice(0, 12000)}` }],
+      model: MODELS.drafting,
+      max_tokens: 4096,
+      system: PREP_STYLE,
+      ...(withSearch ? { tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 5 }] } : {}),
+      messages: [{ role: "user", content: extra ? `${prompt}\n\n${extra}` : prompt }],
     });
-    return parseOnePagerJson(res.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
-  } catch {
-    return null;
+    const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+    return { text, parsed: parseSections(text), stop: res.stop_reason };
+  };
+  let attempt = await ask("");
+  let thin = thinSections(attempt.parsed, prepMode);
+  if (thin.length > 0) {
+    console.warn(`[prep] thin sections on first try (${thin.join(", ")}; stop=${attempt.stop}): ${attempt.text.slice(0, 300).replace(/\s+/g, " ")}`);
+    attempt = await ask(`Your previous answer was incomplete: ${thin.join(", ")} ${thin.length === 1 ? "was" : "were"} missing or cut short. Write the complete answer with every section filled in full.`);
+    thin = thinSections(attempt.parsed, prepMode);
   }
+  if (thin.length > 0) {
+    throw new Error(`The one-pager came back incomplete (${thin.join(", ")}). Try again; if it repeats, the website gave too little to work with.`);
+  }
+  return attempt.parsed;
 }
