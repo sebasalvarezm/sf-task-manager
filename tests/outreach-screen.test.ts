@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { findLinkedInCompanyUrl, formatExcluded } from "../lib/outreach-screen";
 import { stripCites } from "../lib/anthropic";
+import { htmlToText } from "../lib/scout";
 
 describe("LinkedIn company page from site text", () => {
   it("finds a company page in Jina markdown", () => {
@@ -36,5 +37,12 @@ describe("stripCites", () => {
   it("removes the search tool's cite tags and nothing else", () => {
     expect(stripCites("<cite index='7-1'>Ecochain makes software.</cite> <cite index='6-5'>Two products.</cite>")).toBe("Ecochain makes software. Two products.");
     expect(stripCites("plain text")).toBe("plain text");
+  });
+});
+
+describe("htmlToText", () => {
+  it("drops scripts, styles and tags and keeps the words", () => {
+    const html = "<html><head><style>p{}</style><script>x=1</script></head><body><h1>Ricult</h1><p>Farm &amp; crop software for <b>agri lenders</b>.</p></body></html>";
+    expect(htmlToText(html)).toBe("Ricult\nFarm & crop software for agri lenders.");
   });
 });

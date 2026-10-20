@@ -1,5 +1,6 @@
 import { getAnthropicClient, MODELS, stripCites } from "@/lib/anthropic";
 import { fetchAccountDetails, fetchRecentAccountActivity } from "@/lib/salesforce-prep";
+import { fetchPageText } from "@/lib/scout";
 
 export type OnePagerContent = {
   companyName: string;
@@ -20,27 +21,6 @@ export type PrepInput = {
   domain?: string;
   prepMode?: "first_call" | "reconnect";
 };
-
-async function fetchPageText(
-  url: string,
-  timeoutMs = 10000,
-): Promise<string | null> {
-  try {
-    const jinaUrl = `https://r.jina.ai/${url}`;
-    const res = await fetch(jinaUrl, {
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: {
-        Accept: "text/plain",
-        ...(process.env.JINA_API_KEY ? { Authorization: `Bearer ${process.env.JINA_API_KEY}` } : {}),
-      },
-    });
-    if (!res.ok) return null;
-    const text = await res.text();
-    return text.trim() || null;
-  } catch {
-    return null;
-  }
-}
 
 async function scrapeWebsite(baseUrl: string): Promise<string> {
   const normalized = baseUrl.startsWith("http") ? baseUrl : `https://${baseUrl}`;

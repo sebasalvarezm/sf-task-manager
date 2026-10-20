@@ -365,14 +365,71 @@ export async function fetchPageText(
       });
       const text = (await res.text()).trim();
       if (!looksLikeJinaError(res.status, text)) return text || null;
+      noteJinaFailure(res.status, text);
       // 429 / 5xx / throttling text: worth another go after a pause.
       retryable = res.status === 429 || res.status >= 500 || res.status < 400;
     } catch {
       retryable = true; // network hiccup or timeout
     }
-    if (!retryable || attempt >= retries) return null;
+    if (!retryable || attempt >= retries) break;
     await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1) + Math.random() * 500));
   }
+  // Jina is out (key over quota, outage, or it refused the site): read the page
+  // ourselves. Plain HTML stripped to text is rougher than Jina's markdown but
+  // plenty for a classifier or a one-pager, and it keeps the whole app working.
+  return fetchDirectText(url, timeoutMs);
+}
+
+/** Jina failures are logged once a minute per status so Vercel logs say why, without flooding. */
+const jinaFailureLog = new Map<number, number>();
+function noteJinaFailure(status: number, body: string): void {
+  const last = jinaFailureLog.get(status) ?? 0;
+  if (Date.now() - last < 60_000) return;
+  jinaFailureLog.set(status, Date.now());
+  console.warn(`[jina] ${status}: ${body.slice(0, 200).replace(/\s+/g, " ")}`);
+}
+
+const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+
+/** Direct fetch and tag strip, the fallback when Jina cannot serve a page. */
+export async function fetchDirectText(url: string, timeoutMs = 10000): Promise<string | null> {
+  try {
+    const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const res = await fetch(target, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "User-Agent": BROWSER_UA, Accept: "text/html,application/xhtml+xml", "Accept-Language": "en" },
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const type = res.headers.get("content-type") ?? "";
+    if (type && !/html|xml|text/i.test(type)) return null;
+    const html = await res.text();
+    const text = htmlToText(html);
+    return text.length >= 100 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|section|article|header|footer|nav)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ +([.,;:!?)])/g, "$1")
+    .replace(/\s*\n\s*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /**
