@@ -34,6 +34,21 @@ describe("buildPrepackagedEmail town guard", () => {
   });
 });
 
+describe("buildPrepackagedEmail company name", () => {
+  it("fills {{account.name}} even when no hook was generated", () => {
+    const out = buildPrepackagedEmail({
+      ...base,
+      companyName: "Route4Me",
+      emailHook: null,
+      address: "4409 W Kennedy Blvd, Tampa, FL 33609",
+      locationConfidence: "exact",
+    });
+    if (out.skipped) return;
+    expect(out.body).not.toContain("{{account.name}}");
+    expect(out.body).toContain("I have studied Route4Me going back to the release of (INSERT PRODUCT).");
+  });
+});
+
 describe("shortenRestaurantName", () => {
   it("keeps the venue and drops taglines, descriptors and locations", () => {
     expect(shortenRestaurantName("OX Casual Fine Dining")).toBe("OX");

@@ -249,6 +249,8 @@ function referenceWeek(now: Date): { phrase: string; shortDate: string } {
 }
 
 export function buildPrepackagedEmail(args: {
+  /** Salesforce account name, used wherever the template says {{account.name}}. */
+  companyName?: string | null;
   mainGroup: string | null;
   subgroup: string | null;
   emailHook: string | null;
@@ -259,6 +261,7 @@ export function buildPrepackagedEmail(args: {
   now: Date;
 }): PrepackagedEmail {
   const {
+    companyName,
     mainGroup,
     subgroup,
     emailHook,
@@ -325,6 +328,9 @@ export function buildPrepackagedEmail(args: {
       "Email hook was not generated — the template's placeholder sentence is still in place.",
     );
   }
+  // The company name is never unknown, so it must never reach the draft as a
+  // merge field, hook or no hook.
+  if (companyName) body = body.split("{{account.name}}").join(companyName);
 
   // 2. Swap the core paragraph (and drop editorial notes).
   const paragraphs = body.split(/\n\n+/);

@@ -44,6 +44,8 @@ import {
 
 export type SourcingResult = {
   url: string;
+  /** The company's name as Sourcing settled on it. */
+  companyName?: string | null;
   currentText: string;
   products: string[];
   foundingYear: number | null;
@@ -205,6 +207,7 @@ export async function rerunHookResearch(
 
   // Rebuild the draft so it quotes the new hook rather than the old one.
   const prepackagedEmail = buildPrepackagedEmail({
+    companyName: stored.companyName ?? research.companyName ?? null,
     mainGroup: stored.portfolioMatch?.mainGroup ?? null,
     subgroup: stored.portfolioMatch?.group ?? null,
     emailHook: generated.hook,
@@ -997,6 +1000,7 @@ export async function runFullSourcing(input: {
   // ───────── Stage 5: Prepackage Email 1 ─────────
   // Plain string swaps into the matched subgroup's template — no AI call.
   const prepackagedEmail = buildPrepackagedEmail({
+    companyName,
     mainGroup: portfolioMatch.mainGroup,
     subgroup: portfolioMatch.group,
     emailHook,
@@ -1017,6 +1021,7 @@ export async function runFullSourcing(input: {
 
   return {
     url: normalized,
+    companyName,
     currentText,
     products,
     foundingYear,

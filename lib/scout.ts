@@ -3433,6 +3433,17 @@ Return only the hook text. No commentary.`,
     result = result.slice(1, -1).trim();
   }
   result = result.replace(/\s*—\s*/g, ", ");
+  // The model only adds polish; the sentence is a formula. If the answer is
+  // empty, over-long or multi-sentence, the formula with the best anchor is
+  // used, rather than leaving the template placeholder in the draft.
+  const usable = result.length > 0 && result.length <= 220 && !/\n/.test(result) && /going back to/i.test(result);
+  if (!usable && anchors.length > 0) {
+    console.warn(`[sourcing] hook answer unusable (${JSON.stringify(result.slice(0, 80))}); using the formula with the top anchor`);
+    const a = anchors[0];
+    const anchorText = a.anchor.trim().replace(/[.\s]+$/, "");
+    result = `I have studied ${companyName} going back to ${anchorText}.`;
+    return { hook: result, anchor: a };
+  }
   return { hook: result, anchor: matchAnchorToHook(result, anchors) };
 }
 
