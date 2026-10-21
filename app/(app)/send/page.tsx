@@ -466,7 +466,9 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
               <span className="text-ink-secondary">Subject</span>
               <input disabled={!editable} value={subject} onChange={(e) => { setSubject(e.target.value); queueSave({ subject: e.target.value }); }} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
             </label>
-            {(row.restaurant_options ?? []).length > 0 ? (
+            {(row.restaurant_options ?? []).length === 0 ? (
+              <p className="self-end text-[12px] text-ink-muted">No restaurant list on this row yet. Re-check email and sequence to load it from Sourcing.</p>
+            ) : (
               <label className="block">
                 <span className="text-ink-secondary">Restaurant</span>
                 <select disabled={!editable} value="" onChange={(e) => { if (e.target.value) onEdit({ restaurant: e.target.value }); }} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink">
@@ -476,7 +478,7 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
                   ))}
                 </select>
               </label>
-            ) : null}
+            )}
           </div>
           <label className="block">
             <span className="text-ink-secondary">Email <span className="text-ink-muted">· sent as “Hi {row.contact_first_name || "there"},” followed by this text and your signature</span></span>

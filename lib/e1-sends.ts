@@ -194,6 +194,7 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
         subject,
         body,
         group_name: r.group_name,
+        sourcing_job_id: r.sourcing_job_id,
         ...(groupChanged ? { sequence_id: null, sequence_name: null } : {}),
         status: "pending",
         status_reason: null,
@@ -879,6 +880,12 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   const send = await getSend(id);
   if (!send || !send.body) throw new Error("Send row has no body.");
   const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
+
+  // The mailing is created on its own, not attached to the step task: a
+  // mailing attached to a manual-email step comes back wearing the step's
+  // template ("Lunch: Valstone", "(INSERT PRODUCT)") whatever is sent. The
+  // prospect still sits in the sequence (enrolSend), and the step task is
+  // marked done below once the real email is scheduled.
   const res = await outreachRequest(`/mailings`, {
     method: "POST",
     body: JSON.stringify({
@@ -888,7 +895,6 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
         relationships: {
           prospect: { data: { type: "prospect", id: ids.prospectId } },
           mailbox: { data: { type: "mailbox", id: ids.mailboxId } },
-          task: { data: { type: "task", id: ids.taskId } },
         },
       },
     }),
@@ -898,37 +904,35 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   const mailingId = (JSON.parse(text) as { data?: { id?: string | number } }).data?.id;
   if (!mailingId) throw new Error("Outreach created the mailing but returned no id.");
 
-  // A mailing attached to a sequence step can come back carrying the step's
-  // own template instead of what was sent. Read it back; if the subject is
-  // not ours, write subject and body again and check once more. Never leave
-  // a template with "(INSERT PRODUCT)" sitting in the outbox as if it were ours.
-  const readBack = async () => {
-    const r = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=subject,state`);
-    const j = (await r.json().catch(() => null)) as { data?: { attributes?: { subject?: string; state?: string } } } | null;
-    return j?.data?.attributes?.subject ?? null;
-  };
-  const wanted = (send.subject ?? "").trim();
-  let got = await readBack();
-  if ((got ?? "").trim() !== wanted) {
-    const fix = await outreachRequest(`/mailings/${mailingId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), attributes: { subject: send.subject ?? "", bodyHtml } } }),
-    });
-    if (!fix.ok) throw new Error(`Outreach kept the step template instead of the draft and would not take the correction: ${(await fix.text()).slice(0, 200)}`);
-    got = await readBack();
-    if ((got ?? "").trim() !== wanted) {
-      throw new Error(`Outreach kept the step template ("${got ?? ""}") instead of the draft. The mailing ${mailingId} was left as a draft; nothing was scheduled.`);
-    }
+  // Read it back: the subject must be ours, or nothing goes further.
+  const check = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=subject,state`);
+  const checked = (await check.json().catch(() => null)) as { data?: { attributes?: { subject?: string } } } | null;
+  const got = (checked?.data?.attributes?.subject ?? "").trim();
+  if (got !== (send.subject ?? "").trim()) {
+    throw new Error(`Outreach stored a different subject ("${got}") than the draft. Mailing ${mailingId} left as a draft; nothing scheduled.`);
   }
 
   const patch: Partial<E1Send> = { outreach_mailing_id: String(mailingId), outreach_task_id: ids.taskId, scheduled_for: sendAt.toISOString() };
-  if (settings.dryRun) return updateSend(id, { ...patch, status: "dry_run", status_reason: "Dry run: draft created in Outreach, not scheduled." });
+  if (settings.dryRun) return updateSend(id, { ...patch, status: "dry_run", status_reason: "Dry run: draft created in Outreach, not scheduled. The step task is left open." });
   const flip = await outreachRequest(`/mailings/${mailingId}`, {
     method: "PATCH",
     body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), attributes: { state: "scheduled", scheduledAt: sendAt.toISOString() } } }),
   });
   if (!flip.ok) throw new Error(`Outreach would not schedule the mailing: ${(await flip.text()).slice(0, 300)}`);
-  return updateSend(id, { ...patch, status: "scheduled", status_reason: null });
+
+  // Close the step's manual-email task so the sequence moves on to step 2.
+  // Best effort: the email is scheduled either way, and the note says if the
+  // task has to be ticked by hand.
+  const taskDone = await completeTask(ids.taskId);
+  return updateSend(id, { ...patch, status: "scheduled", status_reason: taskDone ? null : "Scheduled. The step-1 task in Outreach could not be marked done; tick it there so the sequence continues." });
+}
+
+async function completeTask(taskId: string): Promise<boolean> {
+  for (const attributes of [{ state: "complete" }, { completed: true }]) {
+    const r = await outreachRequest(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ data: { type: "task", id: Number(taskId), attributes } }) }).catch(() => null);
+    if (r?.ok) return true;
+  }
+  return false;
 }
 
 /** Undo a scheduled or dry-run send: mailing back to draft, prospect out of the sequence. */
