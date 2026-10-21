@@ -67,20 +67,35 @@ export async function suggestForRow(req: SuggestRequest): Promise<StoredCallSugg
   const examples = selectExamples(history, corrections, `${req.meetingTitle}\n${summary}`, 20);
   const prompt = buildSuggestionPrompt(input, examples);
 
-  let text: string;
-  try {
+  // The model sometimes answers with no text at all, or with a sentence
+  // instead of the JSON. One retry with the format spelled out again; if that
+  // also fails, the error says what came back so it is not a mystery.
+  const ask = async (reminder: string) => {
     const message = await trackedCreate(client, "call_logger", {
       model: SUGGESTION_MODEL,
-      max_tokens: 600,
-      messages: [{ role: "user", content: prompt }],
+      max_tokens: 800,
+      messages: [{ role: "user", content: reminder ? `${prompt}\n\n${reminder}` : prompt }],
     });
-    text = message.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+    const text = message.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+    return { text, stop: message.stop_reason, blocks: message.content.map((b) => b.type).join(",") || "none" };
+  };
+  let reply: { text: string; stop: string | null; blocks: string };
+  try {
+    reply = await ask("");
+    if (!/\{[\s\S]*\}/.test(reply.text)) {
+      console.warn(`[call-suggest] no JSON on first try (stop=${reply.stop}, blocks=${reply.blocks}): ${reply.text.slice(0, 200).replace(/\s+/g, " ")}`);
+      reply = await ask("Reply with ONLY the JSON object described above. No words before or after it.");
+    }
   } catch (err) {
     console.error("call suggestion AI error:", err instanceof Error ? err.message : err);
     throw new Error("The AI suggestion service is busy. Try again in a minute, or fill the fields in yourself.");
   }
+  if (!/\{[\s\S]*\}/.test(reply.text)) {
+    const sample = reply.text.trim().replace(/\s+/g, " ").slice(0, 120);
+    throw new Error(sample ? `The AI reply had no JSON. It said: "${sample}"` : `The AI returned no text (stop: ${reply.stop ?? "?"}, blocks: ${reply.blocks}).`);
+  }
 
-  const suggestion = parseSuggestion(text, input);
+  const suggestion = parseSuggestion(reply.text, input);
   const stored = {
     ...suggestion,
     eventId: req.eventId,
