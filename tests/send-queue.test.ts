@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planSendSlots, recipientTimeZone } from "../lib/send-slots";
 import { interpret } from "../lib/email-verify";
 import { estimateCost } from "../lib/model-cost";
-import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank } from "../lib/e1-sends";
+import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting } from "../lib/e1-sends";
 
 describe("recipientTimeZone", () => {
   it("maps states, provinces and countries", () => {
@@ -193,5 +193,13 @@ describe("matchSequence with near-duplicate sequences", () => {
   it("falls back to the name with the fewest extra words when the mapping is absent", () => {
     const renamed = seqs.map((s) => (s.id === "a" ? { ...s, name: "[E] - Logistics and Freight and Supply Chain Enablement" } : s));
     expect(matchSequence("Freight Supply Chain Enablement", renamed, {})?.id).toBe("a");
+  });
+});
+
+describe("withGreeting", () => {
+  it("adds the greeting once", () => {
+    expect(withGreeting("I have studied Acme going back to 2001.", "Noel")).toBe("Hi Noel,\n\nI have studied Acme going back to 2001.");
+    expect(withGreeting("Hi Noel,\n\nI have studied Acme.", "Noel")).toBe("Hi Noel,\n\nI have studied Acme.");
+    expect(withGreeting("I have studied Acme.", null)).toBe("Hi,\n\nI have studied Acme.");
   });
 });

@@ -32,6 +32,7 @@ type Row = {
   sequence_name: string | null;
   contact_id: string | null;
   contact_name: string | null;
+  contact_first_name: string | null;
   contact_title: string | null;
   contact_email: string | null;
   contact_options: Contact[];
@@ -478,7 +479,7 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
             ) : null}
           </div>
           <label className="block">
-            <span className="text-ink-secondary">Email</span>
+            <span className="text-ink-secondary">Email <span className="text-ink-muted">· sent as “Hi {row.contact_first_name || "there"},” followed by this text and your signature</span></span>
             <textarea disabled={!editable} value={body} rows={Math.min(18, Math.max(8, body.split("\n").length + 2))} onChange={(e) => { setBody(e.target.value); queueSave({ body: e.target.value }); }} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 font-sans text-[13px] leading-relaxed text-ink" />
           </label>
           <div className="flex flex-wrap items-center gap-3 text-[13px]">

@@ -509,6 +509,14 @@ export async function addContactAndUse(id: string, input: { firstName: string; l
   return recheckSend(id);
 }
 
+/** "Hi <first name>," on top, unless the draft already opens with a greeting. Exported for tests. */
+export function withGreeting(body: string, firstName: string | null | undefined): string {
+  const text = body.trim();
+  if (/^(hi|hello|dear|good (morning|afternoon|evening))\b/i.test(text)) return text;
+  const name = (firstName ?? "").trim();
+  return `${name ? `Hi ${name},` : "Hi,"}\n\n${text}`;
+}
+
 /** Put a different restaurant in the subject line, keeping the date part. */
 export async function chooseRestaurant(id: string, name: string): Promise<E1Send> {
   const send = await getSend(id);
@@ -758,13 +766,12 @@ export async function recheckSend(id: string): Promise<E1Send> {
   if (send.body && send.body.includes("[INSERT TOWN]") && send.city?.trim()) {
     patch.body = send.body.split("[INSERT TOWN]").join(send.city.trim());
   }
-  // Rows prepared before the hook line and restaurant pick existed get them here.
-  if (!send.hook || (send.restaurant_options ?? []).length === 0) {
-    const ctx = await sourcingContextFor(send).catch(() => null);
-    if (ctx) {
-      if (!send.hook) patch.hook = ctx.hookInfo;
-      if ((send.restaurant_options ?? []).length === 0) patch.restaurant_options = ctx.restaurantOptions;
-    }
+  // Hook line and restaurant list come from the sourcing run; refresh both
+  // every time, so a row prepared before these existed catches up.
+  const ctx = await sourcingContextFor(send).catch(() => null);
+  if (ctx) {
+    patch.hook = ctx.hookInfo;
+    patch.restaurant_options = ctx.restaurantOptions;
   }
   const merged = { ...send, ...patch };
   // Keep only the model's flags; everything the checks wrote is recomputed
@@ -871,7 +878,7 @@ async function signatureHtml(settings: SendSettings): Promise<string | null> {
 export async function createMailingForSend(id: string, ids: { prospectId: string; mailboxId: string; taskId: string }, sendAt: Date, settings: SendSettings): Promise<E1Send> {
   const send = await getSend(id);
   if (!send || !send.body) throw new Error("Send row has no body.");
-  const bodyHtml = composeHtmlBody(send.body, await signatureHtml(settings));
+  const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
   const res = await outreachRequest(`/mailings`, {
     method: "POST",
     body: JSON.stringify({
@@ -890,6 +897,30 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   if (!res.ok) throw new Error(`Outreach refused the mailing: ${text.slice(0, 300)}`);
   const mailingId = (JSON.parse(text) as { data?: { id?: string | number } }).data?.id;
   if (!mailingId) throw new Error("Outreach created the mailing but returned no id.");
+
+  // A mailing attached to a sequence step can come back carrying the step's
+  // own template instead of what was sent. Read it back; if the subject is
+  // not ours, write subject and body again and check once more. Never leave
+  // a template with "(INSERT PRODUCT)" sitting in the outbox as if it were ours.
+  const readBack = async () => {
+    const r = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=subject,state`);
+    const j = (await r.json().catch(() => null)) as { data?: { attributes?: { subject?: string; state?: string } } } | null;
+    return j?.data?.attributes?.subject ?? null;
+  };
+  const wanted = (send.subject ?? "").trim();
+  let got = await readBack();
+  if ((got ?? "").trim() !== wanted) {
+    const fix = await outreachRequest(`/mailings/${mailingId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), attributes: { subject: send.subject ?? "", bodyHtml } } }),
+    });
+    if (!fix.ok) throw new Error(`Outreach kept the step template instead of the draft and would not take the correction: ${(await fix.text()).slice(0, 200)}`);
+    got = await readBack();
+    if ((got ?? "").trim() !== wanted) {
+      throw new Error(`Outreach kept the step template ("${got ?? ""}") instead of the draft. The mailing ${mailingId} was left as a draft; nothing was scheduled.`);
+    }
+  }
+
   const patch: Partial<E1Send> = { outreach_mailing_id: String(mailingId), outreach_task_id: ids.taskId, scheduled_for: sendAt.toISOString() };
   if (settings.dryRun) return updateSend(id, { ...patch, status: "dry_run", status_reason: "Dry run: draft created in Outreach, not scheduled." });
   const flip = await outreachRequest(`/mailings/${mailingId}`, {
