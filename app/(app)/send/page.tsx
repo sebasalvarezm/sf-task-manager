@@ -401,6 +401,30 @@ function SettingsPanel({ settings, sequences, groups, onSaved }: { settings: Set
   const [form, setForm] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The stored Outlook signature (HTML when imported from a sent email), shared with the Inbox.
+  const [sig, setSig] = useState<{ html: string; source: string } | null | undefined>(undefined);
+  const [sigBusy, setSigBusy] = useState(false);
+  const [sigErr, setSigErr] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/inbox/signature", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setSig(d.signature ? { html: d.signature.html, source: d.signature.source } : null))
+      .catch(() => setSig(null));
+  }, []);
+  async function importSignature() {
+    setSigBusy(true);
+    setSigErr(null);
+    try {
+      const res = await fetch("/api/inbox/signature", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "import" }) });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error ?? "Could not import");
+      setSig(d.signature ? { html: d.signature.html, source: d.signature.source } : null);
+    } catch (e) {
+      setSigErr(e instanceof Error ? e.message : "Could not import");
+    } finally {
+      setSigBusy(false);
+    }
+  }
   const field = "mt-1 w-full rounded-sm border border-line bg-white px-2 py-1.5 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4";
   async function save() {
     setSaving(true);
@@ -432,11 +456,28 @@ function SettingsPanel({ settings, sequences, groups, onSaved }: { settings: Set
           <span className="block text-[13px] text-ink-secondary">Spelling, town, restaurant and hook checks, flag only. About 2 cents per email.</span>
         </span>
       </label>
-      <label className="block text-sm text-ink">
-        Signature for Outreach sends
-        <textarea rows={5} value={form.signatureText} onChange={(e) => setForm((f) => ({ ...f, signatureText: e.target.value }))} placeholder="Leave empty to use the Outlook signature stored for the Inbox." className={field} />
-        <span className="mt-1 block text-[13px] text-ink-secondary">Plain text, one line per line of the signature. Appended under every email the queue sends.</span>
-      </label>
+      <div className="text-sm text-ink">
+        <p>Signature</p>
+        <p className="mb-2 text-[13px] text-ink-secondary">Appended under every email the queue sends. Importing it from a sent email keeps the formatting (bold, colour, link); pasting gives plain text.</p>
+        {sig === undefined ? (
+          <p className="text-[13px] text-ink-muted">Loading…</p>
+        ) : sig ? (
+          <div className="rounded-sm border border-line bg-surface-3 p-3">
+            <div className="text-[13px] text-ink [&_a]:text-info" dangerouslySetInnerHTML={{ __html: sig.html }} />
+            <p className="mt-2 text-[12px] text-ink-muted">{sig.source === "imported" ? "Imported from a sent email, formatting kept." : "Pasted as plain text, no formatting."}</p>
+          </div>
+        ) : (
+          <p className="text-[13px] text-danger">No signature stored. Emails would go out without one.</p>
+        )}
+        <div className="mt-2 flex items-center gap-3">
+          <Button variant="secondary" size="sm" loading={sigBusy} onClick={() => void importSignature()}>Import formatted signature from my last sent email</Button>
+          {sigErr ? <span className="text-[13px] text-danger">{sigErr}</span> : null}
+        </div>
+        <label className="mt-3 block text-[13px] text-ink-secondary">
+          Plain-text override (leave empty to use the stored signature above)
+          <textarea rows={3} value={form.signatureText} onChange={(e) => setForm((f) => ({ ...f, signatureText: e.target.value }))} className={field} />
+        </label>
+      </div>
       <div className="text-sm text-ink">
         <p>Sequence overrides</p>
         <p className="mb-2 text-[13px] text-ink-secondary">Groups map to sequences by name. Set one here when the name match is wrong or missing.</p>
