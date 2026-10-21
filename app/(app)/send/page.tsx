@@ -426,25 +426,6 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
                   <option key={c.id} value={c.id} disabled={!c.email}>{c.name}{c.title ? `, ${c.title}` : ""}{c.email ? ` (${c.email})` : " (no email)"}</option>
                 ))}
               </select>
-              {adding ? (
-                <form
-                  className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_1.4fr_1fr_auto]"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (!newContact.email.trim() || !newContact.lastName.trim()) return;
-                    onAddContact(newContact);
-                    setAdding(false);
-                    setNewContact({ firstName: "", lastName: "", email: "", title: "" });
-                  }}
-                >
-                  <input required placeholder="First name" value={newContact.firstName} onChange={(e) => setNewContact({ ...newContact, firstName: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
-                  <input required placeholder="Last name" value={newContact.lastName} onChange={(e) => setNewContact({ ...newContact, lastName: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
-                  <input required type="email" placeholder="Email" value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
-                  <input placeholder="Title (optional)" value={newContact.title} onChange={(e) => setNewContact({ ...newContact, title: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
-                  <Button size="sm" type="submit" loading={busy}>Add and use</Button>
-                </form>
-              ) : null}
-              {adding ? <p className="mt-1 text-[12px] text-ink-muted">Created on the account in Salesforce, then verified and used for this email.</p> : null}
             </div>
             <label className="block">
               <span className="text-ink-secondary">Sequence</span>
@@ -456,6 +437,29 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
               </select>
             </label>
           </div>
+          {adding ? (
+            <form
+              className="rounded-sm border border-line bg-white p-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newContact.email.trim() || !newContact.lastName.trim()) return;
+                onAddContact(newContact);
+                setAdding(false);
+                setNewContact({ firstName: "", lastName: "", email: "", title: "" });
+              }}
+            >
+              <div className="grid gap-2 sm:grid-cols-4">
+                <input required placeholder="First name" value={newContact.firstName} onChange={(e) => setNewContact({ ...newContact, firstName: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+                <input required placeholder="Last name" value={newContact.lastName} onChange={(e) => setNewContact({ ...newContact, lastName: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+                <input required type="email" placeholder="Email" value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+                <input placeholder="Title (optional)" value={newContact.title} onChange={(e) => setNewContact({ ...newContact, title: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+              </div>
+              <div className="mt-2 flex items-center gap-3">
+                <Button size="sm" type="submit" loading={busy} className="whitespace-nowrap">Add and use</Button>
+                <span className="text-[12px] text-ink-muted">Created on the account in Salesforce, then verified and used for this email.</span>
+              </div>
+            </form>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="text-ink-secondary">Subject</span>
