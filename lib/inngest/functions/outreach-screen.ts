@@ -24,10 +24,14 @@ export const outreachScreenJob = inngest.createFunction(
     try {
       const totals: Record<string, number> = {};
       let done = 0;
+      // Every id this job has touched. Passed back as an exclusion so no row
+      // is checked twice in one job whatever happens to its verdict write.
+      const seen: string[] = [];
       for (let offset = 0; offset < limit; offset += slice) {
         const take = Math.min(slice, limit - offset);
-        const counts = await step.run(`screen-${offset}`, () => runScreenBatch(take));
-        for (const [k, v] of Object.entries(counts)) totals[k] = (totals[k] ?? 0) + (v as number);
+        const counts = await step.run(`screen-${offset}`, () => runScreenBatch(take, undefined, seen));
+        seen.push(...counts.ids);
+        for (const [k, v] of Object.entries(counts)) if (k !== "ids") totals[k] = (totals[k] ?? 0) + (v as number);
         done += counts.total;
         await step.run(`progress-${offset}`, () =>
           updateProgress(jobId, { step: `Checked ${done} of ${limit}`, pct: Math.round((done / limit) * 100) }),

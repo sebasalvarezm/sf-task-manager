@@ -314,16 +314,18 @@ type QueueRow = Pick<CandidateRow, "sf_account_id" | "account_name" | "website" 
  * hand. Including errors here once put eleven unreadable rows at the front of
  * every batch, re-checked ten times over in an evening.
  */
-export async function nextToScreen(limit: number): Promise<QueueRow[]> {
-  const { data, error } = await getSupabaseAdmin()
+export async function nextToScreen(limit: number, exclude: string[] = []): Promise<QueueRow[]> {
+  let q = getSupabaseAdmin()
     .from("outreach_candidates")
     .select("sf_account_id, account_name, website, industry, employees")
     .eq("in_pool", true)
     .eq("review_status", "open")
     .eq("rule_status", "eligible")
-    .eq("screen_status", "pending")
-    .order("last_e1_at", { ascending: true, nullsFirst: true })
-    .limit(limit);
+    .eq("screen_status", "pending");
+  // Rows this job already handled never come back in the same job, even if a
+  // verdict write failed: a row costs one check per job, full stop.
+  if (exclude.length > 0) q = q.not("sf_account_id", "in", `(${exclude.map((id) => `"${id.replace(/"/g, "")}"`).join(",")})`);
+  const { data, error } = await q.order("last_e1_at", { ascending: true, nullsFirst: true }).limit(limit);
   if (error) throw new Error(error.message);
   return (data ?? []) as QueueRow[];
 }
@@ -368,10 +370,10 @@ export async function screenAndStore(row: QueueRow): Promise<ScreenVerdict> {
   return verdict;
 }
 
-/** Screen up to `limit` accounts, a few at a time. Returns counts by verdict. */
-export async function runScreenBatch(limit: number, onProgress?: (done: number, total: number) => Promise<void>): Promise<Record<ScreenStatus, number> & { total: number }> {
-  const rows = await nextToScreen(limit);
-  const counts: Record<ScreenStatus, number> & { total: number } = { pending: 0, software: 0, not_software: 0, wrong_market: 0, acquired: 0, unclear: 0, error: 0, total: rows.length };
+/** Screen up to `limit` accounts, a few at a time. Returns counts by verdict and the ids handled. */
+export async function runScreenBatch(limit: number, onProgress?: (done: number, total: number) => Promise<void>, exclude: string[] = []): Promise<Record<ScreenStatus, number> & { total: number; ids: string[] }> {
+  const rows = await nextToScreen(limit, exclude);
+  const counts: Record<ScreenStatus, number> & { total: number; ids: string[] } = { pending: 0, software: 0, not_software: 0, wrong_market: 0, acquired: 0, unclear: 0, error: 0, total: rows.length, ids: rows.map((r) => r.sf_account_id) };
   let done = 0;
   const width = 4;
   for (let i = 0; i < rows.length; i += width) {

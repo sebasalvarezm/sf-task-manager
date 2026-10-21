@@ -353,7 +353,7 @@ If you can't identify competitors with reasonable confidence, return [].`,
         },
       ],
     });
-    const text = resp.content[0].type === "text" ? resp.content[0].text : "";
+    const text = resp.content.filter((b) => b.type === "text").map((b) => (b.type === "text" ? b.text : "")).join("\n");
     const cleaned = text
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/```\s*$/i, "")

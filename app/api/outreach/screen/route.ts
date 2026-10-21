@@ -41,6 +41,12 @@ export async function POST(request: NextRequest) {
     if (spent >= settings.maxCheckSpendPerDay) {
       return NextResponse.json({ jobId: null, status: "spend_cap", pending, spentToday: spent, spendCap: settings.maxCheckSpendPerDay });
     }
+    // Third, independent line: jobs per day, counted in the jobs table. Holds
+    // even if the spend log or the screened_at stamps were somehow not written.
+    const jobsToday = await countJobsToday();
+    if (jobsToday >= MAX_JOBS_PER_DAY) {
+      return NextResponse.json({ jobId: null, status: "daily_cap", pending, checkedToday: today, dailyCap: settings.maxChecksPerDay, jobsToday });
+    }
     const limit = Math.min(200, room, Math.max(1, Number(body.limit) || 60));
     const label = pending > 0 ? `Outreach check: ${Math.min(limit, pending)} accounts` : `Outreach: finding ${Math.min(60, linkedin)} LinkedIn pages`;
     const job = await createJob({ kind: "outreach_screen", input: { limit }, label, resultRoute: "/outreach" });
@@ -58,6 +64,19 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+const MAX_JOBS_PER_DAY = 10;
+
+async function countJobsToday(): Promise<number> {
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  const { count } = await getSupabaseAdmin()
+    .from("jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("kind", "outreach_screen")
+    .gte("created_at", start.toISOString());
+  return count ?? 0;
 }
 
 async function runningJob(): Promise<{ id: string; status: string; progress: unknown } | null> {

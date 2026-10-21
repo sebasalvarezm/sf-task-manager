@@ -607,6 +607,22 @@ export function isParkedPage(text: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * All the text in a response, joined. Sonnet and Haiku 5.5 can put a non-text
+ * block first (a tool use, a search result), so content[0].text is not safe:
+ * every sourcing stage used to crash on "reading 'trim'" when that happened.
+ */
+function responseText(resp: { content?: Array<{ type?: string; text?: string }>; stop_reason?: string } | null | undefined): string {
+  const blocks = resp?.content ?? [];
+  const text = blocks
+    .filter((b) => b && b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("\n")
+    .trim();
+  if (!text) console.warn(`[sourcing] model answer had no text (blocks: ${blocks.map((b) => b?.type).join(",") || "none"}; stop: ${resp?.stop_reason ?? "?"})`);
+  return text;
+}
+
+/**
  * Wrapper around Claude messages.create() with automatic retry on transient errors.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -675,7 +691,7 @@ ${text.slice(0, 6000)}`;
     messages: [{ role: "user", content: prompt }],
   });
 
-  const raw = resp.content[0].text.trim();
+  const raw = responseText(resp);
   try {
     const match = raw.match(/\[[\s\S]*\]/);
     if (match) return JSON.parse(match[0]);
@@ -719,7 +735,7 @@ ${text.slice(0, 6000)}`;
     messages: [{ role: "user", content: prompt }],
   });
 
-  const raw = resp.content[0].text.trim();
+  const raw = responseText(resp);
   try {
     const match = raw.match(/\[[\s\S]*\]/);
     if (match) return JSON.parse(match[0]);
@@ -775,7 +791,7 @@ ${text.slice(0, 4000)}`,
     ],
   });
 
-  const raw = resp.content[0].text.trim();
+  const raw = responseText(resp);
   const match = raw.match(/\b(19|20)\d{2}\b/);
   if (match) {
     const year = parseInt(match[0]);
@@ -1244,7 +1260,7 @@ Return only the product/service name from the OLD list, or "none". No explanatio
     ],
   });
 
-  const raw = resp.content[0].text.trim();
+  const raw = responseText(resp);
   // The model is now allowed to decline, so accept every shape of "no" it may
   // answer with ("none", "None.", "none — nothing is clearly gone").
   if (/^none\b/i.test(raw) || raw.length > 200) return null;
@@ -1753,7 +1769,7 @@ ${addressEvidence}`,
     ],
   });
 
-  const raw = resp.content[0].text.trim();
+  const raw = responseText(resp);
   return validateAddress(raw);
 }
 
@@ -2128,7 +2144,7 @@ ${summaries}`,
     ],
   });
 
-  const raw = resp.content[0].text.trim();
+  const raw = responseText(resp);
 
   // Parse JSON response
   try {
@@ -2346,7 +2362,7 @@ ${currentText.slice(0, 2500)}`,
     ],
   });
 
-  const sentence = cleanCompanySentence(resp.content[0].text);
+  const sentence = cleanCompanySentence(responseText(resp));
   if (sentence) {
     return orderOutreachParagraph(`${paragraph.trim()} ${sentence}`, paragraph);
   }
@@ -2939,7 +2955,7 @@ ${text.slice(0, 3000)}`,
         },
       ],
     });
-    const raw = resp.content[0]?.text?.trim() ?? "";
+    const raw = responseText(resp);
     const year = normalizeYear(raw.match(/\b(19|20)\d{2}\b/)?.[0]);
     if (year) return { ...anchor, year, dateConfidence: "high" };
   } catch {
@@ -3399,7 +3415,7 @@ Return only the hook text. No commentary.`,
     ],
   });
 
-  let result = resp.content[0].text.trim();
+  let result = responseText(resp);
   if (
     (result.startsWith('"') && result.endsWith('"')) ||
     (result.startsWith("'") && result.endsWith("'"))
