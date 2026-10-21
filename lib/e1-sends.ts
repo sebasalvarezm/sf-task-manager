@@ -21,7 +21,7 @@ import type { SourcingResult } from "./jobs/sourcing-runner";
 
 export type E1Status = "pending" | "review" | "ready" | "approved" | "scheduling" | "dry_run" | "scheduled" | "sent" | "failed" | "rejected";
 
-export type ReviewFlag = { kind: "spelling" | "town" | "restaurant" | "hook" | "contact" | "email" | "sequence" | "other"; message: string; severity: "red" | "yellow" };
+export type ReviewFlag = { kind: "spelling" | "town" | "restaurant" | "hook" | "contact" | "email" | "sequence" | "placeholder" | "other"; message: string; severity: "red" | "yellow" };
 
 /** Where the opening hook came from and how far to trust it; shown on the row. */
 export type HookInfo = {
@@ -201,8 +201,15 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
     refreshed.push(prev.id);
   }
 
+  // Rows still waiting on a decision are checked again too, so "Check this
+  // week's E1s" picks up a better sequence match or a filled town without
+  // the draft having changed.
+  const recheck = (existing ?? [])
+    .map((r) => r as Existing)
+    .filter((r) => ["pending", "review", "ready"].includes(r.status) && !refreshed.includes(r.id))
+    .map((r) => r.id);
   const fresh = rows.filter((r) => !byWeekly.has(r.id) && r.draft);
-  if (fresh.length === 0) return refreshed;
+  if (fresh.length === 0) return [...refreshed, ...recheck];
 
   // Billing state is what the time zone needs; Weekly Outreach rows carry country and city only.
   const states = new Map<string, { state: string | null; country: string | null; city: string | null }>();
@@ -240,7 +247,7 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
     if (insErr) throw new Error(insErr.message);
     created.push((data as { id: string }).id);
   }
-  return [...refreshed, ...created];
+  return [...refreshed, ...recheck, ...created];
 }
 
 // ── Contact pick ────────────────────────────────────────────────────────────
@@ -442,7 +449,7 @@ function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "seq
   // and the model review has let these through.
   const placeholders = findPlaceholders(`${send.subject ?? ""}\n${send.body ?? ""}`);
   if (placeholders.length > 0) {
-    out.push({ kind: "other", severity: "red", message: `Unfilled placeholder in the draft: ${placeholders.join(", ")}. Fill it in before approving.` });
+    out.push({ kind: "placeholder", severity: "red", message: `Unfilled placeholder in the draft: ${placeholders.join(", ")}. Fill it in before approving.` });
   }
   if (!send.contact_id) out.push({ kind: "contact", severity: "red", message: "No Salesforce contact with an email on this account. Add one or reject." });
   else if (!send.contact_email) out.push({ kind: "contact", severity: "red", message: "The chosen contact has no email address." });
@@ -550,9 +557,25 @@ export async function recheckSend(id: string): Promise<E1Send> {
     patch.verify_detail = v;
     patch.verified_email = send.contact_email;
   }
+  // No sequence yet: try the match again (the list or the matcher may have
+  // improved since the row was prepared). A hand pick is never overridden.
+  let sequencesLoaded = true;
+  if (!send.sequence_id && send.group_name) {
+    const settings = await getSendSettings();
+    const sequences = await listSequences().catch(() => [] as OutreachSequence[]);
+    sequencesLoaded = sequences.length > 0;
+    const seq = matchSequence(send.group_name, sequences, settings.sequenceMap);
+    if (seq) {
+      patch.sequence_id = seq.id;
+      patch.sequence_name = seq.name;
+    }
+  }
+  if (send.body && send.body.includes("[INSERT TOWN]") && send.city?.trim()) {
+    patch.body = send.body.split("[INSERT TOWN]").join(send.city.trim());
+  }
   const merged = { ...send, ...patch };
-  const modelFlags = send.review_flags.filter((f) => !["contact", "email", "sequence"].includes(f.kind));
-  const flags = [...systemFlags(merged), ...modelFlags];
+  const modelFlags = send.review_flags.filter((f) => !["contact", "email", "sequence", "placeholder"].includes(f.kind));
+  const flags = [...systemFlags(merged, sequencesLoaded), ...modelFlags];
   return updateSend(id, { ...patch, review_flags: flags, status: ["pending", "review", "ready"].includes(send.status) ? statusFromFlags(flags) : send.status });
 }
 
