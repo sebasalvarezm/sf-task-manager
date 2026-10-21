@@ -1,3 +1,4 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, MODELS, stripCites } from "@/lib/anthropic";
 import { trackedCreate } from "@/lib/model-cost";
 import { fetchAccountDetails, fetchRecentAccountActivity } from "@/lib/salesforce-prep";
@@ -117,10 +118,13 @@ const SECTION_KEYS: Record<string, keyof OnePagerContent> = {
  */
 export function parseSections(raw: string): OnePagerContent {
   const text = stripCites(raw).replace(/\r/g, "");
-  const headingRe = /^[ \t]*(?:#{1,4}[ \t]*|\*\*)?(COMPANY NAME|QUICK BRIEF|BUSINESS MODEL|RELATIONSHIP|WHAT THEY DO|CUSTOMERS|COMPANY HISTORY|RECENT NEWS)(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*/gim;
+  // A heading is the label followed by a colon, or the label alone on its own
+  // line (the model drops the colon now and then; a prep must not fail on it).
+  // Markdown decoration (#, **) on either side is tolerated.
+  const headingRe = /^[ \t]*(?:#{1,4}[ \t]*|\*\*)?(COMPANY NAME|QUICK BRIEF|BUSINESS MODEL|RELATIONSHIP(?: CATCH[- ]?UP)?|WHAT THEY DO|CUSTOMERS(?: (?:&|AND) USE CASE)?|COMPANY HISTORY|RECENT NEWS)(?:\*\*)?[ \t]*(?::[ \t]*(?:\*\*)?[ \t]*|(?:\*\*)?[ \t]*$)/gim;
   const found: Array<{ key: keyof OnePagerContent; start: number; bodyStart: number }> = [];
   for (const m of text.matchAll(headingRe)) {
-    const key = SECTION_KEYS[m[1].toLowerCase()];
+    const key = SECTION_KEYS[m[1].toLowerCase().replace(/ catch[- ]?up$/, "").replace(/ (?:&|and) use case$/, "")];
     if (key && m.index !== undefined) found.push({ key, start: m.index, bodyStart: m.index + m[0].length });
   }
   const out: OnePagerContent = {
@@ -358,25 +362,44 @@ async function generateSections(
   withSearch: boolean,
 ): Promise<OnePagerContent> {
   const ask = async (extra: string) => {
-    const res = await trackedCreate(anthropic, "call_prep", {
+    const messages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: extra ? `${prompt}\n\n${extra}` : prompt }];
+    let res = await trackedCreate(anthropic, "call_prep", {
       model: MODELS.drafting,
       max_tokens: 4096,
       system: PREP_STYLE,
       ...(withSearch ? { tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 5 }] } : {}),
-      messages: [{ role: "user", content: extra ? `${prompt}\n\n${extra}` : prompt }],
+      messages,
     });
+    // With web search the server can hand the turn back mid-way
+    // ("pause_turn") before any prose exists. Hand it straight back so the
+    // model finishes; otherwise the answer is just search calls and no text.
+    for (let i = 0; i < 3 && res.stop_reason === "pause_turn"; i++) {
+      messages.push({ role: "assistant", content: res.content });
+      res = await trackedCreate(anthropic, "call_prep", {
+        model: MODELS.drafting,
+        max_tokens: 4096,
+        system: PREP_STYLE,
+        ...(withSearch ? { tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 5 }] } : {}),
+        messages,
+      });
+    }
     const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
-    return { text, parsed: parseSections(text), stop: res.stop_reason };
+    return { text, parsed: parseSections(text), stop: res.stop_reason, blocks: res.content.map((b) => b.type).join(",") };
   };
   let attempt = await ask("");
   let thin = thinSections(attempt.parsed, prepMode);
   if (thin.length > 0) {
-    console.warn(`[prep] thin sections on first try (${thin.join(", ")}; stop=${attempt.stop}): ${attempt.text.slice(0, 300).replace(/\s+/g, " ")}`);
-    attempt = await ask(`Your previous answer was incomplete: ${thin.join(", ")} ${thin.length === 1 ? "was" : "were"} missing or cut short. Write the complete answer with every section filled in full.`);
+    console.warn(`[prep] thin sections on first try (${thin.join(", ")}; stop=${attempt.stop}; blocks=${attempt.blocks}): ${attempt.text.slice(0, 300).replace(/\s+/g, " ")}`);
+    attempt = await ask(`Your previous answer was incomplete: ${thin.join(", ")} ${thin.length === 1 ? "was" : "were"} missing or cut short. Write the complete answer with every section filled in full, using the exact headings given, each followed by a colon.`);
     thin = thinSections(attempt.parsed, prepMode);
   }
   if (thin.length > 0) {
-    throw new Error(`The one-pager came back incomplete (${thin.join(", ")}). Try again; if it repeats, the website gave too little to work with.`);
+    // Say what came back, so a format problem and a thin website are told apart.
+    const sample = attempt.text.trim().replace(/\s+/g, " ").slice(0, 160);
+    const why = sample
+      ? `The answer started: "${sample}${attempt.text.trim().length > 160 ? "…" : ""}"`
+      : `The model returned no text (stop reason: ${attempt.stop ?? "unknown"}).`;
+    throw new Error(`The one-pager came back incomplete (${thin.join(", ")}). ${why} Try again; if it repeats, send this message to Claude.`);
   }
   return attempt.parsed;
 }

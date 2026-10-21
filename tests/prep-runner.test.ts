@@ -34,3 +34,37 @@ describe("parseSections", () => {
     expect(thinSections(p, "first_call")).toEqual(["whatTheyDo", "customers", "companyHistory"]);
   });
 });
+
+describe("parseSections tolerates heading variants", () => {
+  it("reads headings without a colon and with longer labels", () => {
+    const raw = `COMPANY NAME
+TireCheck
+
+WHAT THEY DO
+TireCheck sells software to tyre shops.
+
+CUSTOMERS & USE CASE:
+Independent tyre dealers.
+
+COMPANY HISTORY
+Founded in 2004.
+
+RELATIONSHIP CATCH-UP
+Not available.
+
+RECENT NEWS
+- Launched a new app, Mar 2026.`;
+    const c = parseSections(raw);
+    expect(c.companyName).toBe("TireCheck");
+    expect(c.whatTheyDo).toBe("TireCheck sells software to tyre shops.");
+    expect(c.customers).toBe("Independent tyre dealers.");
+    expect(c.companyHistory).toBe("Founded in 2004.");
+    expect(c.relationshipCatchUp).toBe("Not available.");
+    expect(c.recentNews).toEqual(["Launched a new app, Mar 2026."]);
+  });
+  it("does not treat a label inside a sentence as a heading", () => {
+    const c = parseSections("WHAT THEY DO:\nThey sell to customers who need it. Customers are mostly dealers.\nCUSTOMERS:\nDealers.");
+    expect(c.whatTheyDo).toContain("Customers are mostly dealers.");
+    expect(c.customers).toBe("Dealers.");
+  });
+});
