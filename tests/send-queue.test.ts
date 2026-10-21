@@ -180,3 +180,18 @@ describe("matchSequence against the real Outreach sequence names", () => {
     }
   });
 });
+
+describe("matchSequence with near-duplicate sequences", () => {
+  const seqs = [
+    { id: "a", name: "[E] - Logistics — Freight & Supply Chain Enablement ", tags: [], enabled: true },
+    { id: "b", name: "[E] - Logistics, Freight & Supply Chain Enablement: Outreach", tags: [], enabled: true },
+    { id: "c", name: "[E] - Waste", tags: [], enabled: true },
+  ];
+  it("takes the fixed mapping over a look-alike", () => {
+    expect(matchSequence("Freight Supply Chain Enablement", seqs, {})?.id).toBe("a");
+  });
+  it("falls back to the name with the fewest extra words when the mapping is absent", () => {
+    const renamed = seqs.map((s) => (s.id === "a" ? { ...s, name: "[E] - Logistics and Freight and Supply Chain Enablement" } : s));
+    expect(matchSequence("Freight Supply Chain Enablement", renamed, {})?.id).toBe("a");
+  });
+});

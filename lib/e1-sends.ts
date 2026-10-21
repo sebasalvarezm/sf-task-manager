@@ -293,6 +293,34 @@ function sequenceTokens(name: string): string[] {
   return normalizeSequenceName(name).split(" ").filter((w) => w && !SEQUENCE_NOISE.has(w));
 }
 
+/**
+ * The group files and their Outreach sequences, by name as they appear in
+ * Outreach. This is the fixed mapping; the word matching below is only the
+ * fallback for a group missing here or a sequence that was renamed.
+ */
+export const GROUP_SEQUENCE_NAMES: Record<string, string> = {
+  "Fresh Produce": "[E] - Agriculture — Fresh Produce",
+  "Grain Crop": "[E] - Agriculture — Grain & Crop",
+  "Protein Livestock": "[E] - Agriculture — Protein & Livestock",
+  "Bulk Liquids": "[E] - Bulk Liquids",
+  "Bulk Materials": "[E] - Bulk Materials",
+  "Contractor Solutions": "[E] - Contractor",
+  "Equipment Dealers Rental": "[E] - Equipment",
+  "Forestry Lumber": "[E] - Forest & Lumber",
+  "Mining": "[E] - Mining",
+  "Safety Compliance": "[E] - Safety & Compliance",
+  "Structure Design Analysis": "[E] - Structure Design/Analysis",
+  "Waste Recycling": "[E] - Waste",
+  "Freight Supply Chain Enablement": "[E] - Logistics — Freight & Supply Chain Enablement",
+  "Industrial Gate Yard": "[E] - Logistics — Industrial Gate & Yard",
+  "Maritime": "[E] - Logistics — Maritime",
+  "Rail": "[E] - Logistics — Rail",
+  "Aftermarket Service": "[E] - Manufacturing — Aftermarket & Service",
+  "Engineering Estimating": "[E] - Manufacturing — Engineering & Estimating",
+  "Process Manufacturing": "[E] - Manufacturing → Process Manufacturing",
+  "Production Quality": "[E] - Manufacturing → Production Quality",
+};
+
 export function matchSequence(groupName: string | null, sequences: OutreachSequence[], overrides: Record<string, string>): OutreachSequence | null {
   if (!groupName) return null;
   const override = overrides[groupName];
@@ -301,6 +329,15 @@ export function matchSequence(groupName: string | null, sequences: OutreachSeque
   if (!want) return null;
   // Only the "[E]" sequences are first-touch sequences; "[D-E]" and others are not.
   const pool = sequences.filter((s) => s.enabled && /^\s*\[E\]/i.test(s.name));
+  // 1. The fixed mapping, compared on normalized names so punctuation and
+  //    stray spaces in Outreach do not matter.
+  const mappedName = GROUP_SEQUENCE_NAMES[groupName] ?? Object.entries(GROUP_SEQUENCE_NAMES).find(([g]) => normalizeSequenceName(g) === want)?.[1];
+  if (mappedName) {
+    const mappedNorm = normalizeSequenceName(mappedName);
+    const mapped = pool.find((s) => normalizeSequenceName(s.name) === mappedNorm);
+    if (mapped) return mapped;
+  }
+  // 2. The sequence named exactly like the group.
   const exact = pool.find((s) => normalizeSequenceName(s.name) === want);
   if (exact) return exact;
   const contains = pool.filter((s) => {
@@ -314,12 +351,18 @@ export function matchSequence(groupName: string | null, sequences: OutreachSeque
   // a clear winner.
   const wantWords = sequenceTokens(groupName);
   if (wantWords.length === 0) return null;
+  // 3. Shared words. On equal scores the name with the fewest extra words
+  //    wins ("… Freight & Supply Chain Enablement" over "… Freight & Supply
+  //    Chain Enablement: Outreach"); a dead heat is left for Seb.
   const scored = pool
-    .map((s) => ({ s, score: wordOverlap(wantWords, sequenceTokens(s.name)) }))
+    .map((s) => {
+      const have = sequenceTokens(s.name);
+      return { s, score: wordOverlap(wantWords, have), extra: have.filter((h) => !wantWords.some((w) => sameWord(w, h))).length };
+    })
     .filter((x) => x.score >= 0.6)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => b.score - a.score || a.extra - b.extra);
   if (scored.length === 0) return null;
-  if (scored.length > 1 && scored[0].score === scored[1].score) return null;
+  if (scored.length > 1 && scored[0].score === scored[1].score && scored[0].extra === scored[1].extra) return null;
   return scored[0].s;
 }
 
