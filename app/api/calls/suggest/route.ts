@@ -3,7 +3,7 @@ import { isAdmin } from "@/lib/auth";
 import { suggestForRow } from "@/lib/call-suggest-run";
 import { isSalesforceId } from "@/lib/sf-query";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 /**
  * Suggested commentary, follow-up and type for one Call Logger row, from its

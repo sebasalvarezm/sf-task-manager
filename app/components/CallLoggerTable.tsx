@@ -102,6 +102,8 @@ type Props = {
   suggestions?: Map<string, RowSuggestion>;
   /** Rows whose suggestion is being written right now. */
   suggestionsLoading?: Set<string>;
+  /** Rows whose automatic suggestion failed, with the reason. */
+  suggestionErrors?: Map<string, string>;
   onSuggestion?: (eventId: string, suggestion: RowSuggestion) => void;
 };
 
@@ -120,6 +122,7 @@ export default function CallLoggerTable({
   granolaNotes,
   suggestions,
   suggestionsLoading,
+  suggestionErrors,
   onSuggestion,
 }: Props) {
   const [activeCell, setActiveCell] = useState<{
@@ -174,7 +177,7 @@ export default function CallLoggerTable({
 
   async function suggestFromNotes(meeting: MeetingRow) {
     const entry = getEntry(meeting.eventId);
-    if (!entry.notes.trim()) return;
+    if (!entry.notes.trim() && !granolaNotes?.has(meeting.eventId)) return;
     setSuggesting((prev) => new Set(prev).add(meeting.eventId));
     setSuggestErrors((prev) => { const next = new Map(prev); next.delete(meeting.eventId); return next; });
     try {
@@ -836,7 +839,7 @@ export default function CallLoggerTable({
                     type="text"
                     value={commentaryPending ? suggestion!.commentary! : entry.commentary}
                     placeholder={
-                      !hasMatch ? "—" : suggestionLoading ? "Writing a suggestion from Granola…" : "e.g. 10M, young, reconnect"
+                      !hasMatch ? "—" : suggestionLoading ? "Writing a suggestion from Granola…" : suggestionErrors?.has(meeting.eventId) ? "No suggestion (see note below)" : "e.g. 10M, young, reconnect"
                     }
                     disabled={!hasMatch}
                     onChange={(e) =>
@@ -861,6 +864,12 @@ export default function CallLoggerTable({
                   />
                   {commentaryPending ? (
                     <div className="mt-0.5 flex">{renderSuggestedMarker(meeting.eventId, "commentary", null)}</div>
+                  ) : null}
+                  {!commentaryPending && !suggestionLoading && suggestionErrors?.has(meeting.eventId) && granolaNotes?.has(meeting.eventId) ? (
+                    <p className="mt-0.5 text-xs text-warn">
+                      {suggestionErrors.get(meeting.eventId)}{" "}
+                      <button type="button" onClick={(e) => { e.stopPropagation(); void suggestFromNotes(meeting); }} className="text-info underline underline-offset-2 hover:text-ink">Try again</button>
+                    </p>
                   ) : null}
                 </td>
 

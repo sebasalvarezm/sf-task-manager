@@ -80,6 +80,8 @@ function CallsPageContent() {
   // Suggested Type / Commentary / Follow-up per row. Never logged until accepted.
   const [suggestions, setSuggestions] = useState<Map<string, RowSuggestion>>(new Map());
   const [suggestionsLoading, setSuggestionsLoading] = useState<Set<string>>(new Set());
+  // Rows whose automatic suggestion failed, with the reason, so it is not a silent blank.
+  const [suggestionErrors, setSuggestionErrors] = useState<Map<string, string>>(new Map());
   // Bumped on every Analyze / week change so late answers for an old week are ignored.
   const loadGeneration = useRef(0);
 
@@ -339,9 +341,14 @@ function CallsPageContent() {
           const data = await res.json().catch(() => ({}));
           if (res.ok && data.suggestion && generation === loadGeneration.current) {
             handleSuggestion(m.eventId, data.suggestion as RowSuggestion);
+            setSuggestionErrors((prev) => { const next = new Map(prev); next.delete(m.eventId); return next; });
+          } else if (generation === loadGeneration.current) {
+            setSuggestionErrors((prev) => new Map(prev).set(m.eventId, typeof data.error === "string" ? data.error : `Suggestion failed (${res.status})`));
           }
-        } catch {
-          // The row just has no suggestion; "Suggest again" in its notes retries.
+        } catch (err) {
+          if (generation === loadGeneration.current) {
+            setSuggestionErrors((prev) => new Map(prev).set(m.eventId, err instanceof Error ? err.message : "Suggestion failed"));
+          }
         } finally {
           setSuggestionsLoading((prev) => {
             const next = new Set(prev);
@@ -821,6 +828,7 @@ function CallsPageContent() {
                   granolaNotes={granolaNotes}
                   suggestions={suggestions}
                   suggestionsLoading={suggestionsLoading}
+                  suggestionErrors={suggestionErrors}
                   onSuggestion={handleSuggestion}
                 />
               </>
