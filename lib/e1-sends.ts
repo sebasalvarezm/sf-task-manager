@@ -758,6 +758,14 @@ export async function recheckSend(id: string): Promise<E1Send> {
   if (send.body && send.body.includes("[INSERT TOWN]") && send.city?.trim()) {
     patch.body = send.body.split("[INSERT TOWN]").join(send.city.trim());
   }
+  // Rows prepared before the hook line and restaurant pick existed get them here.
+  if (!send.hook || (send.restaurant_options ?? []).length === 0) {
+    const ctx = await sourcingContextFor(send).catch(() => null);
+    if (ctx) {
+      if (!send.hook) patch.hook = ctx.hookInfo;
+      if ((send.restaurant_options ?? []).length === 0) patch.restaurant_options = ctx.restaurantOptions;
+    }
+  }
   const merged = { ...send, ...patch };
   // Keep only the model's flags; everything the checks wrote is recomputed
   // (older rows carry the placeholder flag under "other").
