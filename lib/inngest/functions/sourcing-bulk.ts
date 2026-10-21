@@ -107,8 +107,9 @@ export const sourcingBulkJob = inngest.createFunction(
             if (!item.url || item.error) return null;
             return step.run(`classify-${i}`, async () => {
               try {
-                // The Outreach check already classified this company when it
-                // was pushed; reuse that instead of running the classifier again.
+                // A subgroup already on the row (the Outreach check's verdict,
+                // or one Seb typed in after a "no group matched") is used as is
+                // instead of running the classifier again.
                 const presetId = input.weeklyOutreachIds?.[i];
                 if (presetId) {
                   const { data: preset } = await getSupabaseAdmin()
@@ -116,8 +117,8 @@ export const sourcingBulkJob = inngest.createFunction(
                     .select("group_name, industry, source")
                     .eq("id", presetId)
                     .maybeSingle();
-                  if (preset?.source === "outreach" && preset.group_name) {
-                    // Seb's own screen verdict: as sure as it gets.
+                  if (preset?.group_name) {
+                    // Seb's own verdict: as sure as it gets.
                     return { matched: true, group: preset.group_name, mainGroup: preset.industry ?? null, confidence: 100 } as SourcingResult["portfolioMatch"];
                   }
                 }
@@ -304,6 +305,23 @@ export const sourcingBulkJob = inngest.createFunction(
                   status: "needs_context",
                   sourcing_job_id: null,
                   context_summary: item.error ?? "This company could not be sourced",
+                })
+                .eq("id", weeklyIds[i]);
+              if (rowError) throw new Error(rowError.message);
+              continue;
+            }
+            if (!item.result.portfolioMatch.matched) {
+              // No group, so no template and no draft. Detach the job and say
+              // why, so Seb can set the subgroup on the row and run it again.
+              const why = item.result.portfolioMatch.warning
+                ? `The classifier could not read the answer (${item.result.portfolioMatch.warning}).`
+                : "The classifier found no portfolio group that fits.";
+              const { error: rowError } = await supabase
+                .from("weekly_outreach")
+                .update({
+                  status: "needs_context",
+                  sourcing_job_id: null,
+                  context_summary: `No group matched: ${why} Set the subgroup on this row and run the batch again.`,
                 })
                 .eq("id", weeklyIds[i]);
               if (rowError) throw new Error(rowError.message);
