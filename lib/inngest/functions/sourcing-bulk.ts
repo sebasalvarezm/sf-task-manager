@@ -27,6 +27,19 @@ import { createJob } from "@/lib/jobs";
 // (a single company is 30-90s; a batch of 10 wrapped in one step would risk
 // ~15min and blow the 300s route maxDuration). Per-company steps also make the
 // batch resumable — completed companies are memoized and skipped on retry.
+/**
+ * A stored run is reused only when its group classification came from a
+ * readable classifier answer. The classifier used to resolve an unreadable
+ * answer to the first group on disk ("Fresh Produce") with no confidence
+ * figure; those runs must be redone, not copied forward for 90 days.
+ */
+function classificationTrusted(result: SourcingResult): boolean {
+  const m = result.portfolioMatch;
+  if (!m) return false;
+  if (!m.matched) return true;
+  return typeof m.confidence === "number";
+}
+
 export const sourcingBulkJob = inngest.createFunction(
   {
     id: "sourcing-bulk-job",
@@ -104,7 +117,8 @@ export const sourcingBulkJob = inngest.createFunction(
                     .eq("id", presetId)
                     .maybeSingle();
                   if (preset?.source === "outreach" && preset.group_name) {
-                    return { matched: true, group: preset.group_name, mainGroup: preset.industry ?? null, confidence: null } as SourcingResult["portfolioMatch"];
+                    // Seb's own screen verdict: as sure as it gets.
+                    return { matched: true, group: preset.group_name, mainGroup: preset.industry ?? null, confidence: 100 } as SourcingResult["portfolioMatch"];
                   }
                 }
                 const cached = await findRecentSourcingByUrl(
@@ -115,7 +129,7 @@ export const sourcingBulkJob = inngest.createFunction(
                   ? (cached.result as unknown as SourcingResult)
                   : null;
                 const match =
-                  cachedResult?.portfolioMatch ??
+                  (cachedResult && classificationTrusted(cachedResult) ? cachedResult.portfolioMatch : null) ??
                   (await runFastSourcingClassification(item.url!));
 
                 const weeklyId = input.weeklyOutreachIds?.[i];
@@ -175,7 +189,7 @@ export const sourcingBulkJob = inngest.createFunction(
                       undefined,
                       true,
                     );
-                if (cached?.result) {
+                if (cached?.result && classificationTrusted(cached.result as unknown as SourcingResult)) {
                   return {
                     cached: true,
                     result: cached.result as unknown as SourcingResult,

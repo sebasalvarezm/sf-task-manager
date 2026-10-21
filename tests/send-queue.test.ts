@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planSendSlots, recipientTimeZone } from "../lib/send-slots";
 import { interpret } from "../lib/email-verify";
 import { estimateCost } from "../lib/model-cost";
-import { matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank } from "../lib/e1-sends";
+import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank } from "../lib/e1-sends";
 
 describe("recipientTimeZone", () => {
   it("maps states, provinces and countries", () => {
@@ -97,5 +97,36 @@ describe("send row helpers", () => {
     expect(matchSequence("Contractor Solutions", seqs, {})).toBeNull();
     expect(matchSequence("Contractor Solutions", seqs, { "Contractor Solutions": "4" })?.id).toBe("4");
     expect(matchSequence("Construction & Materials", seqs, {})).toBeNull();
+  });
+});
+
+describe("findPlaceholders", () => {
+  it("catches merge fields and template placeholders", () => {
+    expect(findPlaceholders("I have studied {{account.name}} going back to the release of (INSERT PRODUCT).")).toEqual(["{{account.name}}", "(INSERT PRODUCT)"]);
+    expect(findPlaceholders("I will be in [INSERT TOWN] in the week of Nov 11.")).toEqual(["[INSERT TOWN]"]);
+    expect(findPlaceholders("I have studied Acme going back to the release of Acme Cloud in 2009.")).toEqual([]);
+    expect(findPlaceholders(null)).toEqual([]);
+  });
+});
+
+describe("hookInfoFrom", () => {
+  it("grades a sourced hook by its anchor evidence", () => {
+    expect(hookInfoFrom(null).level).toBe("none");
+    expect(hookInfoFrom({ emailHook: null, hookAnchor: null, hookSource: null }).level).toBe("none");
+    const high = hookInfoFrom({
+      emailHook: "I have studied Acme going back to the release of Acme Cloud.",
+      hookSource: "web_research",
+      hookAnchor: { type: "product_release", anchor: "the release of Acme Cloud", evidence: "Press release on acme.com, 2009.", sourceUrl: "https://www.acme.com/news/cloud", sourceLabel: "acme.com press release", factConfidence: "high" },
+    });
+    expect(high.level).toBe("high");
+    expect(high.note).toContain("acme.com press release");
+    const medium = hookInfoFrom({
+      emailHook: "I have studied Acme going back to the days operating as Acme Systems.",
+      hookSource: "web_research",
+      hookAnchor: { type: "former_name", anchor: "the days operating as Acme Systems", evidence: "Mentioned on a directory page.", factConfidence: "medium" },
+    });
+    expect(medium.level).toBe("medium");
+    const low = hookInfoFrom({ emailHook: "I have studied Acme going back to 2001.", hookSource: "web_research", hookAnchor: null });
+    expect(low.level).toBe("low");
   });
 });

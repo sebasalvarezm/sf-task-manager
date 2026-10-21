@@ -18,6 +18,7 @@ import { Button } from "@/app/components/ui/Button";
 
 type Status = "pending" | "review" | "ready" | "approved" | "scheduling" | "dry_run" | "scheduled" | "sent" | "failed" | "rejected";
 type Flag = { kind: string; message: string; severity: "red" | "yellow" };
+type Hook = { text: string | null; anchor: string | null; sourceUrl: string | null; sourceLabel: string | null; level: "high" | "medium" | "low" | "none"; note: string };
 type Contact = { id: string; name: string; firstName: string | null; lastName: string | null; title: string | null; email: string | null; rank: number };
 type Row = {
   id: string;
@@ -36,6 +37,7 @@ type Row = {
   contact_options: Contact[];
   verify_result: string | null;
   review_flags: Flag[];
+  hook: Hook | null;
   subject: string | null;
   body: string | null;
   status: Status;
@@ -281,6 +283,35 @@ export default function SendQueuePage() {
   );
 }
 
+
+const HOOK_STYLE: Record<Hook["level"], { dot: string; text: string; label: string }> = {
+  high: { dot: "bg-ok", text: "text-ok", label: "Hook confirmed" },
+  medium: { dot: "bg-warn", text: "text-warn", label: "Hook probable" },
+  low: { dot: "bg-danger", text: "text-danger", label: "Hook weak" },
+  none: { dot: "bg-danger", text: "text-danger", label: "No hook" },
+};
+
+/** One line under the flags: what the opening sentence rests on, colour by confidence. */
+function HookLine({ hook }: { hook: Hook }) {
+  const st = HOOK_STYLE[hook.level] ?? HOOK_STYLE.none;
+  return (
+    <p className={`flex items-start gap-2 ${st.text}`}>
+      <span className={`mt-[5px] inline-block h-2 w-2 shrink-0 rounded-full ${st.dot}`} aria-hidden />
+      <span>
+        <span className="uppercase tracking-wide text-[11px]">{st.label}</span>{" "}
+        {hook.anchor ? <span className="text-ink">“{hook.anchor}” — </span> : null}
+        {hook.note}
+        {hook.sourceUrl ? (
+          <>
+            {" "}
+            <a href={hook.sourceUrl} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">source</a>
+          </>
+        ) : null}
+      </span>
+    </p>
+  );
+}
+
 function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, onCancel, onRecheck, onEdit }: {
   row: Row;
   sequences: Sequence[];
@@ -357,6 +388,7 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
             <p className="text-ok">No flags from the checks.</p>
           )}
           {row.status_reason ? <p className="text-ink-muted">{row.status_reason}</p> : null}
+          {row.hook ? <HookLine hook={row.hook} /> : null}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="text-ink-secondary">Contact</span>

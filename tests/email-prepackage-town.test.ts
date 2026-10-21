@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPrepackagedEmail } from "../lib/email-prepackage";
+import { buildPrepackagedEmail, shortenRestaurantName } from "../lib/email-prepackage";
 
 const base = {
   mainGroup: "Logistics",
@@ -31,5 +31,16 @@ describe("buildPrepackagedEmail town guard", () => {
     if (out.skipped) return;
     expect(out.body).toMatch(/near Tampa in the/);
     expect(out.body).not.toContain("[INSERT TOWN]");
+  });
+});
+
+describe("shortenRestaurantName", () => {
+  it("keeps the venue and drops taglines, descriptors and locations", () => {
+    expect(shortenRestaurantName("OX Casual Fine Dining")).toBe("OX");
+    expect(shortenRestaurantName("Ostler at The Borough Arms Hotel")).toBe("Ostler");
+    expect(shortenRestaurantName("The Capital Grille")).toBe("Capital Grille");
+    expect(shortenRestaurantName("Ruth's Chris Steak House")).toBe("Ruth's Chris");
+    expect(shortenRestaurantName("Nola Wine Bar & Eatery")).toBe("Nola");
+    expect(shortenRestaurantName("Deanes Eipic")).toBe("Deanes Eipic");
   });
 });

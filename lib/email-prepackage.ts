@@ -62,11 +62,23 @@ const RESTAURANT_DESCRIPTORS = [
   "Chop House", "Chophouse", "Restaurant", "Ristorante", "Trattoria",
   "Bar & Grill", "Bar and Grill", "Bar", "Kitchen", "Tavern", "Bistro",
   "Cantina", "Cocktail", "Brasserie", "Brewhouse", "Grillhouse",
+  // Google Maps often carries the venue's own tagline in the name
+  // ("OX Casual Fine Dining", "Nola Wine Bar & Eatery"): all filler.
+  "Casual Fine Dining", "Fine Dining", "Casual Dining", "Dining Room", "Dining",
+  "Eatery", "Gastropub", "Pub", "Osteria", "Pizzeria", "Taverna", "Cafe", "Café",
+  "Brewery", "Wine Bar", "Oyster Bar", "Supper Club", "Lounge", "Rooftop",
+  "Bakery", "Grill Room", "Chophouse & Bar", "Hotel",
 ];
+// "Ostler at The Borough Arms Hotel" → "Ostler": the venue is the first part.
+const RESTAURANT_SEPARATORS = /\s+(?:at|@|by|inside|in the|\||[-–—])\s+/i;
 
 // Shorten a full restaurant name to the short brand form used in the subject.
-function shortenRestaurantName(raw: string): string {
+export function shortenRestaurantName(raw: string): string {
   let s = raw.trim().replace(/^the\s+/i, "");
+
+  // "Venue at Place", "Venue | tagline", "Venue - Town": keep the venue.
+  const sep = s.match(RESTAURANT_SEPARATORS);
+  if (sep && sep.index != null && sep.index >= 2) s = s.slice(0, sep.index);
 
   // Find the earliest descriptor keyword (whole word) and cut there.
   let cutIdx = -1;

@@ -23,6 +23,19 @@ export type E1Status = "pending" | "review" | "ready" | "approved" | "scheduling
 
 export type ReviewFlag = { kind: "spelling" | "town" | "restaurant" | "hook" | "contact" | "email" | "sequence" | "other"; message: string; severity: "red" | "yellow" };
 
+/** Where the opening hook came from and how far to trust it; shown on the row. */
+export type HookInfo = {
+  text: string | null;
+  anchor: string | null;
+  evidence: string | null;
+  sourceLabel: string | null;
+  sourceUrl: string | null;
+  source: "wayback" | "web_research" | null;
+  level: "high" | "medium" | "low" | "none";
+  /** One plain sentence saying what backs the hook. */
+  note: string;
+};
+
 export type ContactOption = { id: string; name: string; firstName: string | null; lastName: string | null; title: string | null; email: string | null; rank: number };
 
 export type E1Send = {
@@ -51,6 +64,7 @@ export type E1Send = {
   verified_email: string | null;
   review_flags: ReviewFlag[];
   reviewed_at: string | null;
+  hook: HookInfo | null;
   subject: string | null;
   body: string | null;
   status: E1Status;
@@ -250,7 +264,38 @@ export function matchSequence(groupName: string | null, sequences: OutreachSeque
 
 // ── Draft review (flag only) ────────────────────────────────────────────────
 
-type SourcingContext = { address: string | null; restaurants: string[]; hook: string | null; hookAnchor: string | null; websiteText: string | null } | null;
+type SourcingContext = { address: string | null; restaurants: string[]; hook: string | null; hookAnchor: string | null; hookInfo: HookInfo; websiteText: string | null } | null;
+
+function hostOf(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return null; }
+}
+
+/** Grade the hook from what Sourcing recorded about it. Exported for tests. */
+export function hookInfoFrom(r: Pick<SourcingResult, "emailHook" | "hookAnchor" | "hookSource"> | null): HookInfo {
+  const text = r?.emailHook?.trim() || null;
+  const a = r?.hookAnchor ?? null;
+  const base = {
+    text,
+    anchor: a?.anchor ?? null,
+    evidence: a?.evidence ?? null,
+    sourceLabel: a?.sourceLabel ?? null,
+    sourceUrl: a?.sourceUrl ?? null,
+    source: r?.hookSource ?? null,
+  };
+  if (!text) {
+    return { ...base, level: "none", note: "No hook was found, so the draft still carries the placeholder sentence. Write the opening yourself or reject." };
+  }
+  const where = base.sourceLabel ?? hostOf(base.sourceUrl) ?? (base.source === "wayback" ? "the Wayback Machine" : null);
+  const fact = a?.factConfidence ?? (base.source === "wayback" ? "medium" : "low");
+  if (fact === "high" && (base.sourceUrl || base.source === "wayback")) {
+    return { ...base, level: "high", note: `Confirmed by ${where ?? "a source page"}${base.evidence ? `: ${base.evidence}` : "."}` };
+  }
+  if (fact === "high" || fact === "medium") {
+    return { ...base, level: "medium", note: `Probably right but worth a glance${where ? ` (from ${where})` : ""}${base.evidence ? `: ${base.evidence}` : "."}` };
+  }
+  return { ...base, level: "low", note: `Thin evidence${where ? ` (from ${where})` : ""}${base.evidence ? `: ${base.evidence}` : ". The model could not point to a source."}` };
+}
 
 async function sourcingContextFor(send: E1Send): Promise<SourcingContext> {
   if (!send.sourcing_job_id || !send.weekly_outreach_id) return null;
@@ -266,6 +311,7 @@ async function sourcingContextFor(send: E1Send): Promise<SourcingContext> {
     restaurants: (r.restaurants ?? []).map((x) => x.name),
     hook: r.emailHook ?? null,
     hookAnchor: r.hookAnchor ? JSON.stringify(r.hookAnchor).slice(0, 600) : null,
+    hookInfo: hookInfoFrom(r),
     websiteText: r.currentText ?? null,
   };
 }
@@ -324,8 +370,22 @@ export async function reviewDraft(send: E1Send): Promise<ReviewFlag[]> {
 // ── Prepare: everything the app can check before Seb looks ──────────────────
 
 /** Flags that come from the checks, not the model: keep them apart so a re-review replaces only the model's. */
-function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "sequence_id" | "contact_id">): ReviewFlag[] {
+const PLACEHOLDER_RE = /\{\{[^}]*\}\}|\((?:INSERT|TBD)[^)]*\)|\[(?:INSERT|TBD)[^\]]*\]|\bINSERT [A-Z][A-Z ]+\b/g;
+
+/** Merge fields and template placeholders still sitting in the draft. Exported for tests. */
+export function findPlaceholders(text: string | null | undefined): string[] {
+  const found = (text ?? "").match(PLACEHOLDER_RE) ?? [];
+  return Array.from(new Set(found.map((x) => x.trim())));
+}
+
+function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "sequence_id" | "contact_id" | "subject" | "body">): ReviewFlag[] {
   const out: ReviewFlag[] = [];
+  // Deterministic first: a placeholder in the text is never a judgement call,
+  // and the model review has let these through.
+  const placeholders = findPlaceholders(`${send.subject ?? ""}\n${send.body ?? ""}`);
+  if (placeholders.length > 0) {
+    out.push({ kind: "other", severity: "red", message: `Unfilled placeholder in the draft: ${placeholders.join(", ")}. Fill it in before approving.` });
+  }
   if (!send.contact_id) out.push({ kind: "contact", severity: "red", message: "No Salesforce contact with an email on this account. Add one or reject." });
   else if (!send.contact_email) out.push({ kind: "contact", severity: "red", message: "The chosen contact has no email address." });
   switch (send.verify_result) {
@@ -393,10 +453,19 @@ export async function prepareSend(id: string, options: { sequences?: OutreachSeq
   // Time zone for the send slot.
   patch.time_zone = recipientTimeZone(send.country, send.state);
 
+  // Hook provenance, so the row can say what backs the opening sentence.
+  const ctx = await sourcingContextFor(send).catch(() => null);
+  patch.hook = ctx?.hookInfo ?? hookInfoFrom(null);
+
   const updated = await updateSend(id, patch);
 
-  // Model review of the draft, flag only.
-  const modelFlags = settings.reviewWithModel ? await reviewDraft(updated).catch(() => []) : [];
+  // Model review of the draft, flag only. A review that fails is said so,
+  // never shown as a clean pass.
+  const modelFlags: ReviewFlag[] = settings.reviewWithModel
+    ? await reviewDraft(updated).catch((err: unknown) => [
+        { kind: "other" as const, severity: "yellow" as const, message: `The model review did not run (${err instanceof Error ? err.message.slice(0, 80) : "error"}). Read this one yourself.` },
+      ])
+    : [];
   const flags = [...systemFlags(updated), ...modelFlags];
   return updateSend(id, { review_flags: flags, reviewed_at: new Date().toISOString(), status: statusFromFlags(flags), status_reason: null });
 }

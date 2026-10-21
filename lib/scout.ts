@@ -2116,13 +2116,10 @@ export async function matchGroup(
   // prescreen and Sourcing classify companies in bursts, and each call after
   // the first re-reads that block at a tenth of the price. Only the company
   // text changes per call, so it stays in the user turn.
-  const resp = await callClaude(client, 2, {
-    model: MODELS.extraction,
-    max_tokens: 100,
-    system: [
-      {
-        type: "text",
-        text: `You classify companies into Valstone's portfolio groups. The files are organized as "Main Industry Group/sub-vertical.md" — the folder is the main industry group (e.g. Construction and Diversified Materials, Agriculture, Logistics, Manufacturing) and the file is the specific sub-vertical within it. Given a company's website content, pick the single best-fitting FILE.
+  const system: Anthropic.Messages.TextBlockParam[] = [
+    {
+      type: "text",
+      text: `You classify companies into Valstone's portfolio groups. The files are organized as "Main Industry Group/sub-vertical.md" — the folder is the main industry group (e.g. Construction and Diversified Materials, Agriculture, Logistics, Manufacturing) and the file is the specific sub-vertical within it. Given a company's website content, pick the single best-fitting FILE.
 
 Return a JSON object (no markdown) with this format:
 {"file":"Construction and Diversified Materials/mining.md","confidence":85}
@@ -2133,95 +2130,108 @@ Return a JSON object (no markdown) with this format:
 
 GROUP FILES:
 ${summaries}`,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    messages: [
-      {
-        role: "user",
-        content: `COMPANY WEBSITE:\n${currentText.slice(0, 8000)}\n\nWhich group file is the best fit? Reply with the JSON object only.`,
-      },
-    ],
-  });
+      cache_control: { type: "ephemeral" },
+    },
+  ];
+  const ask = (reminder: string) =>
+    callClaude(client, 2, {
+      model: MODELS.extraction,
+      max_tokens: 200,
+      system,
+      messages: [
+        {
+          role: "user",
+          content: `COMPANY WEBSITE:\n${currentText.slice(0, 8000)}\n\nWhich group file is the best fit? ${reminder}`,
+        },
+      ],
+    });
 
-  const raw = responseText(resp);
+  const resp = await ask("Reply with the JSON object only.");
+  const first = parseGroupMatch(responseText(resp), groups);
+  if (!first.warning) return first;
 
-  // Parse JSON response
-  try {
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-    const parsed = JSON.parse(cleaned) as { file: string; confidence: number };
-
-    if (!parsed.file || parsed.file.toUpperCase() === "NO_MATCH") {
-      return {
-        matched: false,
-        group: null,
-        mainGroup: null,
-        confidence: parsed.confidence ?? null,
-      };
-    }
-
-    const resolvedFile = resolveMatchedFile(parsed.file, groups);
-    if (!resolvedFile) {
-      return {
-        matched: false,
-        group: null,
-        mainGroup: null,
-        confidence: parsed.confidence ?? null,
-        warning: `AI returned an unknown group file: ${parsed.file}`,
-      };
-    }
-    const { mainGroup } = splitGroupKey(resolvedFile);
-    return {
-      matched: true,
-      group: displayName(resolvedFile),
-      mainGroup,
-      confidence: parsed.confidence ?? null,
-    };
-  } catch {
-    // Fallback: try to parse as plain text (backward compat)
-    const text = raw.replace(/['"]/g, "");
-    if (text.toUpperCase() === "NO_MATCH") {
-      return { matched: false, group: null, mainGroup: null, confidence: null };
-    }
-    const resolvedFile = resolveMatchedFile(text, groups);
-    if (!resolvedFile) {
-      return {
-        matched: false,
-        group: null,
-        mainGroup: null,
-        confidence: null,
-        warning: `AI returned an unknown group: ${text}`,
-      };
-    }
-    const { mainGroup } = splitGroupKey(resolvedFile);
-    return {
-      matched: true,
-      group: displayName(resolvedFile),
-      mainGroup,
-      confidence: null,
-    };
-  }
+  // An unreadable answer gets one more try with the reply format spelled out
+  // again; the cached system block makes this nearly free. A second unreadable
+  // answer is reported as such, never guessed.
+  console.warn(`[sourcing] group classification unreadable, retrying once: ${first.warning}`);
+  const retry = await ask(
+    'Reply with ONLY a JSON object such as {"file":"Manufacturing/aftermarket-service.md","confidence":80} or {"file":"NO_MATCH","confidence":0}. No other words, no code fence.',
+  );
+  const second = parseGroupMatch(responseText(retry), groups);
+  return second.warning ? { ...second, warning: `${first.warning}; retry: ${second.warning}` } : second;
 }
 
+/**
+ * Turn the classifier's reply into a GroupMatch. Exported for tests.
+ *
+ * The reply should be one JSON object, but the model sometimes wraps it in a
+ * code fence or a sentence, so the object is pulled out of wherever it sits.
+ * A reply that names no known file is reported as unmatched with a warning:
+ * it is never guessed. (An earlier version fell back to a loose substring
+ * search that resolved an empty or unparseable reply to the first group on
+ * disk, which is how a whole batch ended up as "Fresh Produce".)
+ */
+export function parseGroupMatch(raw: string, groups: Record<string, string>): GroupMatch {
+  const text = raw.trim();
+  if (!text) {
+    return { matched: false, group: null, mainGroup: null, confidence: null, warning: "The classifier returned an empty answer." };
+  }
+  const unmatched = (warning: string, confidence: number | null = null): GroupMatch => ({
+    matched: false,
+    group: null,
+    mainGroup: null,
+    confidence,
+    warning,
+  });
+
+  let file: string | null = null;
+  let confidence: number | null = null;
+  const json = text.match(/\{[\s\S]*?\}/)?.[0];
+  if (json) {
+    try {
+      const parsed = JSON.parse(json) as { file?: unknown; confidence?: unknown };
+      file = typeof parsed.file === "string" ? parsed.file.trim() : null;
+      confidence = typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence) ? parsed.confidence : null;
+    } catch {
+      /* fall through to the plain-text reading */
+    }
+  }
+  if (file === null) {
+    // Plain text: accept only a bare NO_MATCH or a bare file key.
+    const plain = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").replace(/['"]/g, "").trim();
+    if (plain.toUpperCase() === "NO_MATCH") return { matched: false, group: null, mainGroup: null, confidence: null };
+    if (/\s/.test(plain) || !plain.endsWith(".md")) {
+      return unmatched(`The classifier's answer could not be read: ${text.slice(0, 120)}`);
+    }
+    file = plain;
+  }
+
+  if (!file || file.toUpperCase() === "NO_MATCH") {
+    return { matched: false, group: null, mainGroup: null, confidence };
+  }
+  const resolvedFile = resolveMatchedFile(file, groups);
+  if (!resolvedFile) return unmatched(`AI returned an unknown group file: ${file}`, confidence);
+  const { mainGroup } = splitGroupKey(resolvedFile);
+  return { matched: true, group: displayName(resolvedFile), mainGroup, confidence };
+}
+
+/**
+ * Map the file the model named to a real group key. Exact key first, then the
+ * bare file name (the model sometimes drops the folder), then the name without
+ * its extension. Nothing looser: a short or empty string must not match.
+ */
 function resolveMatchedFile(
   matched: string,
   groups: Record<string, string>
 ): string | null {
   if (matched in groups) return matched;
-  const lower = matched.toLowerCase();
-  const lowerBase = splitGroupKey(matched).fileName.toLowerCase();
+  const strip = (s: string) => s.toLowerCase().replace(/\.md$/, "").trim();
+  const wantBase = strip(splitGroupKey(matched).fileName);
+  const wantFull = strip(matched);
+  if (wantBase.length < 3) return null;
   for (const key of Object.keys(groups)) {
-    const keyLower = key.toLowerCase();
-    const baseLower = splitGroupKey(key).fileName.toLowerCase();
-    if (
-      // Model returned bare filename for a file that lives in a folder
-      baseLower === lower ||
-      baseLower === lowerBase ||
-      lower.includes(keyLower) ||
-      baseLower.replace(".md", "").includes(lowerBase.replace(".md", ""))
-    ) {
-      return key;
-    }
+    const keyBase = strip(splitGroupKey(key).fileName);
+    if (strip(key) === wantFull || keyBase === wantBase || keyBase === wantFull) return key;
   }
   return null;
 }

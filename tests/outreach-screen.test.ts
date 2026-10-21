@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { findLinkedInCompanyUrl, formatExcluded } from "../lib/outreach-screen";
 import { stripCites } from "../lib/anthropic";
-import { htmlToText, isUsablePageText } from "../lib/scout";
+import { htmlToText, isUsablePageText, parseGroupMatch } from "../lib/scout";
 
 describe("LinkedIn company page from site text", () => {
   it("finds a company page in Jina markdown", () => {
@@ -52,5 +52,28 @@ describe("isUsablePageText", () => {
     expect(isUsablePageText("short")).toBe(false);
     expect(isUsablePageText("You need to enable JavaScript to run this app. " + "x".repeat(700))).toBe(false);
     expect(isUsablePageText("Ricult builds credit scoring and farm management software for agricultural lenders. ".repeat(12))).toBe(true);
+  });
+});
+
+describe("parseGroupMatch", () => {
+  const groups = { "Agriculture/fresh-produce.md": "x", "Manufacturing/aftermarket-service.md": "y", "Logistics/rail.md": "z" };
+  it("reads a clean JSON answer", () => {
+    const m = parseGroupMatch('{"file":"Manufacturing/aftermarket-service.md","confidence":85}', groups);
+    expect(m).toMatchObject({ matched: true, group: "Aftermarket Service", mainGroup: "Manufacturing", confidence: 85 });
+  });
+  it("reads JSON inside a fence or a sentence, and a bare file name", () => {
+    expect(parseGroupMatch('```json\n{"file":"Logistics/rail.md","confidence":70}\n```', groups).group).toBe("Rail");
+    expect(parseGroupMatch('Best fit: {"file": "rail.md", "confidence": 60}', groups).group).toBe("Rail");
+    expect(parseGroupMatch('"Logistics/rail.md"', groups).group).toBe("Rail");
+  });
+  it("never guesses: an empty or unreadable answer is unmatched with a warning", () => {
+    expect(parseGroupMatch("", groups)).toMatchObject({ matched: false, group: null });
+    expect(parseGroupMatch("", groups).warning).toBeTruthy();
+    const prose = parseGroupMatch("Looking at the website, this company builds software for", groups);
+    expect(prose.matched).toBe(false);
+    expect(prose.warning).toBeTruthy();
+    expect(parseGroupMatch('{"file":"Agriculture/","confidence":50}', groups).matched).toBe(false);
+    expect(parseGroupMatch('{"file":"NO_MATCH","confidence":10}', groups)).toMatchObject({ matched: false, confidence: 10 });
+    expect(parseGroupMatch("NO_MATCH", groups).matched).toBe(false);
   });
 });
