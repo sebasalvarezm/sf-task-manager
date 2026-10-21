@@ -805,13 +805,23 @@ export async function enrolSend(id: string): Promise<{ prospectId: string; state
   if (!send) throw new Error("Send row not found.");
   if (!send.contact_email || !send.sequence_id) return { blocked: "Missing contact email or sequence." };
 
-  // Already in an active sequence anywhere: do not double up.
+  // Already in an active sequence anywhere: do not double up. An enrolment
+  // this row made earlier (a retry after a stopped run) is reused, not a block.
   const existing = await findProspectByEmail(send.contact_email);
   if (existing) {
-    const active = await outreachRequest(`/sequenceStates?filter[prospect][id]=${existing.id}&filter[state]=active&page[size]=1`);
+    const active = await outreachRequest(`/sequenceStates?filter[prospect][id]=${existing.id}&filter[state]=active&page[size]=5`);
     if (active.ok) {
-      const body = (await active.json()) as { data?: unknown[] };
-      if ((body.data ?? []).length > 0) return { blocked: "This contact is already in an active Outreach sequence." };
+      const body = (await active.json()) as { data?: Array<{ id: string }> };
+      const states = body.data ?? [];
+      const own = send.outreach_state_id ? states.find((st) => String(st.id) === String(send.outreach_state_id)) : null;
+      if (own) {
+        const mailboxes = await listMailboxes();
+        const mailbox = mailboxes.find((m) => m.email.toLowerCase() === "sebastian@valstonecorp.com") ?? mailboxes[0];
+        if (!mailbox) return { blocked: "No Outreach mailbox on the connection." };
+        await updateSend(id, { outreach_prospect_id: existing.id, status: "scheduling" });
+        return { prospectId: existing.id, stateId: own.id, mailboxId: mailbox.id };
+      }
+      if (states.length > 0) return { blocked: "This contact is already in an active Outreach sequence." };
     }
   }
   // Our own queue: one email per account per 60 days.
@@ -860,7 +870,15 @@ export async function findStepTask(stateId: string): Promise<string | null> {
  * settings wins when present.
  */
 async function signatureHtml(settings: SendSettings): Promise<string | null> {
+  // Outreach appends the mailbox signature itself when it sends, so adding
+  // one here produced two. Only an explicit plain-text override is appended
+  // (for a mailbox with no signature set in Outreach).
   if (settings.signatureText.trim()) return textToHtml(settings.signatureText.trim());
+  return null;
+}
+
+/** Kept for the settings page preview; not appended to mailings. */
+export async function storedSignaturePreview(): Promise<string | null> {
   const stored = await getStoredSignature();
   if (stored?.source === "imported") return stored.html;
   const found = await importSignatureFromSentItems().catch(() => null);
@@ -879,6 +897,8 @@ async function signatureHtml(settings: SendSettings): Promise<string | null> {
 export async function createMailingForSend(id: string, ids: { prospectId: string; mailboxId: string; taskId: string | null }, sendAt: Date, settings: SendSettings): Promise<E1Send> {
   const send = await getSend(id);
   if (!send || !send.body) throw new Error("Send row has no body.");
+  // A run that was reset or cancelled while this job slept must not act.
+  if (send.status !== "scheduling") return send;
   const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
 
   // The mailing is created on its own, not attached to the step task: a
@@ -912,8 +932,8 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
     throw new Error(`Outreach stored a different subject ("${got}") than the draft. Mailing ${mailingId} left as a draft; nothing scheduled.`);
   }
 
-  const patch: Partial<E1Send> = { outreach_mailing_id: String(mailingId), outreach_task_id: ids.taskId, scheduled_for: sendAt.toISOString() };
-  if (settings.dryRun) return updateSend(id, { ...patch, status: "dry_run", status_reason: "Dry run: draft created in Outreach, not scheduled. The step task is left open." });
+  const patch: Partial<E1Send> = { outreach_mailing_id: String(mailingId), scheduled_for: sendAt.toISOString() };
+  if (settings.dryRun) return updateSend(id, { ...patch, outreach_task_id: ids.taskId, status: "dry_run", status_reason: "Dry run: draft created in Outreach, not scheduled. The step task is left open." });
   const flip = await outreachRequest(`/mailings/${mailingId}`, {
     method: "PATCH",
     body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), attributes: { state: "scheduled", scheduledAt: sendAt.toISOString() } } }),
@@ -924,7 +944,39 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   // Best effort: the email is scheduled either way, and the note says if the
   // task has to be ticked by hand.
   const taskDone = ids.taskId ? await completeTask(ids.taskId) : false;
-  return updateSend(id, { ...patch, status: "scheduled", status_reason: taskDone ? null : "Scheduled. The step-1 task in Outreach could not be marked done; tick it there so the sequence continues." });
+  return updateSend(id, {
+    ...patch,
+    outreach_task_id: taskDone ? ids.taskId : null,
+    status: "scheduled",
+    status_reason: taskDone ? null : "Scheduled. The sequence's step-1 task is not open yet (sequence pending); it is ticked off automatically once Outreach creates it.",
+  });
+}
+
+/**
+ * Sequences on a schedule stay "pending" until their window opens, so the
+ * step-1 task often does not exist yet when the email is scheduled. This
+ * sweep (run hourly) finds the task later and ticks it, so the sequence
+ * moves on to step 2 on its own. Dry runs are left alone.
+ */
+export async function tidyStepTasks(): Promise<{ checked: number; completed: number }> {
+  const { data } = await getSupabaseAdmin()
+    .from("e1_sends")
+    .select("id, outreach_state_id, outreach_task_id, status")
+    .in("status", ["scheduled", "sent"])
+    .is("outreach_task_id", null)
+    .not("outreach_state_id", "is", null)
+    .limit(200);
+  let completed = 0;
+  const rows = (data ?? []) as Array<{ id: string; outreach_state_id: string }>;
+  for (const row of rows) {
+    const taskId = await findStepTask(row.outreach_state_id).catch(() => null);
+    if (!taskId) continue;
+    if (await completeTask(taskId)) {
+      completed++;
+      await updateSend(row.id, { outreach_task_id: taskId, status_reason: null });
+    }
+  }
+  return { checked: rows.length, completed };
 }
 
 async function completeTask(taskId: string): Promise<boolean> {

@@ -558,7 +558,7 @@ function SettingsPanel({ settings, sequences, groups, onSaved }: { settings: Set
       </label>
       <div className="text-sm text-ink">
         <p>Signature</p>
-        <p className="mb-2 text-[13px] text-ink-secondary">Appended under every email the queue sends. Importing it from a sent email keeps the formatting (bold, colour, link); pasting gives plain text.</p>
+        <p className="mb-2 text-[13px] text-ink-secondary">Outreach adds your mailbox signature when it sends, so the queue adds none. The plain-text override below is only for a mailbox with no signature set in Outreach.</p>
         {sig === undefined ? (
           <p className="text-[13px] text-ink-muted">Loading…</p>
         ) : sig ? (
@@ -567,7 +567,7 @@ function SettingsPanel({ settings, sequences, groups, onSaved }: { settings: Set
             <p className="mt-2 text-[12px] text-ink-muted">{sig.source === "imported" ? "Imported from a sent email, formatting kept." : "Pasted as plain text, no formatting."}</p>
           </div>
         ) : (
-          <p className="text-[13px] text-danger">No signature stored. Emails would go out without one.</p>
+          <p className="text-[13px] text-ink-muted">No signature stored here; Outreach adds its own.</p>
         )}
         <div className="mt-2 flex items-center gap-3">
           <Button variant="secondary" size="sm" loading={sigBusy} onClick={() => void importSignature()}>Import formatted signature from my last sent email</Button>
