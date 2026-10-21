@@ -4,7 +4,8 @@ import { sfQuery } from "./sf-query";
 import { fetchContactsForAccounts, type SfContact } from "./salesforce-contacts";
 import { verifyEmail, type VerifyDetail, type VerifyResult } from "./email-verify";
 import { listSequences, listMailboxes, findProspectByEmail, createProspect, addProspectToSequence, outreachRequest, type OutreachSequence } from "./outreach";
-import { getStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
+import { getStoredSignature, saveStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
+import { importSignatureFromSentItems } from "./microsoft";
 import { trackedCreate } from "./model-cost";
 import { recipientTimeZone, planSendSlots } from "./send-slots";
 import { currentWeekStart, type WeeklyOutreachItem } from "./weekly-outreach";
@@ -488,9 +489,21 @@ export async function findStepTask(stateId: string): Promise<string | null> {
   return task?.id ?? null;
 }
 
+/**
+ * The signature under every send: the formatted one from Seb's sent emails.
+ * Imported on first use (and re-imported if only a plain pasted one is
+ * stored), so nothing has to be set up by hand. A plain-text override in
+ * settings wins when present.
+ */
 async function signatureHtml(settings: SendSettings): Promise<string | null> {
   if (settings.signatureText.trim()) return textToHtml(settings.signatureText.trim());
   const stored = await getStoredSignature();
+  if (stored?.source === "imported") return stored.html;
+  const found = await importSignatureFromSentItems().catch(() => null);
+  if (found) {
+    const saved = await saveStoredSignature({ ...found, source: "imported" }).catch(() => null);
+    return saved?.html ?? found.html;
+  }
   return stored?.html ?? null;
 }
 
