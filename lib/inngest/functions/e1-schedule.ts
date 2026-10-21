@@ -57,24 +57,17 @@ export const e1ScheduleJob = inngest.createFunction(
           counts.failed++;
           continue;
         }
-        // Outreach creates the task when the state activates: at once with no
-        // schedule, or at the next window of the sequence schedule.
+        // The mailing no longer hangs off the step task, so there is nothing
+        // to wait for: look for the task a few times over a couple of minutes
+        // (to tick it off after scheduling) and carry on either way.
         let taskId: string | null = null;
-        for (let i = 0; i < TASK_WAITS.length && !taskId; i++) {
+        for (let i = 0; i < 3 && !taskId; i++) {
           taskId = await step.run(`task-${id}-${i}`, () => findStepTask(enrol.stateId));
           if (!taskId) await step.sleep(`wait-task-${id}-${i}`, TASK_WAITS[i]);
         }
-        if (!taskId) {
-          await step.run(`no-task-${id}`, async () => {
-            await outreachRequest(`/sequenceStates/${enrol.stateId}`, { method: "DELETE" }).catch(() => null);
-            await updateSend(id, { status: "failed", status_reason: "Outreach never created the step task (check the sequence schedule). Removed from the sequence; approve again to retry." });
-          });
-          counts.failed++;
-          continue;
-        }
         const outcome = await step.run(`mailing-${id}`, async () => {
           try {
-            const row = await createMailingForSend(id, { prospectId: enrol.prospectId, mailboxId: enrol.mailboxId, taskId: taskId as string }, new Date(sendAt), settings);
+            const row = await createMailingForSend(id, { prospectId: enrol.prospectId, mailboxId: enrol.mailboxId, taskId }, new Date(sendAt), settings);
             return row.status;
           } catch (err) {
             await outreachRequest(`/sequenceStates/${enrol.stateId}`, { method: "DELETE" }).catch(() => null);

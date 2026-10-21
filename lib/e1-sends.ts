@@ -876,7 +876,7 @@ async function signatureHtml(settings: SendSettings): Promise<string | null> {
  * signature, tracking on, and the send time. Dry run leaves it as a draft in
  * the outbox; otherwise it is flipped to scheduled.
  */
-export async function createMailingForSend(id: string, ids: { prospectId: string; mailboxId: string; taskId: string }, sendAt: Date, settings: SendSettings): Promise<E1Send> {
+export async function createMailingForSend(id: string, ids: { prospectId: string; mailboxId: string; taskId: string | null }, sendAt: Date, settings: SendSettings): Promise<E1Send> {
   const send = await getSend(id);
   if (!send || !send.body) throw new Error("Send row has no body.");
   const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
@@ -923,7 +923,7 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   // Close the step's manual-email task so the sequence moves on to step 2.
   // Best effort: the email is scheduled either way, and the note says if the
   // task has to be ticked by hand.
-  const taskDone = await completeTask(ids.taskId);
+  const taskDone = ids.taskId ? await completeTask(ids.taskId) : false;
   return updateSend(id, { ...patch, status: "scheduled", status_reason: taskDone ? null : "Scheduled. The step-1 task in Outreach could not be marked done; tick it there so the sequence continues." });
 }
 
