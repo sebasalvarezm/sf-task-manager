@@ -1,4 +1,5 @@
 import { getAnthropicClient, MODELS, stripCites } from "./anthropic";
+import { trackedCreate } from "./model-cost";
 import { getSupabaseAdmin } from "./supabase";
 import { fetchPageText, loadGroupFiles, matchGroup, type GroupMatch } from "./scout";
 import type { CandidateRow, ScreenStatus } from "./outreach-candidates";
@@ -155,7 +156,7 @@ export async function screenCompany(input: { name: string; website: string | nul
     site.text.slice(0, 7000),
   ].join("\n");
   const ask = async (withSearch: boolean) => {
-    const response = await client.messages.create({
+    const response = await trackedCreate(client, "outreach_screen", {
       model: MODELS.drafting,
       max_tokens: 400,
       system: SYSTEM,
@@ -243,7 +244,7 @@ export async function lookupLinkedInUrl(name: string, website: string | null): P
       return null;
     }
   })();
-  const response = await client.messages.create({
+  const response = await trackedCreate(client, "outreach_linkedin", {
     model: MODELS.extraction,
     max_tokens: 200,
     system:

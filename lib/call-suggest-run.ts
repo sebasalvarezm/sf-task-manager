@@ -4,6 +4,7 @@
 // call below. It is not stored or logged.
 
 import { getAnthropicClient, MODELS } from "./anthropic";
+import { trackedCreate } from "./model-cost";
 import { fetchCorrectionExamples } from "./call-corrections";
 import { fetchCallHistory, type PastCall } from "./call-history";
 import { buildSuggestionPrompt, parseSuggestion, selectExamples, type SuggestionInput } from "./call-suggest";
@@ -68,7 +69,7 @@ export async function suggestForRow(req: SuggestRequest): Promise<StoredCallSugg
 
   let text: string;
   try {
-    const message = await client.messages.create({
+    const message = await trackedCreate(client, "call_logger", {
       model: SUGGESTION_MODEL,
       max_tokens: 600,
       messages: [{ role: "user", content: prompt }],

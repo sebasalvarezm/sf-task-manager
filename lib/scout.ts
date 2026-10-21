@@ -7,6 +7,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { recordModelCall, type Usage } from "./model-cost";
 import { MODELS, stripCites } from "./anthropic";
 import { readSharedWaybackCooldown, writeSharedWaybackCooldown } from "./wayback-cooldown";
 import { guardAddress, guardTown } from "./location-guard";
@@ -621,7 +622,9 @@ async function callClaude(
   const RETRYABLE = [500, 503, 529];
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await client.messages.create(opts, requestOptions);
+      const message = await client.messages.create(opts, requestOptions);
+      void recordModelCall("sourcing", String((opts as { model?: string }).model ?? ""), (message as { usage?: Usage }).usage);
+      return message;
     } catch (err) {
       if (
         err instanceof Anthropic.APIError &&

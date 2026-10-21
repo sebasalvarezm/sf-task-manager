@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { trackedCreate } from "@/lib/model-cost";
 import { fetchContactsForAccounts } from "@/lib/salesforce-contacts";
 import { isAuthenticated } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
@@ -329,7 +330,7 @@ export async function POST(request: Request) {
             : null,
         });
 
-    const message = await client.messages.create({
+    const message = await trackedCreate(client, "rce_draft", {
       model: MODELS.drafting,
       max_tokens: 1800,
       messages: [{ role: "user", content: prompt }],

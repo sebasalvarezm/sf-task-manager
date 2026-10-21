@@ -1,3 +1,4 @@
+import { trackedCreate } from "./model-cost";
 import {
   getMsValidCredentials,
   fetchEmailThread,
@@ -207,7 +208,7 @@ async function matchAccounts(
 async function classify(thread: ThreadMessage[], accountName: string | null): Promise<Classification | null> {
   const client = getAnthropicClient();
   if (!client) return null;
-  const response = await client.messages.create({
+  const response = await trackedCreate(client, "inbox", {
     model: CLASSIFY_MODEL,
     max_tokens: 400,
     system: INBOX_CLASSIFY_SYSTEM,
@@ -547,7 +548,7 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
     let detail: string | null = null;
     if (client) {
       try {
-        const response = await client.messages.create({
+        const response = await trackedCreate(client, "inbox", {
           model: DRAFT_MODEL,
           max_tokens: 120,
           system: POSITIVE_DETAIL_SYSTEM,
@@ -563,7 +564,7 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
   } else if (client) {
     const examples = await recentSentReplies();
     try {
-      const response = await client.messages.create({
+      const response = await trackedCreate(client, "inbox", {
         model: DRAFT_MODEL,
         max_tokens: 500,
         system: INBOX_DRAFT_SYSTEM,

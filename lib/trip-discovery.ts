@@ -1,4 +1,5 @@
 import { MODELS, stripCites } from "@/lib/anthropic";
+import { trackedCreate } from "@/lib/model-cost";
 import Anthropic from "@anthropic-ai/sdk";
 import { CDMAccount } from "./salesforce-trip";
 import {
@@ -152,7 +153,7 @@ async function searchVertical(
   radiusMiles: number
 ): Promise<DiscoveredCompany[]> {
   try {
-    const resp = await client.messages.create({
+    const resp = await trackedCreate(client, "trip", {
       model: MODELS.drafting,
       max_tokens: 4096,
       tools: WEB_SEARCH_TOOL,
@@ -262,7 +263,7 @@ async function checkOwnershipBatch(
     .join("\n");
 
   try {
-    const resp = await client.messages.create({
+    const resp = await trackedCreate(client, "trip", {
       model: MODELS.extraction,
       max_tokens: 4096,
       tools: WEB_SEARCH_TOOL,

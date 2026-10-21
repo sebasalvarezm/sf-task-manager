@@ -1,4 +1,5 @@
 import { getValidCredentials } from "./token-manager";
+import { trackedCreate } from "./model-cost";
 import { sfQuery } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
 import { getAnthropicClient, MODELS } from "./anthropic";
@@ -313,7 +314,7 @@ export async function generateInMailFor(whoId: string): Promise<InMailQueueRow> 
 
   const client = getAnthropicClient();
   if (!client) throw new Error("AI service not configured (missing ANTHROPIC_API_KEY)");
-  const response = await client.messages.create({
+  const response = await trackedCreate(client, "inmail", {
     model: MODELS.drafting,
     max_tokens: 1200,
     system: INMAIL_SYSTEM_PROMPT,

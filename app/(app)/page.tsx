@@ -2,18 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  ListChecks,
-  Send,
-  Phone,
-  FileText,
-  Building2,
-  Search,
-  BarChart3,
-  MapPin,
-  CalendarRange,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronDown, type LucideIcon } from "lucide-react";
+import { NAV_GROUPS, STANDALONE_TOOLS } from "@/app/components/shell/nav-groups";
 import { Card } from "@/app/components/ui/Card";
 import { Badge } from "@/app/components/ui/Badge";
 import { useIsIntern } from "@/app/components/RoleContext";
@@ -25,21 +15,11 @@ type Tool = {
   title: string;
   description: string;
   icon: LucideIcon;
-  // Which connections this tool needs. Order = render order.
   needs: Array<"sf" | "ms" | "outreach">;
 };
 
-const TOOLS: Tool[] = [
-  { href: "/tasks", title: "Tasks", description: "Manage open Salesforce tasks by week and send reconnects into Weekly Outreach.", icon: ListChecks, needs: ["sf"] },
-  { href: "/prep", title: "Call prep", description: "Generate a 60-second briefing plus a complete business and relationship refresher.", icon: FileText, needs: ["sf", "ms"] },
-  { href: "/weekly-outreach", title: "Weekly outreach", description: "Build this week's E1 and RCE list from Tasks, Re-Contact, or Salesforce names.", icon: CalendarRange, needs: ["sf", "ms"] },
-  { href: "/sourcing", title: "Sourcing", description: "Research companies and produce personalized, ready-to-review E1 outreach.", icon: Search, needs: [] },
-  { href: "/calls", title: "Call logger", description: "Review Outlook meetings and log calls and follow-ups to Salesforce.", icon: Phone, needs: ["sf", "ms"] },
-  { href: "/outreach", title: "Outreach", description: "Surface accounts due for another contact and push the next step to Salesforce and Outreach.", icon: Send, needs: ["sf", "outreach"] },
-  { href: "/accounts", title: "Account creator", description: "Create a Salesforce account from a company URL.", icon: Building2, needs: ["sf"] },
-  { href: "/stats", title: "Weekly stats", description: "Review CDM outreach, calls, meetings, and pipeline.", icon: BarChart3, needs: ["sf"] },
-  { href: "/trip", title: "Trip planner", description: "Find nearby accounts and discover targets around a trip.", icon: MapPin, needs: ["sf"] },
-];
+const toTool = (t: { href: string; label: string; description: string; icon: LucideIcon; needs: Array<"sf" | "ms" | "outreach"> }): Tool => ({ href: t.href, title: t.label, description: t.description, icon: t.icon, needs: t.needs });
+const TOOLS: Tool[] = [...NAV_GROUPS.flatMap((g) => g.tools), ...STANDALONE_TOOLS].map(toTool);
 
 // Interns only get the Sourcing card. Enforcement is in middleware.ts.
 const INTERN_TOOL_HREFS: readonly string[] = ["/sourcing"];
@@ -118,6 +98,56 @@ export default function HomePage() {
     return outreachConnected;
   }
 
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+
+  function renderTool(tool: Tool) {
+    const Icon = tool.icon;
+    return (
+      <Link key={tool.href} href={tool.href} className="no-underline">
+        <Card hoverable padded={false} className="h-full p-5 flex flex-col">
+          <div className="flex items-start justify-between mb-4">
+            <div className="rounded-lg bg-surface-3 p-2.5 text-ink">
+              <Icon className="h-5 w-5" strokeWidth={1.75} />
+            </div>
+          </div>
+          <h3 className="text-base font-semibold text-ink leading-snug mb-1.5">
+            {tool.title}
+          </h3>
+          <p className="text-sm text-ink-muted leading-relaxed mb-4 line-clamp-3">
+            {tool.description}
+          </p>
+          {tool.needs.length > 0 && (
+            <div className="mt-auto flex flex-wrap gap-1.5">
+              {tool.needs.map((key) => {
+                const state = statusFor(key);
+                const label = CONN_LABEL[key];
+                if (state === null) {
+                  return (
+                    <Badge key={key} variant="neutral" size="sm">
+                      …
+                    </Badge>
+                  );
+                }
+                if (state === true) {
+                  return (
+                    <Badge key={key} variant="ok" size="sm" dot>
+                      {label}
+                    </Badge>
+                  );
+                }
+                return (
+                  <Badge key={key} variant="warn" size="sm">
+                    {label} not connected
+                  </Badge>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </Link>
+    );
+  }
+
   return (
     <>
       <div className="mb-8 mt-2 md:mt-4">
@@ -152,62 +182,43 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Quick access */}
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-ink-muted">
-          Quick Access
-        </h2>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {visibleTools.map((tool) => {
-          const Icon = tool.icon;
-          return (
-            <Link key={tool.href} href={tool.href} className="no-underline">
-              <Card hoverable padded={false} className="h-full p-5 flex flex-col">
-                <div className="flex items-start justify-between mb-4">
+      {/* Three blocks in the order the work happens; a block opens to show its tools in sequence. */}
+      {isIntern ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">{visibleTools.map(renderTool)}</div>
+      ) : (
+        <div className="space-y-4">
+          {NAV_GROUPS.map((group) => {
+            const expanded = openGroup === group.key;
+            const GroupIcon = group.icon;
+            return (
+              <section key={group.key} className="rounded-md border border-line bg-white">
+                <button
+                  type="button"
+                  onClick={() => setOpenGroup((v) => (v === group.key ? null : group.key))}
+                  aria-expanded={expanded}
+                  className="flex w-full items-center gap-4 px-5 py-4 text-left hover:bg-surface-3"
+                >
                   <div className="rounded-lg bg-surface-3 p-2.5 text-ink">
-                    <Icon className="h-5 w-5" strokeWidth={1.75} />
+                    <GroupIcon className="h-5 w-5" strokeWidth={1.75} />
                   </div>
-                </div>
-                <h3 className="text-base font-semibold text-ink leading-snug mb-1.5">
-                  {tool.title}
-                </h3>
-                <p className="text-sm text-ink-muted leading-relaxed mb-4 line-clamp-3">
-                  {tool.description}
-                </p>
-                {tool.needs.length > 0 && (
-                  <div className="mt-auto flex flex-wrap gap-1.5">
-                    {tool.needs.map((key) => {
-                      const state = statusFor(key);
-                      const label = CONN_LABEL[key];
-                      if (state === null) {
-                        return (
-                          <Badge key={key} variant="neutral" size="sm">
-                            …
-                          </Badge>
-                        );
-                      }
-                      if (state === true) {
-                        return (
-                          <Badge key={key} variant="ok" size="sm" dot>
-                            {label}
-                          </Badge>
-                        );
-                      }
-                      return (
-                        <Badge key={key} variant="warn" size="sm">
-                          {label} not connected
-                        </Badge>
-                      );
-                    })}
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-base font-semibold text-ink">{group.label}</h2>
+                    <p className="text-sm text-ink-muted">{group.description}</p>
                   </div>
-                )}
-              </Card>
-            </Link>
-          );
-        })}
-      </div>
+                  <span className="hidden text-xs text-ink-muted sm:block">{group.tools.map((t) => t.label).join(" → ")}</span>
+                  <ChevronDown className={`h-5 w-5 shrink-0 text-ink-muted transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={1.5} />
+                </button>
+                {expanded ? (
+                  <div className="grid grid-cols-1 gap-4 border-t border-line p-4 sm:grid-cols-2 xl:grid-cols-4">
+                    {group.tools.map(toTool).map(renderTool)}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">{STANDALONE_TOOLS.map(toTool).map(renderTool)}</div>
+        </div>
+      )}
     </>
   );
 }

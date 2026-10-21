@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { trackedCreate } from "@/lib/model-cost";
 import { getAnthropicClient, MODELS } from "@/lib/anthropic";
 import {
   scrapeWithJina,
@@ -332,7 +333,7 @@ async function identifyCompetitors(
 ): Promise<{ name: string; differentiator: string }[]> {
   const productList = products.length > 0 ? products.join(", ") : "unknown";
   try {
-    const resp = await client.messages.create({
+    const resp = await trackedCreate(client, "sourcing", {
       model: MODELS.extraction,
       max_tokens: 500,
       messages: [

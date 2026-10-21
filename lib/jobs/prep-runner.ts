@@ -1,4 +1,5 @@
 import { getAnthropicClient, MODELS, stripCites } from "@/lib/anthropic";
+import { trackedCreate } from "@/lib/model-cost";
 import { fetchAccountDetails, fetchRecentAccountActivity } from "@/lib/salesforce-prep";
 import { fetchPageText } from "@/lib/scout";
 
@@ -82,7 +83,7 @@ async function tightenSections(
     const value = out[field];
     if (typeof value !== "string" || wordCount(value) <= cap) continue;
     try {
-      const res = await anthropic.messages.create({
+      const res = await trackedCreate(anthropic, "call_prep", {
         model: MODELS.drafting,
         max_tokens: 600,
         system: PREP_STYLE,
@@ -295,7 +296,7 @@ Use web search to find 2-3 genuinely relevant recent news items about this exact
 Answer with the heading "RECENT NEWS:" on its own line, then one item per line starting with "- " (one sentence each, month and year included), or the single word "None" if nothing reliable was found. Nothing else.`;
     const [stable, newsMessage] = await Promise.all([
       generateSections(anthropic, staticPrompt, prepMode, false),
-      anthropic.messages.create({
+      trackedCreate(anthropic, "call_prep", {
         model: MODELS.drafting,
         max_tokens: 1536,
         system: PREP_STYLE,
@@ -357,7 +358,7 @@ async function generateSections(
   withSearch: boolean,
 ): Promise<OnePagerContent> {
   const ask = async (extra: string) => {
-    const res = await anthropic.messages.create({
+    const res = await trackedCreate(anthropic, "call_prep", {
       model: MODELS.drafting,
       max_tokens: 4096,
       system: PREP_STYLE,

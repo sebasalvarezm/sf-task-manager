@@ -1523,6 +1523,8 @@ export default function StatsPage() {
           />
         )}
 
+        <SpendCard />
+
         <OutreachQualityModal
           target={qualityTarget}
           team={team}
@@ -2482,5 +2484,66 @@ function DrillModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+type SpendRow = { feature: string; calls: number; searches: number; cost: number };
+const FEATURE_LABEL: Record<string, string> = {
+  sourcing: "Sourcing",
+  outreach_screen: "Outreach check",
+  outreach_linkedin: "LinkedIn lookup",
+  call_prep: "Call prep",
+  inbox: "Inbox",
+  inmail: "InMail queue",
+  rce_draft: "RCE drafts",
+  call_logger: "Call logger",
+  accounts_enrich: "Accounts",
+  trip: "Trip planner",
+  send_review: "Send queue review",
+};
+
+/** AI spend by feature, logged by the app itself, so the console is not the only place that knows. */
+function SpendCard() {
+  const [data, setData] = useState<{ week: { rows: SpendRow[]; total: number }; month: { rows: SpendRow[]; total: number }; missing?: boolean } | null>(null);
+  const [range, setRange] = useState<"week" | "month">("week");
+  useEffect(() => {
+    fetch("/api/stats/spend")
+      .then((r) => r.json())
+      .then((d) => setData(d))
+      .catch(() => setData(null));
+  }, []);
+  if (!data) return null;
+  if (data.missing) return null;
+  const block = data[range];
+  return (
+    <ChartCard
+      title="AI spend"
+      actions={
+        <div className="flex gap-1 text-xs">
+          {(["week", "month"] as const).map((r) => (
+            <button key={r} type="button" onClick={() => setRange(r)} className={`rounded-sm px-2 py-1 ${range === r ? "bg-surface-3 text-ink" : "text-ink-secondary hover:text-ink"}`}>
+              {r === "week" ? "7 days" : "30 days"}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      <p className="mb-3 text-2xl font-normal text-ink">${block.total.toFixed(2)}</p>
+      {block.rows.length === 0 ? (
+        <p className="text-sm text-ink-secondary">No logged calls yet. Spend appears here as the app runs.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <tbody>
+            {block.rows.map((r) => (
+              <tr key={r.feature} className="border-t border-line">
+                <td className="py-1.5 text-ink">{FEATURE_LABEL[r.feature] ?? r.feature}</td>
+                <td className="py-1.5 text-right tabular-nums text-ink-secondary">{r.calls} calls{r.searches ? ` · ${r.searches} searches` : ""}</td>
+                <td className="py-1.5 pl-4 text-right tabular-nums text-ink">${r.cost.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </ChartCard>
   );
 }

@@ -1,4 +1,5 @@
 import { getAnthropicClient, MODELS, stripCites } from "./anthropic";
+import { trackedCreate } from "./model-cost";
 
 // What enrichment returns to the frontend
 export type EnrichedCompanyData = {
@@ -130,7 +131,7 @@ Return ONLY valid JSON with these fields (no explanation, no markdown, just JSON
       { type: "web_search_20250305", name: "web_search", max_uses: 3 },
     ];
 
-    const message = await anthropic.messages.create({
+    const message = await trackedCreate(anthropic, "accounts_enrich", {
       model: MODELS.drafting,
       max_tokens: 1024,
       tools,

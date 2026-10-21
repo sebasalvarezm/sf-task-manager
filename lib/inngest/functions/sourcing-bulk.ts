@@ -20,6 +20,7 @@ import {
   type BulkSourcingItem,
 } from "@/lib/jobs/sourcing-bulk-runner";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { createJob } from "@/lib/jobs";
 
 // Bulk sourcing. Each company is processed as its OWN `step.run`, so every
 // Inngest invocation stays well under the platform's per-invocation limit
@@ -323,6 +324,14 @@ export const sourcingBulkJob = inngest.createFunction(
           items: processed,
         } as unknown as Record<string, unknown>),
       );
+      // Hand the finished drafts to the send queue, which runs the contact,
+      // verification and review checks before Seb opens the page.
+      if (Array.isArray(input.weeklyOutreachIds) && input.weeklyOutreachIds.length > 0) {
+        await step.run("queue-send-checks", async () => {
+          const job = await createJob({ kind: "e1_prepare", input: {}, label: "Send queue: checking this week's E1s", resultRoute: "/send" });
+          await inngest.send({ id: job.id, name: "job/e1_prepare", data: { jobId: job.id, input: job.input } });
+        });
+      }
       return { ok: true, jobId };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unexpected error";

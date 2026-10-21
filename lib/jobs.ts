@@ -10,7 +10,9 @@ export type JobKind =
   | "calls_log"
   | "accounts_enrich"
   | "outreach_screen"
-  | "outcomes_build";
+  | "outcomes_build"
+  | "e1_prepare"
+  | "e1_schedule";
 
 export type JobStatus =
   | "queued"
