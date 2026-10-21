@@ -63,6 +63,23 @@ export async function GET(request: NextRequest) {
   const mailbox = mailboxes.find((m) => m.email.toLowerCase() === "sebastian@valstonecorp.com") ?? mailboxes[0];
   if (!mailbox) return NextResponse.json({ error: "No mailbox on the Outreach connection." }, { status: 500 });
 
+  // ── Part 4: flip a drafted mailing to scheduled (sends for real), or back ─
+  const scheduleId = q.get("schedule");
+  const unscheduleId = q.get("unschedule");
+  if (scheduleId || unscheduleId) {
+    const id = (scheduleId ?? unscheduleId) as string;
+    note("before", await mailingState(id));
+    const minutes = Math.max(2, Number(q.get("in") ?? 5));
+    const attributes = scheduleId
+      ? { state: "scheduled", scheduledAt: new Date(Date.now() + minutes * 60_000).toISOString() }
+      : { state: "drafted" };
+    const res = await outreachRequest(`/mailings/${id}`, { method: "PATCH", body: JSON.stringify({ data: { type: "mailing", id, attributes } }) });
+    note("patch", { status: res.status, attributes, body: res.ok ? "" : await text(res) });
+    await new Promise((r) => setTimeout(r, 4000));
+    note("after", await mailingState(id));
+    return NextResponse.json(report);
+  }
+
   // ── Part 3: inspect and delete mailings left behind ──────────────────────
   const mailingParam = q.get("mailing");
   if (mailingParam) {
