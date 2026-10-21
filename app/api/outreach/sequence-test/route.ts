@@ -44,14 +44,17 @@ export async function GET(request: NextRequest) {
         },
       }),
     });
-    const body = await text(res);
+    const full = await res.text();
     let id: string | null = null;
+    let state: string | null = null;
     try {
-      id = (JSON.parse(body) as { data?: { id?: string; attributes?: { state?: string; mailingType?: string } } }).data?.id ?? null;
+      const parsed = JSON.parse(full) as { data?: { id?: string; attributes?: { state?: string; mailingType?: string; attributableSequenceId?: number } } };
+      id = parsed.data?.id ?? null;
+      state = parsed.data?.attributes?.state ?? null;
+      note(label, { status: res.status, id, state, mailingType: parsed.data?.attributes?.mailingType, attributableSequenceId: parsed.data?.attributes?.attributableSequenceId });
     } catch {
-      id = null;
+      note(label, { status: res.status, id: null, body: full.slice(0, 1500) });
     }
-    note(label, { status: res.status, id, body: res.ok ? body.slice(0, 400) : body });
     return id;
   };
   const mailingState = async (id: string) => json(await outreachRequest(`/mailings/${id}?fields[mailing]=state,subject,scheduledAt,mailingType,errorReason,deliveredAt`));
@@ -59,6 +62,20 @@ export async function GET(request: NextRequest) {
   const mailboxes = await listMailboxes();
   const mailbox = mailboxes.find((m) => m.email.toLowerCase() === "sebastian@valstonecorp.com") ?? mailboxes[0];
   if (!mailbox) return NextResponse.json({ error: "No mailbox on the Outreach connection." }, { status: 500 });
+
+  // ── Part 3: inspect and delete mailings left behind ──────────────────────
+  const mailingParam = q.get("mailing");
+  if (mailingParam) {
+    for (const id of mailingParam.split(",").map((x) => x.trim()).filter(Boolean)) {
+      note(`mailing_${id}_before`, await mailingState(id));
+      if (q.get("keep") !== "1") {
+        const del = await outreachRequest(`/mailings/${id}`, { method: "DELETE" });
+        note(`mailing_${id}_delete`, { status: del.status, body: del.status === 204 ? "" : await text(del) });
+        note(`mailing_${id}_after`, await mailingState(id));
+      }
+    }
+    return NextResponse.json(report);
+  }
 
   // ── Part 2: continue a kept enrolment ────────────────────────────────────
   const continueId = q.get("continue");
