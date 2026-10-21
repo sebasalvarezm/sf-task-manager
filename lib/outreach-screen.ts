@@ -308,7 +308,12 @@ function emptyFacts(): ScreenVerdict["facts"] {
 
 type QueueRow = Pick<CandidateRow, "sf_account_id" | "account_name" | "website" | "industry" | "employees">;
 
-/** Eligible, open, unscreened accounts, oldest last E1 first: the ones Seb will see next. */
+/**
+ * Eligible, open, unscreened accounts, oldest last E1 first: the ones Seb will
+ * see next. Only "pending": an "error" row stays out until it is reset by
+ * hand. Including errors here once put eleven unreadable rows at the front of
+ * every batch, re-checked ten times over in an evening.
+ */
 export async function nextToScreen(limit: number): Promise<QueueRow[]> {
   const { data, error } = await getSupabaseAdmin()
     .from("outreach_candidates")
@@ -316,7 +321,7 @@ export async function nextToScreen(limit: number): Promise<QueueRow[]> {
     .eq("in_pool", true)
     .eq("review_status", "open")
     .eq("rule_status", "eligible")
-    .in("screen_status", ["pending", "error"])
+    .eq("screen_status", "pending")
     .order("last_e1_at", { ascending: true, nullsFirst: true })
     .limit(limit);
   if (error) throw new Error(error.message);
