@@ -281,10 +281,14 @@ export const sourcingBulkJob = inngest.createFunction(
           for (let i = 0; i < Math.min(weeklyIds.length, processed.length); i++) {
             const item = processed[i];
             if (!item.result || item.error) {
+              // Detach the job so "Prepare E1 sourcing batch" offers the row
+              // again: a company that failed inside a finished batch used to
+              // stay stuck behind it.
               const { error: rowError } = await supabase
                 .from("weekly_outreach")
                 .update({
                   status: "needs_context",
+                  sourcing_job_id: null,
                   context_summary: item.error ?? "This company could not be sourced",
                 })
                 .eq("id", weeklyIds[i]);
