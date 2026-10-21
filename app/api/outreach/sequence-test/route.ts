@@ -73,7 +73,8 @@ export async function GET(request: NextRequest) {
     const attributes = scheduleId
       ? { state: "scheduled", scheduledAt: new Date(Date.now() + minutes * 60_000).toISOString() }
       : { state: "drafted" };
-    const res = await outreachRequest(`/mailings/${id}`, { method: "PATCH", body: JSON.stringify({ data: { type: "mailing", id, attributes } }) });
+    // Outreach checks the body id against the URL id as a number; a string from the query fails that check.
+    const res = await outreachRequest(`/mailings/${id}`, { method: "PATCH", body: JSON.stringify({ data: { type: "mailing", id: Number(id), attributes } }) });
     note("patch", { status: res.status, attributes, body: res.ok ? "" : await text(res) });
     await new Promise((r) => setTimeout(r, 4000));
     note("after", await mailingState(id));
