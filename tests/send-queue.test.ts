@@ -148,3 +148,35 @@ describe("matchSequence tolerates naming drift", () => {
     expect(matchSequence(null, seqs, {})).toBeNull();
   });
 });
+
+describe("matchSequence against the real Outreach sequence names", () => {
+  const names = ["[E] - Structure Design/Analysis","[E] - Logistics — Maritime","[E] - Logistics — Industrial Gate & Yard","[E] - Mining","[E] - Logistics — Rail","[E] - Manufacturing → Process Manufacturing","[E] - Manufacturing — Aftermarket & Service","[E] - Forest & Lumber","[E] - Agriculture — Fresh Produce","[E] - Contractor","[E] - Bulk Materials","[E] - Bulk Liquids","[E] - Manufacturing — Engineering & Estimating","[E] - Agriculture — Protein & Livestock","[E] - Agriculture — Grain & Crop","[D-E] - Carveout - Construction & Materials","[E] - Manufacturing → Production Quality","[E] - Waste","[E] - Logistics — Freight & Supply Chain Enablement","[E] - Safety & Compliance","[E] - Equipment"];
+  const seqs = names.map((n, i) => ({ id: String(i), name: n, tags: [], enabled: true }));
+  const expected: Record<string, string> = {
+    "Fresh Produce": "[E] - Agriculture — Fresh Produce",
+    "Grain Crop": "[E] - Agriculture — Grain & Crop",
+    "Protein Livestock": "[E] - Agriculture — Protein & Livestock",
+    "Bulk Liquids": "[E] - Bulk Liquids",
+    "Bulk Materials": "[E] - Bulk Materials",
+    "Contractor Solutions": "[E] - Contractor",
+    "Equipment Dealers Rental": "[E] - Equipment",
+    "Forestry Lumber": "[E] - Forest & Lumber",
+    "Mining": "[E] - Mining",
+    "Safety Compliance": "[E] - Safety & Compliance",
+    "Structure Design Analysis": "[E] - Structure Design/Analysis",
+    "Waste Recycling": "[E] - Waste",
+    "Freight Supply Chain Enablement": "[E] - Logistics — Freight & Supply Chain Enablement",
+    "Industrial Gate Yard": "[E] - Logistics — Industrial Gate & Yard",
+    "Maritime": "[E] - Logistics — Maritime",
+    "Rail": "[E] - Logistics — Rail",
+    "Aftermarket Service": "[E] - Manufacturing — Aftermarket & Service",
+    "Engineering Estimating": "[E] - Manufacturing — Engineering & Estimating",
+    "Process Manufacturing": "[E] - Manufacturing → Process Manufacturing",
+    "Production Quality": "[E] - Manufacturing → Production Quality",
+  };
+  it("pairs every group file with its sequence", () => {
+    for (const [group, name] of Object.entries(expected)) {
+      expect(matchSequence(group, seqs, {})?.name, group).toBe(name);
+    }
+  });
+});

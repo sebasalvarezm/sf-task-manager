@@ -315,16 +315,49 @@ export function matchSequence(groupName: string | null, sequences: OutreachSeque
   const wantWords = sequenceTokens(groupName);
   if (wantWords.length === 0) return null;
   const scored = pool
-    .map((s) => {
-      const have = new Set(sequenceTokens(s.name));
-      const hits = wantWords.filter((w) => have.has(w)).length;
-      return { s, score: hits / wantWords.length };
-    })
+    .map((s) => ({ s, score: wordOverlap(wantWords, sequenceTokens(s.name)) }))
     .filter((x) => x.score >= 0.6)
     .sort((a, b) => b.score - a.score);
   if (scored.length === 0) return null;
   if (scored.length > 1 && scored[0].score === scored[1].score) return null;
   return scored[0].s;
+}
+
+/** "forestry" and "forest" count as the same word; so do "dealers" and "dealer". */
+function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  const n = Math.min(a.length, b.length, 5);
+  return n >= 4 && a.slice(0, n) === b.slice(0, n);
+}
+
+/**
+ * How well two names agree: the share of the group's words the sequence
+ * carries, or 1 when every word of a shorter sequence name is in the group
+ * ("[E] - Waste" for "Waste Recycling", "[E] - Equipment" for "Equipment
+ * Dealers Rental").
+ */
+function wordOverlap(want: string[], have: string[]): number {
+  if (want.length === 0 || have.length === 0) return 0;
+  const forward = want.filter((w) => have.some((h) => sameWord(w, h))).length / want.length;
+  const reverse = have.filter((h) => want.some((w) => sameWord(w, h))).length / have.length;
+  return reverse === 1 ? 1 : forward;
+}
+
+/** Why nothing matched, with the nearest names, so the row explains itself. */
+export function explainSequenceMiss(groupName: string | null, sequences: OutreachSequence[]): string {
+  if (!groupName) return "This row has no group, so no sequence could be matched. Pick one.";
+  if (sequences.length === 0) return "The Outreach sequence list could not be loaded, so nothing could be matched. Reconnect Outreach on the Outreach page, then re-check.";
+  const wantWords = sequenceTokens(groupName);
+  const ranked = sequences
+    .map((s) => ({ s, score: wordOverlap(wantWords, sequenceTokens(s.name)) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .filter((x) => x.score > 0);
+  const eCount = sequences.filter((s) => /^\s*\[E\]/i.test(s.name)).length;
+  const nearest = ranked.length
+    ? ` Nearest names: ${ranked.map((x) => `"${x.s.name}"${x.s.enabled ? "" : " (disabled)"}${/^\s*\[E\]/i.test(x.s.name) ? "" : " (not an [E] sequence)"}`).join(", ")}.`
+    : ` None of the ${sequences.length} sequences (${eCount} starting with [E]) share a word with it.`;
+  return `No enabled [E] sequence matched "${groupName}".${nearest} Pick one, or rename the sequence to include the group name.`;
 }
 
 // ── Draft review (flag only) ────────────────────────────────────────────────
@@ -443,7 +476,7 @@ export function findPlaceholders(text: string | null | undefined): string[] {
   return Array.from(new Set(found.map((x) => x.trim())));
 }
 
-function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "sequence_id" | "contact_id" | "subject" | "body">, sequencesLoaded = true): ReviewFlag[] {
+function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "sequence_id" | "contact_id" | "subject" | "body">, sequenceMiss?: string): ReviewFlag[] {
   const out: ReviewFlag[] = [];
   // Deterministic first: a placeholder in the text is never a judgement call,
   // and the model review has let these through.
@@ -463,11 +496,7 @@ function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "seq
     default: break;
   }
   if (!send.sequence_id) {
-    out.push(
-      sequencesLoaded
-        ? { kind: "sequence", severity: "red", message: "No Outreach sequence matched this group. Pick one." }
-        : { kind: "sequence", severity: "red", message: "The Outreach sequence list could not be loaded, so nothing could be matched. Reconnect Outreach on the Outreach page, then re-check." },
-    );
+    out.push({ kind: "sequence", severity: "red", message: sequenceMiss ?? "No Outreach sequence matched this group. Pick one." });
   }
   return out;
 }
@@ -542,7 +571,7 @@ export async function prepareSend(id: string, options: { sequences?: OutreachSeq
         { kind: "other" as const, severity: "yellow" as const, message: `The model review did not run (${err instanceof Error ? err.message.slice(0, 80) : "error"}). Read this one yourself.` },
       ])
     : [];
-  const flags = [...systemFlags(updated, sequences.length > 0), ...modelFlags];
+  const flags = [...systemFlags(updated, updated.sequence_id ? undefined : explainSequenceMiss(updated.group_name, sequences)), ...modelFlags];
   return updateSend(id, { review_flags: flags, reviewed_at: new Date().toISOString(), status: statusFromFlags(flags), status_reason: null });
 }
 
@@ -559,23 +588,26 @@ export async function recheckSend(id: string): Promise<E1Send> {
   }
   // No sequence yet: try the match again (the list or the matcher may have
   // improved since the row was prepared). A hand pick is never overridden.
-  let sequencesLoaded = true;
-  if (!send.sequence_id && send.group_name) {
+  let sequenceMiss: string | undefined;
+  if (!send.sequence_id) {
     const settings = await getSendSettings();
     const sequences = await listSequences().catch(() => [] as OutreachSequence[]);
-    sequencesLoaded = sequences.length > 0;
     const seq = matchSequence(send.group_name, sequences, settings.sequenceMap);
     if (seq) {
       patch.sequence_id = seq.id;
       patch.sequence_name = seq.name;
+    } else {
+      sequenceMiss = explainSequenceMiss(send.group_name, sequences);
     }
   }
   if (send.body && send.body.includes("[INSERT TOWN]") && send.city?.trim()) {
     patch.body = send.body.split("[INSERT TOWN]").join(send.city.trim());
   }
   const merged = { ...send, ...patch };
-  const modelFlags = send.review_flags.filter((f) => !["contact", "email", "sequence", "placeholder"].includes(f.kind));
-  const flags = [...systemFlags(merged, sequencesLoaded), ...modelFlags];
+  // Keep only the model's flags; everything the checks wrote is recomputed
+  // (older rows carry the placeholder flag under "other").
+  const modelFlags = send.review_flags.filter((f) => !["contact", "email", "sequence", "placeholder"].includes(f.kind) && !/^Unfilled placeholder/.test(f.message) && !/^The model review did not run/.test(f.message));
+  const flags = [...systemFlags(merged, sequenceMiss), ...modelFlags];
   return updateSend(id, { ...patch, review_flags: flags, status: ["pending", "review", "ready"].includes(send.status) ? statusFromFlags(flags) : send.status });
 }
 
