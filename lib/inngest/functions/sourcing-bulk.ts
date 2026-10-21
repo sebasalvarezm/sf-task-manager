@@ -13,6 +13,7 @@ import {
 import {
   runFullSourcing,
   runFastSourcingClassification,
+  reclassifySourcingResult,
   type SourcingResult,
 } from "@/lib/jobs/sourcing-runner";
 import {
@@ -36,7 +37,10 @@ import { createJob } from "@/lib/jobs";
 function classificationTrusted(result: SourcingResult): boolean {
   const m = result.portfolioMatch;
   if (!m) return false;
-  if (!m.matched) return true;
+  // Unmatched with a warning means the classifier failed, not that nothing
+  // fits; a plain NO_MATCH is also redone, since a stored one is what Seb is
+  // trying to get past when he runs the row again.
+  if (!m.matched) return false;
   return typeof m.confidence === "number";
 }
 
@@ -190,12 +194,24 @@ export const sourcingBulkJob = inngest.createFunction(
                       undefined,
                       true,
                     );
-                if (cached?.result && classificationTrusted(cached.result as unknown as SourcingResult)) {
-                  return {
-                    cached: true,
-                    result: cached.result as unknown as SourcingResult,
-                    error: null,
-                  };
+                if (cached?.result) {
+                  const stored = cached.result as unknown as SourcingResult;
+                  if (classificationTrusted(stored)) {
+                    return { cached: true, result: stored, error: null };
+                  }
+                  // Research is fine, only the group was never settled: redo
+                  // the group-dependent parts from the fresh classification
+                  // (or Seb's typed subgroup) instead of the whole run.
+                  const fresh = quickMatches[i];
+                  if (fresh && fresh.matched) {
+                    const rebuilt = await reclassifySourcingResult(stored, fresh);
+                    return { cached: true, result: rebuilt, error: null };
+                  }
+                  if (fresh) {
+                    // Still no group: keep the research and the new reason;
+                    // a full re-run would only repeat the same failure.
+                    return { cached: true, result: { ...stored, portfolioMatch: fresh }, error: null };
+                  }
                 }
                 const result = await runFullSourcing({
                   url,

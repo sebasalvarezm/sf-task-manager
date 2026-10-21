@@ -403,6 +403,44 @@ async function generateOutreach(
   return result;
 }
 
+/**
+ * A stored run whose group was never settled (the classifier answered nothing,
+ * or Seb has since typed the subgroup on the row) keeps all its research and
+ * gets only the group-dependent parts redone: the outreach paragraph and the
+ * prepackaged email. One model call and a scrape, not a fifteen-call run.
+ */
+export async function reclassifySourcingResult(
+  stored: SourcingResult,
+  match: SourcingResult["portfolioMatch"],
+): Promise<SourcingResult> {
+  const anthropic = getAnthropicClient();
+  if (!anthropic) {
+    throw new Error("AI service not configured (missing ANTHROPIC_API_KEY)");
+  }
+  const normalized = stored.url.startsWith("http") ? stored.url : `https://${stored.url}`;
+  // The stored website text is a 500-character stub; the paragraph needs the real page.
+  const currentText = (await scrapeWithJina(normalized).catch(() => null)) ?? stored.currentText ?? "";
+  const logs: string[] = [];
+  const outreachParagraph = await generateOutreach(anthropic, normalized, currentText, stored.products ?? [], match.group, logs);
+  const prepackagedEmail = buildPrepackagedEmail({
+    companyName: stored.companyName ?? null,
+    mainGroup: match.mainGroup ?? null,
+    subgroup: match.group,
+    emailHook: stored.emailHook ?? null,
+    outreachParagraph,
+    address: stored.address ?? null,
+    locationConfidence: stored.locationConfidence ?? "none",
+    restaurants: stored.restaurants ?? [],
+    now: new Date(),
+  });
+  return {
+    ...stored,
+    portfolioMatch: { ...match, warning: null },
+    outreachParagraph,
+    prepackagedEmail,
+  };
+}
+
 export async function runFullSourcing(input: {
   url: string;
   onProgress?: (step: string, pct: number) => void;
