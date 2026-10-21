@@ -166,10 +166,43 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
   if (error) throw new Error(error.message);
   const rows = (items ?? []) as WeeklyOutreachItem[];
   if (rows.length === 0) return [];
-  const { data: existing } = await db.from("e1_sends").select("weekly_outreach_id").in("weekly_outreach_id", rows.map((r) => r.id));
-  const have = new Set((existing ?? []).map((r) => (r as { weekly_outreach_id: string }).weekly_outreach_id));
-  const fresh = rows.filter((r) => !have.has(r.id) && r.draft);
-  if (fresh.length === 0) return [];
+  const { data: existing } = await db
+    .from("e1_sends")
+    .select("id, weekly_outreach_id, status, subject, body, group_name")
+    .in("weekly_outreach_id", rows.map((r) => r.id));
+  type Existing = { id: string; weekly_outreach_id: string; status: E1Status; subject: string | null; body: string | null; group_name: string | null };
+  const byWeekly = new Map((existing ?? []).map((r) => [(r as Existing).weekly_outreach_id, r as Existing]));
+
+  // A row whose draft was re-sourced since it was queued is refreshed in
+  // place (new text, new group, sequence re-matched) and checked again, as
+  // long as Seb has not approved or scheduled it. Without this, a re-run on
+  // Weekly Outreach left the old draft sitting in the queue.
+  const refreshed: string[] = [];
+  for (const r of rows) {
+    const prev = byWeekly.get(r.id);
+    if (!prev || !r.draft || !["pending", "review", "ready"].includes(prev.status)) continue;
+    const { subject, body } = splitDraft(r.draft);
+    const groupChanged = (r.group_name ?? null) !== (prev.group_name ?? null);
+    if (subject === prev.subject && body === prev.body && !groupChanged) continue;
+    const { error: updErr } = await db
+      .from("e1_sends")
+      .update({
+        subject,
+        body,
+        group_name: r.group_name,
+        ...(groupChanged ? { sequence_id: null, sequence_name: null } : {}),
+        status: "pending",
+        status_reason: null,
+        review_flags: [],
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", prev.id);
+    if (updErr) throw new Error(updErr.message);
+    refreshed.push(prev.id);
+  }
+
+  const fresh = rows.filter((r) => !byWeekly.has(r.id) && r.draft);
+  if (fresh.length === 0) return refreshed;
 
   // Billing state is what the time zone needs; Weekly Outreach rows carry country and city only.
   const states = new Map<string, { state: string | null; country: string | null; city: string | null }>();
@@ -207,7 +240,7 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
     if (insErr) throw new Error(insErr.message);
     created.push((data as { id: string }).id);
   }
-  return created;
+  return [...refreshed, ...created];
 }
 
 // ── Contact pick ────────────────────────────────────────────────────────────
@@ -245,6 +278,14 @@ export function normalizeSequenceName(name: string): string {
     .trim();
 }
 
+// Words that name the main group or add nothing, ignored when comparing a
+// subgroup to a sequence name ("[E] - CDM — Waste & Recycling" vs "Waste Recycling").
+const SEQUENCE_NOISE = new Set(["cdm", "logistics", "agriculture", "manufacturing", "construction", "diversified", "materials", "the", "of", "services", "solutions", "group"]);
+
+function sequenceTokens(name: string): string[] {
+  return normalizeSequenceName(name).split(" ").filter((w) => w && !SEQUENCE_NOISE.has(w));
+}
+
 export function matchSequence(groupName: string | null, sequences: OutreachSequence[], overrides: Record<string, string>): OutreachSequence | null {
   if (!groupName) return null;
   const override = overrides[groupName];
@@ -259,7 +300,24 @@ export function matchSequence(groupName: string | null, sequences: OutreachSeque
     const n = normalizeSequenceName(s.name);
     return n.endsWith(want) || want.endsWith(n) || n.includes(want);
   });
-  return contains.length === 1 ? contains[0] : null;
+  if (contains.length === 1) return contains[0];
+  // Names drift ("Freight & Supply Chain" vs "Freight Supply Chain Enablement",
+  // "Waste, Recycling & Environmental Services" vs "Waste Recycling"): score
+  // by the share of the subgroup's words the sequence name carries, and take
+  // a clear winner.
+  const wantWords = sequenceTokens(groupName);
+  if (wantWords.length === 0) return null;
+  const scored = pool
+    .map((s) => {
+      const have = new Set(sequenceTokens(s.name));
+      const hits = wantWords.filter((w) => have.has(w)).length;
+      return { s, score: hits / wantWords.length };
+    })
+    .filter((x) => x.score >= 0.6)
+    .sort((a, b) => b.score - a.score);
+  if (scored.length === 0) return null;
+  if (scored.length > 1 && scored[0].score === scored[1].score) return null;
+  return scored[0].s;
 }
 
 // ── Draft review (flag only) ────────────────────────────────────────────────
@@ -378,7 +436,7 @@ export function findPlaceholders(text: string | null | undefined): string[] {
   return Array.from(new Set(found.map((x) => x.trim())));
 }
 
-function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "sequence_id" | "contact_id" | "subject" | "body">): ReviewFlag[] {
+function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "sequence_id" | "contact_id" | "subject" | "body">, sequencesLoaded = true): ReviewFlag[] {
   const out: ReviewFlag[] = [];
   // Deterministic first: a placeholder in the text is never a judgement call,
   // and the model review has let these through.
@@ -397,7 +455,13 @@ function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "seq
     case "error": out.push({ kind: "email", severity: "yellow", message: "The verifier failed. Re-check, or decide by hand." }); break;
     default: break;
   }
-  if (!send.sequence_id) out.push({ kind: "sequence", severity: "red", message: "No Outreach sequence matched this group. Pick one." });
+  if (!send.sequence_id) {
+    out.push(
+      sequencesLoaded
+        ? { kind: "sequence", severity: "red", message: "No Outreach sequence matched this group. Pick one." }
+        : { kind: "sequence", severity: "red", message: "The Outreach sequence list could not be loaded, so nothing could be matched. Reconnect Outreach on the Outreach page, then re-check." },
+    );
+  }
   return out;
 }
 
@@ -453,6 +517,11 @@ export async function prepareSend(id: string, options: { sequences?: OutreachSeq
   // Time zone for the send slot.
   patch.time_zone = recipientTimeZone(send.country, send.state);
 
+  // Sourcing could not place the company but Salesforce knows the town: use it.
+  if (send.body && send.body.includes("[INSERT TOWN]") && send.city?.trim()) {
+    patch.body = send.body.split("[INSERT TOWN]").join(send.city.trim());
+  }
+
   // Hook provenance, so the row can say what backs the opening sentence.
   const ctx = await sourcingContextFor(send).catch(() => null);
   patch.hook = ctx?.hookInfo ?? hookInfoFrom(null);
@@ -466,7 +535,7 @@ export async function prepareSend(id: string, options: { sequences?: OutreachSeq
         { kind: "other" as const, severity: "yellow" as const, message: `The model review did not run (${err instanceof Error ? err.message.slice(0, 80) : "error"}). Read this one yourself.` },
       ])
     : [];
-  const flags = [...systemFlags(updated), ...modelFlags];
+  const flags = [...systemFlags(updated, sequences.length > 0), ...modelFlags];
   return updateSend(id, { review_flags: flags, reviewed_at: new Date().toISOString(), status: statusFromFlags(flags), status_reason: null });
 }
 

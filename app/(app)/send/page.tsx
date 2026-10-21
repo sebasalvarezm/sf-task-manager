@@ -121,7 +121,7 @@ export default function SendQueuePage() {
   }, [load]);
   useEffect(() => {
     if (!job) return;
-    const id = window.setInterval(() => void load(true), 8000);
+    const id = window.setInterval(() => void load(true), 3000);
     return () => window.clearInterval(id);
   }, [job, load]);
 
@@ -210,7 +210,14 @@ export default function SendQueuePage() {
         <div className="min-w-0">
           <h1 className="text-2xl font-normal tracking-tight text-ink">{view === "settings" ? "Send settings" : view === "done" ? "With Outreach" : "Send queue"}</h1>
           <p className="mt-1 text-sm text-ink-secondary">{subtitle}</p>
-          {job ? <p className="mt-1 text-xs text-ink-muted">{job.progress?.step ?? (job.kind === "e1_schedule" ? "Scheduling…" : "Checking…")}</p> : null}
+          {job ? (
+            <div className="mt-2 max-w-md">
+              <p className="text-xs text-ink-muted">{job.progress?.step ?? (job.kind === "e1_schedule" ? "Scheduling…" : "Checking contacts, emails, sequences and drafts…")}</p>
+              <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-surface-4">
+                <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${Math.max(4, Math.min(100, job.progress?.pct ?? 4))}%` }} />
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {view === "queue" ? (
@@ -353,7 +360,7 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
           <p className="truncate text-[13px] text-ink-secondary">
             {row.contact_name ? `${row.contact_name}${row.contact_title ? `, ${row.contact_title}` : ""}` : "No contact"}
             {verify ? <span className={` · ${verify.tone}`}> · {verify.text}</span> : null}
-            {row.sequence_name ? ` · ${row.sequence_name.replace(/^\s*\[E\]\s*-?\s*/, "")}` : " · no sequence"}
+            {row.sequence_name ? ` · ${row.sequence_name.replace(/^\s*\[E\]\s*-?\s*/, "")}` : ` · no sequence${row.group_name ? ` for ${row.group_name}` : " (no group)"}`}
             {row.scheduled_for ? ` · ${fmtSlot(row.scheduled_for, row.time_zone)}` : ""}
           </p>
           {red.length + yellow.length > 0 && !open ? (

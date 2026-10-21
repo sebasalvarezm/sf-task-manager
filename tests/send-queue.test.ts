@@ -94,7 +94,7 @@ describe("send row helpers", () => {
     expect(normalizeSequenceName("[E] - Agriculture — Grain & Crop")).toBe("agriculture grain crop");
     expect(matchSequence("Manufacturing — Production Quality", seqs, {})?.id).toBe("1");
     expect(matchSequence("Grain & Crop", seqs, {})?.id).toBe("2");
-    expect(matchSequence("Contractor Solutions", seqs, {})).toBeNull();
+    expect(matchSequence("Contractor Solutions", seqs, {})?.id).toBe("4"); // word overlap: "contractor"
     expect(matchSequence("Contractor Solutions", seqs, { "Contractor Solutions": "4" })?.id).toBe("4");
     expect(matchSequence("Construction & Materials", seqs, {})).toBeNull();
   });
@@ -128,5 +128,23 @@ describe("hookInfoFrom", () => {
     expect(medium.level).toBe("medium");
     const low = hookInfoFrom({ emailHook: "I have studied Acme going back to 2001.", hookSource: "web_research", hookAnchor: null });
     expect(low.level).toBe("low");
+  });
+});
+
+describe("matchSequence tolerates naming drift", () => {
+  const seqs = [
+    { id: "1", name: "[E] - Logistics — Freight & Supply Chain", enabled: true },
+    { id: "2", name: "[E] - CDM — Waste, Recycling & Environmental Services", enabled: true },
+    { id: "3", name: "[E] - CDM — Bulk Materials", enabled: true },
+    { id: "4", name: "[D-E] - CDM — Waste Recycling", enabled: true },
+  ] as never[];
+  it("matches on shared words when names are not identical", () => {
+    expect(matchSequence("Freight Supply Chain Enablement", seqs, {})?.id).toBe("1");
+    expect(matchSequence("Waste Recycling", seqs, {})?.id).toBe("2");
+    expect(matchSequence("Bulk Materials", seqs, {})?.id).toBe("3");
+  });
+  it("gives up rather than guess", () => {
+    expect(matchSequence("Fresh Produce", seqs, {})).toBeNull();
+    expect(matchSequence(null, seqs, {})).toBeNull();
   });
 });
