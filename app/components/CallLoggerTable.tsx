@@ -865,10 +865,10 @@ export default function CallLoggerTable({
                   {commentaryPending ? (
                     <div className="mt-0.5 flex">{renderSuggestedMarker(meeting.eventId, "commentary", null)}</div>
                   ) : null}
-                  {!commentaryPending && !suggestionLoading && suggestionErrors?.has(meeting.eventId) && granolaNotes?.has(meeting.eventId) ? (
+                  {!commentaryPending && !suggestionLoading && granolaNotes?.has(meeting.eventId) && (suggestionErrors?.has(meeting.eventId) || (suggestion && !suggestion.commentary && !suggestion.callType && suggestion.followUpDays == null && !entry.commentary && !entry.callType)) ? (
                     <p className="mt-0.5 text-xs text-warn">
-                      {suggestionErrors.get(meeting.eventId)}{" "}
-                      <button type="button" onClick={(e) => { e.stopPropagation(); void suggestFromNotes(meeting); }} className="text-info underline underline-offset-2 hover:text-ink">Try again</button>
+                      {suggestionErrors?.get(meeting.eventId) ?? "The note gave nothing usable."}{" "}
+                      <button type="button" disabled={suggesting.has(meeting.eventId)} onClick={(e) => { e.stopPropagation(); void suggestFromNotes(meeting); }} className="text-info underline underline-offset-2 hover:text-ink disabled:opacity-60">{suggesting.has(meeting.eventId) ? "Writing…" : "Try again"}</button>
                     </p>
                   ) : null}
                 </td>
