@@ -2,6 +2,7 @@ import { getAnthropicClient, MODELS, stripCites } from "./anthropic";
 import { getSupabaseAdmin } from "./supabase";
 import { sfQuery } from "./sf-query";
 import { fetchContactsForAccounts, type SfContact } from "./salesforce-contacts";
+import { sfFetch } from "./sf-query";
 import { verifyEmail, type VerifyDetail, type VerifyResult } from "./email-verify";
 import { listSequences, listMailboxes, findProspectByEmail, createProspect, addProspectToSequence, outreachRequest, type OutreachSequence } from "./outreach";
 import { getStoredSignature, saveStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
@@ -9,8 +10,9 @@ import { importSignatureFromSentItems } from "./microsoft";
 import { trackedCreate } from "./model-cost";
 import { recipientTimeZone, planSendSlots } from "./send-slots";
 import { currentWeekStart, type WeeklyOutreachItem } from "./weekly-outreach";
-import { getJob } from "./jobs";
-import type { SourcingResult } from "./jobs/sourcing-runner";
+import { shortenRestaurantName } from "./email-prepackage";
+import { getJob, markSucceeded } from "./jobs";
+import { rerunHookResearch, type SourcingResult } from "./jobs/sourcing-runner";
 
 /**
  * The send queue: everything between "Sourcing produced a draft" and "a
@@ -65,6 +67,8 @@ export type E1Send = {
   review_flags: ReviewFlag[];
   reviewed_at: string | null;
   hook: HookInfo | null;
+  /** The restaurants Sourcing found near the company, for the subject-line pick. */
+  restaurant_options: Array<{ name: string; description: string }>;
   subject: string | null;
   body: string | null;
   status: E1Status;
@@ -405,7 +409,7 @@ export function explainSequenceMiss(groupName: string | null, sequences: Outreac
 
 // ── Draft review (flag only) ────────────────────────────────────────────────
 
-type SourcingContext = { address: string | null; restaurants: string[]; hook: string | null; hookAnchor: string | null; hookInfo: HookInfo; websiteText: string | null } | null;
+type SourcingContext = { address: string | null; restaurants: string[]; restaurantOptions: Array<{ name: string; description: string }>; hook: string | null; hookAnchor: string | null; hookInfo: HookInfo; websiteText: string | null } | null;
 
 function hostOf(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -450,11 +454,118 @@ async function sourcingContextFor(send: E1Send): Promise<SourcingContext> {
   return {
     address: r.address ?? null,
     restaurants: (r.restaurants ?? []).map((x) => x.name),
+    restaurantOptions: (r.restaurants ?? []).map((x) => ({ name: x.name, description: x.description ?? "" })),
     hook: r.emailHook ?? null,
     hookAnchor: r.hookAnchor ? JSON.stringify(r.hookAnchor).slice(0, 600) : null,
     hookInfo: hookInfoFrom(r),
     websiteText: r.currentText ?? null,
   };
+}
+
+/**
+ * Add a contact Seb found himself: created in Salesforce on the account (so
+ * Outreach, the sequence and the account history all agree), then made this
+ * row's contact, verified and re-checked. One shot.
+ */
+export async function addContactAndUse(id: string, input: { firstName: string; lastName: string; email: string; title?: string | null }): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (!["pending", "review", "ready", "approved"].includes(send.status)) throw new Error("This row can no longer be edited.");
+  const email = input.email.trim().toLowerCase();
+  const firstName = input.firstName.trim();
+  const lastName = input.lastName.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("That does not look like an email address.");
+  if (!lastName) throw new Error("A last name is needed for Salesforce.");
+
+  // Reuse the Salesforce contact if the address already exists on the account.
+  const existing = send.contact_options.find((c) => c.email?.toLowerCase() === email);
+  let option: ContactOption;
+  if (existing) {
+    option = existing;
+  } else {
+    const res = await sfFetch("/services/data/v62.0/sobjects/Contact", {
+      method: "POST",
+      body: JSON.stringify({ FirstName: firstName || null, LastName: lastName, Email: email, Title: input.title?.trim() || null, AccountId: send.sf_account_id }),
+    });
+    if (!res.ok) throw new Error(`Salesforce would not create the contact: ${(await res.text()).slice(0, 200)}`);
+    const created = (await res.json()) as { id: string };
+    option = { id: created.id, name: [firstName, lastName].filter(Boolean).join(" "), firstName: firstName || null, lastName, title: input.title?.trim() || null, email, rank: titleRank(input.title ?? null) };
+  }
+  const options = existing ? send.contact_options : [option, ...send.contact_options];
+  const v = await verifyEmail(email);
+  await updateSend(id, {
+    contact_options: options,
+    contact_id: option.id,
+    contact_name: option.name,
+    contact_first_name: option.firstName,
+    contact_last_name: option.lastName,
+    contact_title: option.title,
+    contact_email: email,
+    verify_result: v.result,
+    verify_detail: v,
+    verified_email: email,
+    ...(send.status === "approved" ? { status: "ready" as const } : {}),
+  });
+  return recheckSend(id);
+}
+
+/** Put a different restaurant in the subject line, keeping the date part. */
+export async function chooseRestaurant(id: string, name: string): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (!["pending", "review", "ready", "approved"].includes(send.status)) throw new Error("This row can no longer be edited.");
+  const short = shortenRestaurantName(name);
+  const m = (send.subject ?? "").match(/\s([A-Z][a-z]{2} \d{1,2}): Valstone\s*$/);
+  const subject = m ? `${short} ${m[1]}: Valstone` : `${short}: Valstone`;
+  return updateSend(id, { subject, ...(send.status === "approved" ? { status: "ready" as const } : {}) });
+}
+
+/**
+ * "Deep research this hook" from the Send queue: re-run the public-source
+ * hook research for this row's company, save it to the sourcing run (so the
+ * Sourcing page shows the same hook), and swap the opening sentence in the
+ * draft. Seb's other edits to the draft are kept.
+ */
+export async function rehookSend(id: string): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (!["pending", "review", "ready"].includes(send.status)) throw new Error("Only a row still waiting on a decision can be re-researched.");
+  if (!send.sourcing_job_id || !send.weekly_outreach_id) throw new Error("This row has no sourcing run to research from.");
+  const job = await getJob(send.sourcing_job_id);
+  if (!job?.result) throw new Error("The sourcing run for this row could not be found.");
+  const input = (job.input ?? {}) as { weeklyOutreachIds?: string[] };
+  const idx = (input.weeklyOutreachIds ?? []).indexOf(send.weekly_outreach_id);
+  const stored = job.result as Record<string, unknown>;
+  const items = Array.isArray(stored.items) ? (stored.items as Array<Record<string, unknown>>) : [];
+  const target = idx >= 0 ? (items[idx]?.result as SourcingResult | null | undefined) ?? null : null;
+  if (!target) throw new Error("This company is not in its sourcing run.");
+
+  const patch = await rerunHookResearch(target);
+  if (patch.emailHook === undefined || !patch.emailHook) {
+    throw new Error("Nothing better turned up: the research found no verifiable detail to build a new hook from. The draft is unchanged.");
+  }
+  const updated: SourcingResult = {
+    ...target,
+    ...patch,
+    logs: [...(target.logs ?? []), "--- Hook re-researched from the Send queue ---", ...patch.logs],
+  };
+  items[idx] = { ...items[idx], result: updated };
+  await markSucceeded(job.id, { ...stored, items }, false);
+
+  // Swap the opening sentence only, so edits elsewhere in the draft survive.
+  const newHook = patch.emailHook.trim();
+  let body = send.body ?? "";
+  const oldHook = send.hook?.text?.trim();
+  if (oldHook && body.includes(oldHook)) {
+    body = body.replace(oldHook, newHook);
+  } else if (updated.prepackagedEmail && !updated.prepackagedEmail.skipped && updated.prepackagedEmail.body) {
+    body = updated.prepackagedEmail.body;
+  } else {
+    body = body.replace(/^[^\n.]*going back to[^\n]*?\./m, newHook);
+  }
+  // The model's old hook flag was about the sentence just replaced.
+  await updateSend(id, { body, hook: hookInfoFrom(updated), review_flags: send.review_flags.filter((f) => f.kind !== "hook") });
+  return recheckSend(id);
 }
 
 const REVIEW_SYSTEM = `You check a cold outreach email before a human reviews it. You never rewrite it. You return only problems, each as one short plain sentence a reader can act on. Be strict about facts and spelling, relaxed about style.
@@ -604,6 +715,7 @@ export async function prepareSend(id: string, options: { sequences?: OutreachSeq
   // Hook provenance, so the row can say what backs the opening sentence.
   const ctx = await sourcingContextFor(send).catch(() => null);
   patch.hook = ctx?.hookInfo ?? hookInfoFrom(null);
+  patch.restaurant_options = ctx?.restaurantOptions ?? [];
 
   const updated = await updateSend(id, patch);
 

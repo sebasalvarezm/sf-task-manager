@@ -3,12 +3,14 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { approveSend, cancelSend, getSendSettings, listSends, recheckSend, rejectSend, saveSendSettings, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { addContactAndUse, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences } from "@/lib/outreach";
 import { currentWeekStart } from "@/lib/weekly-outreach";
 import { isVerifyConfigured } from "@/lib/email-verify";
 
 export const dynamic = "force-dynamic";
+// "rehook" runs the public-source research ladder inline: a few searches and a page read.
+export const maxDuration = 300;
 
 /** GET ?week=YYYY-MM-DD: the queue for a week, settings, sequences, and whether a job is running. */
 export async function GET(request: NextRequest) {
@@ -50,6 +52,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ jobId: job.id });
       }
       case "recheck": return NextResponse.json({ item: await recheckSend(need(body.id)) });
+      case "rehook": return NextResponse.json({ item: await rehookSend(need(body.id)) });
+      case "add_contact": {
+        const c = (body as { contact?: { firstName?: string; lastName?: string; email?: string; title?: string } }).contact ?? {};
+        return NextResponse.json({ item: await addContactAndUse(need(body.id), { firstName: c.firstName ?? "", lastName: c.lastName ?? "", email: c.email ?? "", title: c.title ?? null }) });
+      }
       case "approve": return NextResponse.json({ item: await approveSend(need(body.id)) });
       case "reject": return NextResponse.json({ item: await rejectSend(need(body.id), body.reason ?? null) });
       case "cancel": return NextResponse.json({ item: await cancelSend(need(body.id)) });
@@ -81,7 +88,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const body = (await request.json()) as { id?: string; contact_id?: string | null; sequence_id?: string | null; subject?: string; body?: string };
+    const body = (await request.json()) as { id?: string; contact_id?: string | null; sequence_id?: string | null; subject?: string; body?: string; restaurant?: string };
     const id = need(body.id);
     const { data } = await getSupabaseAdmin().from("e1_sends").select("*").eq("id", id).maybeSingle();
     const send = data as E1Send | null;
@@ -90,6 +97,9 @@ export async function PATCH(request: NextRequest) {
     const patch: Partial<E1Send> = {};
     if (typeof body.subject === "string") patch.subject = body.subject;
     if (typeof body.body === "string") patch.body = body.body;
+    if (typeof body.restaurant === "string" && body.restaurant) {
+      return NextResponse.json({ item: await chooseRestaurant(id, body.restaurant) });
+    }
     if (body.contact_id !== undefined) {
       const c = send.contact_options.find((o) => o.id === body.contact_id) ?? null;
       patch.contact_id = c?.id ?? null;

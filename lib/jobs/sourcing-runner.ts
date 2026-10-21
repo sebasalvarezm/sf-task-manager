@@ -441,6 +441,27 @@ export async function reclassifySourcingResult(
   };
 }
 
+/**
+ * Rebuild the prepackaged email of a stored run for today: the subject date
+ * and "week of" phrase are computed at build time, so a run reused weeks
+ * later would otherwise carry a date already gone. No model call.
+ */
+export function refreshPrepackagedEmail(stored: SourcingResult): SourcingResult {
+  if (!stored.portfolioMatch?.matched || !stored.portfolioMatch.group) return stored;
+  const prepackagedEmail = buildPrepackagedEmail({
+    companyName: stored.companyName ?? null,
+    mainGroup: stored.portfolioMatch.mainGroup ?? null,
+    subgroup: stored.portfolioMatch.group,
+    emailHook: stored.emailHook ?? null,
+    outreachParagraph: stored.outreachParagraph ?? null,
+    address: stored.address ?? null,
+    locationConfidence: stored.locationConfidence ?? "none",
+    restaurants: stored.restaurants ?? [],
+    now: new Date(),
+  });
+  return { ...stored, prepackagedEmail };
+}
+
 export async function runFullSourcing(input: {
   url: string;
   onProgress?: (step: string, pct: number) => void;

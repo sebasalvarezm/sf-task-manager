@@ -14,6 +14,7 @@ import {
   runFullSourcing,
   runFastSourcingClassification,
   reclassifySourcingResult,
+  refreshPrepackagedEmail,
   type SourcingResult,
 } from "@/lib/jobs/sourcing-runner";
 import {
@@ -197,7 +198,8 @@ export const sourcingBulkJob = inngest.createFunction(
                 if (cached?.result) {
                   const stored = cached.result as unknown as SourcingResult;
                   if (classificationTrusted(stored)) {
-                    return { cached: true, result: stored, error: null };
+                    // Same research, but the draft's dates are for this week.
+                    return { cached: true, result: refreshPrepackagedEmail(stored), error: null };
                   }
                   // Research is fine, only the group was never settled: redo
                   // the group-dependent parts from the fresh classification

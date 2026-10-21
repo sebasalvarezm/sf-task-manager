@@ -38,6 +38,7 @@ type Row = {
   verify_result: string | null;
   review_flags: Flag[];
   hook: Hook | null;
+  restaurant_options: Array<{ name: string; description: string }>;
   subject: string | null;
   body: string | null;
   status: Status;
@@ -147,11 +148,11 @@ export default function SendQueuePage() {
   function replace(item: Row) {
     setItems((prev) => prev.map((r) => (r.id === item.id ? item : r)));
   }
-  async function act(id: string, action: "approve" | "reject" | "cancel" | "recheck") {
+  async function act(id: string, action: "approve" | "reject" | "cancel" | "recheck" | "rehook" | "add_contact", extra: Record<string, unknown> = {}) {
     setBusy((b) => new Set(b).add(id));
     setError(null);
     try {
-      const data = await post({ action, id });
+      const data = await post({ action, id, ...extra });
       if (data.item) replace(data.item as Row);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
@@ -281,6 +282,8 @@ export default function SendQueuePage() {
               onReject={() => void act(row.id, "reject")}
               onCancel={() => void act(row.id, "cancel")}
               onRecheck={() => void act(row.id, "recheck")}
+              onRehook={() => void act(row.id, "rehook")}
+              onAddContact={(contact) => void act(row.id, "add_contact", { contact })}
               onEdit={(patch) => void edit(row.id, patch)}
             />
           ))}
@@ -319,7 +322,7 @@ function HookLine({ hook }: { hook: Hook }) {
   );
 }
 
-function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, onCancel, onRecheck, onEdit }: {
+function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, onCancel, onRecheck, onRehook, onAddContact, onEdit }: {
   row: Row;
   sequences: Sequence[];
   busy: boolean;
@@ -329,6 +332,8 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
   onReject: () => void;
   onCancel: () => void;
   onRecheck: () => void;
+  onRehook: () => void;
+  onAddContact: (contact: { firstName: string; lastName: string; email: string; title: string }) => void;
   onEdit: (patch: Record<string, unknown>) => void;
 }) {
   const red = row.review_flags.filter((f) => f.severity === "red");
@@ -338,6 +343,15 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
   const dot = row.status === "ready" || row.status === "approved" ? "bg-ok" : row.status === "review" || row.status === "failed" ? (red.length || row.status === "failed" ? "bg-danger" : "bg-warn") : "bg-ink-muted";
   const [subject, setSubject] = useState(row.subject ?? "");
   const [body, setBody] = useState(row.body ?? "");
+  const [adding, setAdding] = useState(false);
+  const [newContact, setNewContact] = useState({ firstName: "", lastName: "", email: "", title: "" });
+  const [copied, setCopied] = useState<string | null>(null);
+  const copy = (text: string, label: string) => {
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(label);
+      window.setTimeout(() => setCopied(null), 1500);
+    });
+  };
   const timer = useRef<number | null>(null);
   useEffect(() => {
     setSubject(row.subject ?? "");
@@ -397,15 +411,41 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
           {row.status_reason ? <p className="text-ink-muted">{row.status_reason}</p> : null}
           {row.hook ? <HookLine hook={row.hook} /> : null}
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-ink-secondary">Contact</span>
+            <div className="block">
+              <span className="flex items-center justify-between text-ink-secondary">
+                <span>Contact</span>
+                <span className="flex items-center gap-3 text-[12px]">
+                  {row.contact_email ? <button type="button" onClick={() => copy(row.contact_email ?? "", "email")} className="text-info hover:underline">{copied === "email" ? "Copied" : "Copy email"}</button> : null}
+                  {row.contact_options.some((c) => c.email) ? <button type="button" onClick={() => copy(row.contact_options.filter((c) => c.email).map((c) => `${c.name}${c.title ? `, ${c.title}` : ""} <${c.email}>`).join("\n"), "all")} className="text-info hover:underline">{copied === "all" ? "Copied" : "Copy all"}</button> : null}
+                  {editable ? <button type="button" onClick={() => setAdding((v) => !v)} className="text-info hover:underline">{adding ? "Cancel" : "Add a contact"}</button> : null}
+                </span>
+              </span>
               <select disabled={!editable} value={row.contact_id ?? ""} onChange={(e) => onEdit({ contact_id: e.target.value || null })} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink">
                 <option value="">None</option>
                 {row.contact_options.map((c) => (
                   <option key={c.id} value={c.id} disabled={!c.email}>{c.name}{c.title ? `, ${c.title}` : ""}{c.email ? ` (${c.email})` : " (no email)"}</option>
                 ))}
               </select>
-            </label>
+              {adding ? (
+                <form
+                  className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_1.4fr_1fr_auto]"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!newContact.email.trim() || !newContact.lastName.trim()) return;
+                    onAddContact(newContact);
+                    setAdding(false);
+                    setNewContact({ firstName: "", lastName: "", email: "", title: "" });
+                  }}
+                >
+                  <input required placeholder="First name" value={newContact.firstName} onChange={(e) => setNewContact({ ...newContact, firstName: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+                  <input required placeholder="Last name" value={newContact.lastName} onChange={(e) => setNewContact({ ...newContact, lastName: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+                  <input required type="email" placeholder="Email" value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+                  <input placeholder="Title (optional)" value={newContact.title} onChange={(e) => setNewContact({ ...newContact, title: e.target.value })} className="rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+                  <Button size="sm" type="submit" loading={busy}>Add and use</Button>
+                </form>
+              ) : null}
+              {adding ? <p className="mt-1 text-[12px] text-ink-muted">Created on the account in Salesforce, then verified and used for this email.</p> : null}
+            </div>
             <label className="block">
               <span className="text-ink-secondary">Sequence</span>
               <select disabled={!editable} value={row.sequence_id ?? ""} onChange={(e) => onEdit({ sequence_id: e.target.value || null })} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink">
@@ -416,10 +456,23 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
               </select>
             </label>
           </div>
-          <label className="block">
-            <span className="text-ink-secondary">Subject</span>
-            <input disabled={!editable} value={subject} onChange={(e) => { setSubject(e.target.value); queueSave({ subject: e.target.value }); }} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-ink-secondary">Subject</span>
+              <input disabled={!editable} value={subject} onChange={(e) => { setSubject(e.target.value); queueSave({ subject: e.target.value }); }} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink" />
+            </label>
+            {(row.restaurant_options ?? []).length > 0 ? (
+              <label className="block">
+                <span className="text-ink-secondary">Restaurant</span>
+                <select disabled={!editable} value="" onChange={(e) => { if (e.target.value) onEdit({ restaurant: e.target.value }); }} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 text-[13px] text-ink">
+                  <option value="">Swap the restaurant in the subject…</option>
+                  {row.restaurant_options.map((r) => (
+                    <option key={r.name} value={r.name} title={r.description}>{r.name}{r.description ? ` · ${r.description.slice(0, 60)}` : ""}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
           <label className="block">
             <span className="text-ink-secondary">Email</span>
             <textarea disabled={!editable} value={body} rows={Math.min(18, Math.max(8, body.split("\n").length + 2))} onChange={(e) => { setBody(e.target.value); queueSave({ body: e.target.value }); }} className="mt-1 w-full rounded-sm border border-line bg-white px-2 py-1 font-sans text-[13px] leading-relaxed text-ink" />
@@ -428,6 +481,7 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
             {row.website ? <a href={/^https?:/i.test(row.website) ? row.website : `https://${row.website}`} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">{row.website.replace(/^https?:\/\/(www\.)?/, "")}</a> : null}
             <span className="text-ink-muted">{[row.city, row.state, row.country].filter(Boolean).join(", ")}{row.time_zone ? ` · ${row.time_zone}` : ""}</span>
             {editable ? <button type="button" onClick={onRecheck} className="text-info underline underline-offset-2 hover:text-ink">Re-check email and sequence</button> : null}
+            {editable ? <button type="button" disabled={busy} onClick={onRehook} className="text-info underline underline-offset-2 hover:text-ink disabled:opacity-60">{busy ? "Researching…" : "Deep research this hook"}</button> : null}
             {row.outreach_mailing_id ? <span className="text-ink-muted">Outreach mailing {row.outreach_mailing_id}</span> : null}
           </div>
         </div>
