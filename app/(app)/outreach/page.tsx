@@ -61,6 +61,8 @@ type Settings = {
   batchSize: number;
   refillBelow: number;
   maxChecksPerDay: number;
+  maxCheckSpendPerDay: number;
+  paused: boolean;
 };
 
 type CheckRow = {
@@ -198,13 +200,15 @@ function OutreachInner() {
       const running = await pollScreen();
       if (running) return;
       const low = settingsRef.current?.refillBelow ?? 20;
-      if (!force && readyRef.current >= low && linkedinRef.current === 0) return;
-      if (cappedRef.current) return;
+      // Only the ready-row count starts a batch. LinkedIn lookups ride along
+      // inside a batch; they used to re-trigger one on every poll.
+      if (!force && readyRef.current >= low) return;
+      if (cappedRef.current || settingsRef.current?.paused) return;
       try {
         const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch }) });
         const data = await res.json();
         if (res.ok && data.jobId) setScreen((s) => ({ ...s, running: true, step: null }));
-        else if (res.ok && data.status === "daily_cap") setScreen((s) => ({ ...s, capped: true, checkedToday: data.checkedToday ?? s.checkedToday, dailyCap: data.dailyCap ?? s.dailyCap }));
+        else if (res.ok && (data.status === "daily_cap" || data.status === "spend_cap" || data.status === "paused")) setScreen((s) => ({ ...s, capped: true, checkedToday: data.checkedToday ?? s.checkedToday, dailyCap: data.dailyCap ?? s.dailyCap }));
         else if (!res.ok && data.error) setError(data.error);
       } catch {
         /* next poll retries */
@@ -447,8 +451,10 @@ function OutreachInner() {
           </Button>
         </div>
       ) : null}
-      {view === "next" && !screen.running && screen.capped && screen.pending > 0 ? (
-        <p className="mt-4 text-xs text-ink-muted">Daily check limit reached ({screen.checkedToday} of {screen.dailyCap}). {screen.pending} still waiting; checking resumes tomorrow, or raise the limit in Rules.</p>
+      {view === "next" && !screen.running && settings?.paused ? (
+        <p className="mt-4 text-xs text-ink-muted">Automatic checks are paused (Rules).</p>
+      ) : view === "next" && !screen.running && screen.capped && screen.pending > 0 ? (
+        <p className="mt-4 text-xs text-ink-muted">Daily check limit reached ({screen.checkedToday} of {screen.dailyCap} rows, or the daily spend cap). {screen.pending} still waiting; checking resumes tomorrow, or change the limits in Rules.</p>
       ) : null}
       {view === "next" && screen.running ? (
         <p className="mt-4 text-xs text-ink-muted">Checking websites{screen.step ? `, ${screen.step.toLowerCase()}` : ""}…</p>
@@ -635,6 +641,8 @@ function RulesPanel({ settings, onSaved }: { settings: Settings; onSaved: (s: Se
         <label className={label}>Rows checked per batch<input type="number" className={field} value={form.batchSize} onChange={num("batchSize")} /></label>
         <label className={label}>Check more when ready drops below<input type="number" className={field} value={form.refillBelow} onChange={num("refillBelow")} /></label>
         <label className={label}>Max rows checked per day<input type="number" className={field} value={form.maxChecksPerDay} onChange={num("maxChecksPerDay")} /></label>
+        <label className={label}>Max check spend per day (USD)<input type="number" step="0.5" className={field} value={form.maxCheckSpendPerDay} onChange={(e) => setForm((f) => ({ ...f, maxCheckSpendPerDay: Number(e.target.value) }))} /></label>
+        <label className={`${label} col-span-2 flex items-center gap-2 sm:col-span-3`}><input type="checkbox" className="h-4 w-4 accent-ink" checked={form.paused} onChange={(e) => setForm((f) => ({ ...f, paused: e.target.checked }))} />Pause all automatic checks (nothing starts until this is off)</label>
         <label className={label}>E1 lookback (months)<input type="number" className={field} value={form.lookbackMonths} onChange={num("lookbackMonths")} /></label>
         <label className={label}>Account record type<input type="text" className={field} value={form.recordType} onChange={(e) => setForm((f) => ({ ...f, recordType: e.target.value }))} /></label>
         <label className={label}>Min employees<input type="number" className={field} value={form.minEmployees} onChange={num("minEmployees")} /></label>

@@ -72,6 +72,20 @@ export async function trackedCreate(
   return message;
 }
 
+/** Dollars spent since midnight UTC by the given features, from the app's own log. */
+export async function spentTodayUsd(features: string[]): Promise<number> {
+  const start = new Date();
+  start.setUTCHours(0, 0, 0, 0);
+  const { data, error } = await getSupabaseAdmin()
+    .from("model_calls")
+    .select("cost_usd")
+    .in("feature", features)
+    .gte("created_at", start.toISOString())
+    .limit(20000);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Array<{ cost_usd: number }>).reduce((s, r) => s + Number(r.cost_usd ?? 0), 0);
+}
+
 export type SpendRow = { feature: string; calls: number; searches: number; cost: number };
 
 /** Spend by feature since `since`, highest first. */

@@ -45,6 +45,10 @@ export type CandidateSettings = RuleSettings & {
   refillBelow: number;
   /** Hard ceiling on rows checked per UTC day, enforced on the server whatever the page asks for. */
   maxChecksPerDay: number;
+  /** Hard ceiling on what the checks (screen plus LinkedIn lookups) may spend per UTC day, in dollars, from the app's own spend log. */
+  maxCheckSpendPerDay: number;
+  /** Nothing automatic starts while this is on. */
+  paused: boolean;
 };
 
 export const DEFAULT_CANDIDATE_SETTINGS: CandidateSettings = {
@@ -60,6 +64,8 @@ export const DEFAULT_CANDIDATE_SETTINGS: CandidateSettings = {
   batchSize: 50,
   refillBelow: 20,
   maxChecksPerDay: 150,
+  maxCheckSpendPerDay: 5,
+  paused: false,
 };
 
 const SETTINGS_KEY = "outreach_candidate_settings";
@@ -83,6 +89,8 @@ export function coerceCandidateSettings(raw: unknown): CandidateSettings {
     batchSize: num(o.batchSize, d.batchSize, 5, 200),
     refillBelow: num(o.refillBelow, d.refillBelow, 0, 200),
     maxChecksPerDay: num(o.maxChecksPerDay, d.maxChecksPerDay, 0, 2000),
+    maxCheckSpendPerDay: typeof o.maxCheckSpendPerDay === "number" && Number.isFinite(o.maxCheckSpendPerDay) && o.maxCheckSpendPerDay >= 0 ? Math.round(o.maxCheckSpendPerDay * 100) / 100 : d.maxCheckSpendPerDay,
+    paused: typeof o.paused === "boolean" ? o.paused : d.paused,
   };
 }
 

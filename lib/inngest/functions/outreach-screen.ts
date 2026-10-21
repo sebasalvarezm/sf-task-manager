@@ -34,12 +34,16 @@ export const outreachScreenJob = inngest.createFunction(
         );
         if (counts.total < take) break; // queue drained
       }
-      // Rows checked before the LinkedIn lookup existed: find their pages now, 12 per step.
+      // LinkedIn lookups for checked rows, inside the same row budget as the
+      // screens so the daily cap means what it says.
       let linkedin = 0;
-      for (let i = 0; i < 5; i++) {
-        const n = await step.run(`linkedin-${i}`, () => backfillLinkedIn(12));
+      let budget = Math.max(0, limit - done);
+      for (let i = 0; i < 5 && budget > 0; i++) {
+        const take = Math.min(12, budget);
+        const n = await step.run(`linkedin-${i}`, () => backfillLinkedIn(take));
         linkedin += n;
-        if (n < 12) break;
+        budget -= n;
+        if (n < take) break;
         await step.run(`linkedin-progress-${i}`, () => updateProgress(jobId, { step: `Finding LinkedIn pages: ${linkedin}`, pct: 100 }));
       }
       await step.run("mark-succeeded", () => markSucceeded(jobId, { ...totals, done, linkedin }));
