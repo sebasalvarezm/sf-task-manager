@@ -2133,9 +2133,9 @@ ${summaries}`,
       cache_control: { type: "ephemeral" },
     },
   ];
-  const ask = (reminder: string) =>
+  const ask = (model: string, reminder: string) =>
     callClaude(client, 2, {
-      model: MODELS.extraction,
+      model,
       max_tokens: 200,
       system,
       messages: [
@@ -2145,20 +2145,29 @@ ${summaries}`,
         },
       ],
     });
+  // What came back, for the warning: an empty answer with "stop: refusal" or
+  // "blocks: none" is a different problem from a sentence instead of JSON.
+  const describe = (resp: { content?: Array<{ type?: string }>; stop_reason?: string } | null, model: string) =>
+    `${model.replace(/^claude-/, "")}: blocks ${(resp?.content ?? []).map((b) => b?.type).join(",") || "none"}, stop ${resp?.stop_reason ?? "?"}`;
 
-  const resp = await ask("Reply with the JSON object only.");
+  const resp = await ask(MODELS.extraction, "Reply with the JSON object only.");
   const first = parseGroupMatch(responseText(resp), groups);
   if (!first.warning) return first;
 
-  // An unreadable answer gets one more try with the reply format spelled out
-  // again; the cached system block makes this nearly free. A second unreadable
-  // answer is reported as such, never guessed.
-  console.warn(`[sourcing] group classification unreadable, retrying once: ${first.warning}`);
+  // An unreadable answer gets one more try, on the drafting model, with the
+  // reply format spelled out again. A second unreadable answer is reported
+  // with what each model actually returned, never guessed.
+  console.warn(`[sourcing] group classification unreadable (${describe(resp, MODELS.extraction)}), retrying on ${MODELS.drafting}: ${first.warning}`);
   const retry = await ask(
+    MODELS.drafting,
     'Reply with ONLY a JSON object such as {"file":"Manufacturing/aftermarket-service.md","confidence":80} or {"file":"NO_MATCH","confidence":0}. No other words, no code fence.',
   );
   const second = parseGroupMatch(responseText(retry), groups);
-  return second.warning ? { ...second, warning: `${first.warning}; retry: ${second.warning}` } : second;
+  if (!second.warning) return second;
+  return {
+    ...second,
+    warning: `${first.warning} (${describe(resp, MODELS.extraction)}); retry: ${second.warning} (${describe(retry, MODELS.drafting)})`,
+  };
 }
 
 /**
