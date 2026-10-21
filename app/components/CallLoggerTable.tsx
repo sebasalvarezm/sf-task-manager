@@ -144,6 +144,8 @@ export default function CallLoggerTable({
   // Account search state
   const [searchInputs, setSearchInputs] = useState<Map<string, string>>(new Map());
   const [searchResults, setSearchResults] = useState<Map<string, Array<{ accountId: string; accountName: string; accountUrl: string }>>>(new Map());
+  // Rows where Seb clicked "Change" on a matched account: show the search box instead.
+  const [changingAccount, setChangingAccount] = useState<Set<string>>(new Set());
   const [searchLoading, setSearchLoading] = useState<Set<string>>(new Set());
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -391,6 +393,11 @@ export default function CallLoggerTable({
 
   function handleSelectSearchResult(eventId: string, account: { accountId: string; accountName: string; accountUrl: string }) {
     onManualMatch(eventId, account);
+    setChangingAccount((prev) => {
+      const next = new Set(prev);
+      next.delete(eventId);
+      return next;
+    });
     // Clear search state for this row
     setSearchResults((prev) => {
       const next = new Map(prev);
@@ -457,6 +464,69 @@ export default function CallLoggerTable({
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
+
+  /** The account search box: for rows with no match, and for "Change" on a matched one. */
+  function renderAccountSearch(meeting: MeetingRow) {
+    const changing = changingAccount.has(meeting.eventId);
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center gap-1">
+          <input
+            type="text"
+            autoFocus={changing}
+            value={searchInputs.get(meeting.eventId) ?? ""}
+            placeholder={meeting.externalDomains.length > 0 ? meeting.externalDomains[0].split(".")[0] : "Search account..."}
+            onChange={(e) => setSearchInputs((prev) => new Map(prev).set(meeting.eventId, e.target.value))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleAccountSearch(meeting.eventId);
+              }
+            }}
+            className="flex-1 min-w-0 border border-line-strong rounded-sm px-2 py-1 text-sm bg-white focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4"
+          />
+          <button
+            onClick={() => handleAccountSearch(meeting.eventId)}
+            disabled={searchLoading.has(meeting.eventId)}
+            className="shrink-0 bg-white hover:bg-surface-3 disabled:opacity-50 text-ink border border-line-strong text-xs font-medium px-2 py-1 rounded-sm transition-colors"
+          >
+            {searchLoading.has(meeting.eventId) ? "..." : "Search"}
+          </button>
+          {changing ? (
+            <button
+              type="button"
+              onClick={() => setChangingAccount((prev) => { const next = new Set(prev); next.delete(meeting.eventId); return next; })}
+              className="shrink-0 text-xs text-ink-secondary hover:text-ink"
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
+        {meeting.externalDomains.length > 0 && !searchInputs.has(meeting.eventId) && (
+          <span className="text-xs text-ink-muted">
+            {meeting.externalDomains.join(", ")}
+          </span>
+        )}
+        {searchResults.has(meeting.eventId) && (
+          <div className="border border-line rounded-md bg-white shadow-xl max-h-32 overflow-y-auto">
+            {(searchResults.get(meeting.eventId) ?? []).length === 0 ? (
+              <div className="px-2 py-1.5 text-xs text-ink-muted italic">No accounts found</div>
+            ) : (
+              (searchResults.get(meeting.eventId) ?? []).map((account) => (
+                <button
+                  key={account.accountId}
+                  onClick={() => handleSelectSearchResult(meeting.eventId, account)}
+                  className="w-full text-left px-2 py-1.5 text-sm text-ink hover:bg-surface-3 border-b border-line last:border-0 transition-colors"
+                >
+                  {account.accountName}
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="overflow-x-auto rounded-md border border-line">
@@ -622,7 +692,9 @@ export default function CallLoggerTable({
                   className={`${cellBase} cursor-default ${isCellActive(rowIdx, 2) ? cellActive : ""}`}
                 >
                   {/* Manual match selected — show linked account */}
-                  {isManualMatch ? (
+                  {changingAccount.has(meeting.eventId) ? (
+                    renderAccountSearch(meeting)
+                  ) : isManualMatch ? (
                     <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-ink-muted" : "text-ink"}`}>
                       {manualMatches.get(meeting.eventId)!.accountName}
                       {meeting.alreadyLogged ? (
@@ -630,8 +702,10 @@ export default function CallLoggerTable({
                       ) : (
                         <span className="block text-xs text-ok font-normal mt-0.5">Manually linked</span>
                       )}
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setChangingAccount((prev) => new Set(prev).add(meeting.eventId)); }} className="block text-xs font-normal text-info underline underline-offset-2 hover:text-ink mt-0.5">Change</button>
                     </span>
                   ) : meeting.allMatches.length > 1 ? (
+                    <div>
                     <select
                       value={entry.selectedAccountIdx}
                       onChange={(e) =>
@@ -648,6 +722,8 @@ export default function CallLoggerTable({
                         </option>
                       ))}
                     </select>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setChangingAccount((prev) => new Set(prev).add(meeting.eventId)); }} className="block text-xs text-info underline underline-offset-2 hover:text-ink mt-0.5">Change</button>
+                    </div>
                   ) : hasMatch && !isManualMatch ? (
                     <div>
                       <span className={`font-medium text-sm ${meeting.alreadyLogged ? "text-ink-muted" : "text-ink"}`}>
@@ -658,56 +734,10 @@ export default function CallLoggerTable({
                           Likely already logged
                         </span>
                       )}
+                      <button type="button" onClick={(e) => { e.stopPropagation(); setChangingAccount((prev) => new Set(prev).add(meeting.eventId)); }} className="block text-xs text-info underline underline-offset-2 hover:text-ink mt-0.5">Change</button>
                     </div>
                   ) : (
-                    /* No match — show search UI */
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="text"
-                          value={searchInputs.get(meeting.eventId) ?? ""}
-                          placeholder={meeting.externalDomains.length > 0 ? meeting.externalDomains[0].split(".")[0] : "Search account..."}
-                          onChange={(e) => setSearchInputs((prev) => new Map(prev).set(meeting.eventId, e.target.value))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              handleAccountSearch(meeting.eventId);
-                            }
-                          }}
-                          className="flex-1 min-w-0 border border-line-strong rounded-sm px-2 py-1 text-sm bg-white focus:outline-none focus:border-ink focus:ring-2 focus:ring-surface-4"
-                        />
-                        <button
-                          onClick={() => handleAccountSearch(meeting.eventId)}
-                          disabled={searchLoading.has(meeting.eventId)}
-                          className="shrink-0 bg-white hover:bg-surface-3 disabled:opacity-50 text-ink border border-line-strong text-xs font-medium px-2 py-1 rounded-sm transition-colors"
-                        >
-                          {searchLoading.has(meeting.eventId) ? "..." : "Search"}
-                        </button>
-                      </div>
-                      {meeting.externalDomains.length > 0 && !searchInputs.has(meeting.eventId) && (
-                        <span className="text-xs text-ink-muted">
-                          {meeting.externalDomains.join(", ")}
-                        </span>
-                      )}
-                      {/* Search results dropdown */}
-                      {searchResults.has(meeting.eventId) && (
-                        <div className="border border-line rounded-md bg-white shadow-xl max-h-32 overflow-y-auto">
-                          {(searchResults.get(meeting.eventId) ?? []).length === 0 ? (
-                            <div className="px-2 py-1.5 text-xs text-ink-muted italic">No accounts found</div>
-                          ) : (
-                            (searchResults.get(meeting.eventId) ?? []).map((account) => (
-                              <button
-                                key={account.accountId}
-                                onClick={() => handleSelectSearchResult(meeting.eventId, account)}
-                                className="w-full text-left px-2 py-1.5 text-sm text-ink hover:bg-surface-3 border-b border-line last:border-0 transition-colors"
-                              >
-                                {account.accountName}
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
+                    renderAccountSearch(meeting)
                   )}
                 </td>
 
