@@ -517,7 +517,7 @@ function SendRow({ row, sequences, busy, open, sfUrl, onToggle, onApprove, onRej
           <div className="flex flex-wrap items-center gap-3 text-[13px]">
             {row.website ? <a href={/^https?:/i.test(row.website) ? row.website : `https://${row.website}`} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">{row.website.replace(/^https?:\/\/(www\.)?/, "")}</a> : null}
             {sfUrl ? <a href={`${sfUrl}/${row.sf_account_id}`} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">Salesforce</a> : null}
-            {row.outreach_prospect_id ? <a href={`https://web.outreach.io/prospects/${row.outreach_prospect_id}/sequences`} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">Outreach</a> : null}
+            {row.outreach_prospect_id ? <a href={`https://web.outreach.io/prospects/${row.outreach_prospect_id}/${row.outreach_mailing_id ? "emails" : "sequences"}`} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">{row.outreach_mailing_id ? "Open draft in Outreach" : "Outreach"}</a> : null}
             <span className="text-ink-muted">{[row.city, row.state, row.country].filter(Boolean).join(", ")}{row.time_zone ? ` · ${row.time_zone}` : ""}</span>
             {editable ? <button type="button" onClick={onRecheck} className="text-info underline underline-offset-2 hover:text-ink">Re-check email and sequence</button> : null}
             {editable ? <button type="button" disabled={busy} onClick={onRehook} className="text-info underline underline-offset-2 hover:text-ink disabled:opacity-60">{busy ? "Researching…" : "Deep research this hook"}</button> : null}
@@ -578,7 +578,7 @@ function SettingsPanel({ settings, sequences, groups, onSaved }: { settings: Set
         <input type="checkbox" checked={form.manualSend} onChange={(e) => setForm((f) => ({ ...f, manualSend: e.target.checked }))} className="mt-1 h-4 w-4 accent-ink" />
         <span>
           Send E1 myself from Outreach
-          <span className="block text-[13px] text-ink-secondary">On approve and enrol, the app adds the prospect to the sequence, puts the subject in custom1 and logs the E1 in Salesforce. You copy the subject and email into the step-1 task in Outreach and send. Off: the app schedules the E1 itself.</span>
+          <span className="block text-[13px] text-ink-secondary">On enrol, the app adds the prospect to the sequence, creates a draft in the prospect&apos;s Outreach outbox with subject, email and send time filled in, and logs the E1 in Salesforce. You open the draft and click Schedule. Off: the app schedules the E1 itself.</span>
         </span>
       </label>
       <label className="flex items-start gap-3 text-sm text-ink">

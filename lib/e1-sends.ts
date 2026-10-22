@@ -863,6 +863,37 @@ export async function enrolSend(id: string): Promise<{ prospectId: string; state
   return { prospectId: prospect.id, stateId: state.id, mailboxId: mailbox.id };
 }
 
+/** The draft mailing with everything filled in. Content is read back; a mismatch is reported, not hidden. */
+async function createDraftMailing(send: E1Send, ids: { prospectId: string; mailboxId: string }, sendAt: Date): Promise<{ mailingId: string | null; warning: string | null }> {
+  try {
+    const settings = await getSendSettings();
+    const bodyHtml = composeHtmlBody(withGreeting(send.body ?? "", send.contact_first_name), await signatureHtml(settings));
+    const res = await outreachRequest(`/mailings`, {
+      method: "POST",
+      body: JSON.stringify({
+        data: {
+          type: "mailing",
+          attributes: { subject: send.subject ?? "", bodyHtml, scheduledAt: sendAt.toISOString(), trackLinks: true, trackOpens: true },
+          relationships: {
+            prospect: { data: { type: "prospect", id: ids.prospectId } },
+            mailbox: { data: { type: "mailbox", id: ids.mailboxId } },
+          },
+        },
+      }),
+    });
+    const text = await res.text();
+    if (!res.ok) return { mailingId: null, warning: `Outreach refused the draft (${text.slice(0, 120)}); paste the email into the step-1 task instead.` };
+    const mailingId = (JSON.parse(text) as { data?: { id?: string | number } }).data?.id;
+    if (!mailingId) return { mailingId: null, warning: "Outreach returned no draft id; paste the email into the step-1 task instead." };
+    const check = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=subject`);
+    const got = ((await check.json().catch(() => null)) as { data?: { attributes?: { subject?: string } } } | null)?.data?.attributes?.subject ?? "";
+    if (got.trim() !== (send.subject ?? "").trim()) return { mailingId: String(mailingId), warning: `The draft's subject came back as "${got}"; check it before sending.` };
+    return { mailingId: String(mailingId), warning: null };
+  } catch (err) {
+    return { mailingId: null, warning: `Draft not created (${err instanceof Error ? err.message.slice(0, 100) : "error"}); paste the email into the step-1 task instead.` };
+  }
+}
+
 /**
  * Log the E1 in Salesforce the way a sequence send would: a completed Email
  * task typed E1 on the contact and account. Outreach's own sync cannot tag
@@ -945,12 +976,16 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   // (custom1 carries the subject for the follow-ups) and the E1 is logged in
   // Salesforce as of today; nothing is mailed from here.
   if (settings.manualSend) {
-    const sfTaskId = await logE1Task(send, new Date());
+    // A draft with subject, greeting, body and the slot time is created in
+    // the prospect's outbox, so sending is one click on Schedule in Outreach.
+    const draft = await createDraftMailing(send, ids, sendAt);
+    const sfTaskId = await logE1Task(send, sendAt);
     return updateSend(id, {
+      outreach_mailing_id: draft.mailingId,
       outreach_task_id: sfTaskId,
-      scheduled_for: null,
+      scheduled_for: sendAt.toISOString(),
       status: "scheduled",
-      status_reason: `Enrolled in Outreach for you to send: copy the subject and email into the step-1 task.${sfTaskId ? "" : " Salesforce did not accept the E1 task; log it by hand."}`,
+      status_reason: `Draft ready in Outreach (subject, email and time filled in): open it and click Schedule.${draft.warning ? ` ${draft.warning}` : ""}${sfTaskId ? "" : " Salesforce did not accept the E1 task; log it by hand."}`,
     });
   }
   const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
