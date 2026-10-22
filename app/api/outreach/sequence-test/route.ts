@@ -81,13 +81,33 @@ export async function GET(request: NextRequest) {
   if (taskParam) {
     note("before", await json(await outreachRequest(`/tasks/${taskParam}`)));
     if (q.get("complete") === "1") {
-      const variants: Array<Record<string, unknown>> = [{ state: "complete" }, { completed: true }, { state: "completed" }, { completedAt: new Date().toISOString() }];
-      for (const attributes of variants) {
-        const r = await outreachRequest(`/tasks/${taskParam}`, { method: "PATCH", body: JSON.stringify({ data: { type: "task", id: Number(taskParam), attributes } }) });
-        note(`patch_${Object.keys(attributes)[0]}`, { status: r.status, attributes, body: r.ok ? "" : (await text(r)).slice(0, 300) });
-        if (r.ok) break;
+      // Attributes are private, so try the action endpoints Outreach exposes
+      // for tasks, then for the sequence state (?state=<id>). Stops at the
+      // first one accepted.
+      const stateParam = q.get("state");
+      const actions: Array<{ key: string; path: string; body?: unknown }> = [
+        { key: "task_complete", path: `/tasks/${taskParam}/actions/complete` },
+        { key: "task_markComplete", path: `/tasks/${taskParam}/actions/markComplete` },
+        { key: "task_markAsComplete", path: `/tasks/${taskParam}/actions/markAsComplete` },
+        { key: "task_markCompleted", path: `/tasks/${taskParam}/actions/markCompleted` },
+        { key: "task_skip", path: `/tasks/${taskParam}/actions/skip` },
+        ...(stateParam
+          ? [
+              { key: "state_advance", path: `/sequenceStates/${stateParam}/actions/advance` },
+              { key: "state_skipStep", path: `/sequenceStates/${stateParam}/actions/skipStep` },
+              { key: "state_skip", path: `/sequenceStates/${stateParam}/actions/skip` },
+            ]
+          : []),
+      ];
+      let accepted: string | null = null;
+      for (const a of actions) {
+        const r = await outreachRequest(a.path, { method: "POST", body: JSON.stringify(a.body ?? {}) });
+        note(a.key, { status: r.status, body: r.ok ? (await text(r)).slice(0, 200) : (await text(r)).slice(0, 200) });
+        if (r.ok) { accepted = a.key; break; }
       }
-      note("after", await json(await outreachRequest(`/tasks/${taskParam}`)));
+      note("accepted", accepted);
+      note("after", await json(await outreachRequest(`/tasks/${taskParam}?fields[task]=state,completed,completedAt`)));
+      if (stateParam) note("state_after", await json(await outreachRequest(`/sequenceStates/${stateParam}?fields[sequenceState]=state,activeAt,finishedAt`)));
     }
     return NextResponse.json(report);
   }
