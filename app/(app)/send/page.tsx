@@ -357,7 +357,6 @@ export default function SendQueuePage() {
                     manualSend={!!settings?.manualSend}
                     busy={busy.has(row.id)}
                     jobRunning={!!job}
-                    sfUrl={sfUrl}
                     onSend={() => void send([row.id])}
                     onRetry={() => void retry(row)}
                     onPullBack={() => void act(row.id, "unapprove")}
@@ -463,14 +462,13 @@ function useCopy() {
 }
 
 /** Ready, Scheduled, Sent and Rejected: a simple card, the status in words, and at most two actions. */
-function QueueCard({ row, now, sending, manualSend, busy, jobRunning, sfUrl, onSend, onRetry, onPullBack, onCancel }: {
+function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onRetry, onPullBack, onCancel }: {
   row: Row;
   now: number;
   sending: boolean;
   manualSend: boolean;
   busy: boolean;
   jobRunning: boolean;
-  sfUrl: string | null;
   onSend: () => void;
   onRetry: () => void;
   onPullBack: () => void;
@@ -504,7 +502,6 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, sfUrl, onS
             {row.outreach_prospect_id ? <a href={`https://web.outreach.io/prospects/${row.outreach_prospect_id}/sequences`} target="_blank" rel="noreferrer" className={TEXT_BTN}>Open in Outreach</a> : null}
             <button type="button" onClick={() => copy(row.subject ?? "", "subject")} className={TEXT_BTN}>{copied === "subject" ? "Copied" : "Copy subject"}</button>
             <button type="button" onClick={() => copy(row.body ?? "", "body")} className={TEXT_BTN}>{copied === "body" ? "Copied" : "Copy email"}</button>
-            {sfUrl ? <a href={`${sfUrl}/${row.sf_account_id}`} target="_blank" rel="noreferrer" className={TEXT_BTN}>Salesforce</a> : null}
           </div>
         ) : null}
       </div>
@@ -706,7 +703,7 @@ function HookLine({ hook }: { hook: Hook }) {
       <span className={`mt-[5px] inline-block h-2 w-2 shrink-0 rounded-full ${st.dot}`} aria-hidden />
       <span>
         <span className="uppercase tracking-wide text-[11px]">{st.label}</span>{" "}
-        {hook.anchor ? <span className="text-ink">“{hook.anchor}” — </span> : null}
+        {hook.anchor ? <span className="text-ink">“{hook.anchor}”: </span> : null}
         {hook.note}
         {hook.sourceUrl ? (
           <>
