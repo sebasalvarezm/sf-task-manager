@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { addContactAndUse, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { addContactAndUse, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences } from "@/lib/outreach";
 import { currentWeekStart } from "@/lib/weekly-outreach";
 import { isVerifyConfigured } from "@/lib/email-verify";
@@ -37,6 +37,7 @@ export async function GET(request: NextRequest) {
  *   recheck  { id }           re-run contact/email/sequence checks after an edit
  *   approve  { id }           mark ready to schedule
  *   reject   { id, reason? }
+ *   unapprove { id }          pull an approved or failed row back to review
  *   cancel   { id }           undo a dry-run or scheduled send
  *   schedule { ids? }         schedule every approved row (or the given ones)
  *   settings { ...patch }     save settings (dryRun, sequenceMap, signatureText, reviewWithModel)
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ item: await addContactAndUse(need(body.id), { firstName: c.firstName ?? "", lastName: c.lastName ?? "", email: c.email ?? "", title: c.title ?? null }) });
       }
       case "approve": return NextResponse.json({ item: await approveSend(need(body.id)) });
+      case "unapprove": return NextResponse.json({ item: await unapproveSend(need(body.id)) });
       case "reject": return NextResponse.json({ item: await rejectSend(need(body.id), body.reason ?? null) });
       case "cancel": return NextResponse.json({ item: await cancelSend(need(body.id)) });
       case "schedule": {

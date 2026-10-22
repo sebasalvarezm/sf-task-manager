@@ -802,6 +802,18 @@ export async function approveSend(id: string): Promise<E1Send> {
   return updateSend(id, { status: "approved", approved_at: new Date().toISOString(), status_reason: null });
 }
 
+/**
+ * Pull back: an approved (or failed) row goes back to review, nothing is
+ * rejected. The cheap checks run again so it lands as clean or needing a decision.
+ */
+export async function unapproveSend(id: string): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (!["approved", "failed"].includes(send.status)) throw new Error("Only an approved email that has not gone to Outreach can be pulled back.");
+  await updateSend(id, { status: "ready", status_reason: null });
+  return recheckSend(id);
+}
+
 export async function rejectSend(id: string, reason: string | null): Promise<E1Send> {
   return updateSend(id, { status: "rejected", status_reason: reason });
 }
