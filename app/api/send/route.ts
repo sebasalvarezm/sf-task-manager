@@ -120,7 +120,8 @@ export async function PATCH(request: NextRequest) {
     // An approved row that gets edited goes back to review so the change is looked at again.
     if (send.status === "approved") patch.status = "ready";
     await updateSend(id, patch);
-    const item = body.contact_id !== undefined || body.sequence_id !== undefined ? await recheckSend(id) : await updateSend(id, {});
+    // Any edit re-runs the cheap checks, so a filled placeholder clears its flag at once.
+    const item = await recheckSend(id);
     return NextResponse.json({ item });
   } catch (err) {
     return NextResponse.json({ error: friendly(err) }, { status: 500 });
