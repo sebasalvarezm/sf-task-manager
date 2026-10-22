@@ -959,17 +959,21 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
  * moves on to step 2 on its own. Dry runs are left alone.
  */
 export async function tidyStepTasks(): Promise<{ checked: number; completed: number }> {
+  // Every row scheduled in the last three weeks: the open task is looked up
+  // in Outreach each time, so a row that recorded a task id before the task
+  // was actually ticked is not skipped.
+  const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
   const { data } = await getSupabaseAdmin()
     .from("e1_sends")
-    .select("id, outreach_state_id, outreach_task_id, status")
+    .select("id, outreach_state_id, status")
     .in("status", ["scheduled", "sent"])
-    .is("outreach_task_id", null)
     .not("outreach_state_id", "is", null)
+    .gte("updated_at", since)
     .limit(200);
   let completed = 0;
   const rows = (data ?? []) as Array<{ id: string; outreach_state_id: string }>;
   for (const row of rows) {
-    const taskId = await findStepTask(row.outreach_state_id).catch(() => null);
+    const taskId = await findOpenStepTask(row.outreach_state_id).catch(() => null);
     if (!taskId) continue;
     if (await completeTask(taskId)) {
       completed++;
@@ -977,6 +981,15 @@ export async function tidyStepTasks(): Promise<{ checked: number; completed: num
     }
   }
   return { checked: rows.length, completed };
+}
+
+/** The step task that is still open for a sequence state, or null when none (or all done). */
+export async function findOpenStepTask(stateId: string): Promise<string | null> {
+  const res = await outreachRequest(`/tasks?filter[sequenceState][id]=${stateId}&page[size]=5&fields[task]=taskType,state,completed`);
+  if (!res.ok) return null;
+  const body = (await res.json()) as { data?: Array<{ id: string; attributes?: { completed?: boolean; state?: string } }> };
+  const open = (body.data ?? []).find((t) => !t.attributes?.completed && t.attributes?.state !== "complete");
+  return open?.id ?? null;
 }
 
 async function completeTask(taskId: string): Promise<boolean> {
