@@ -13,7 +13,8 @@ import { recipientTimeZone, planSendSlots } from "./send-slots";
 import { currentWeekStart, type WeeklyOutreachItem } from "./weekly-outreach";
 import { shortenRestaurantName } from "./email-prepackage";
 import { getJob, markSucceeded } from "./jobs";
-import { rerunHookResearch, type SourcingResult } from "./jobs/sourcing-runner";
+import { rerunHookResearch, reclassifySourcingResult, type SourcingResult } from "./jobs/sourcing-runner";
+import { findGroupFileName, loadGroupFiles } from "./scout";
 
 /**
  * The send queue: everything between "Sourcing produced a draft" and "a
@@ -177,7 +178,7 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
     .select("*")
     .eq("week_start", weekStart)
     .eq("outreach_type", "E1")
-    .eq("status", "draft_ready");
+    .in("status", ["draft_ready", "needs_context"]);
   if (error) throw new Error(error.message);
   const rows = (items ?? []) as WeeklyOutreachItem[];
   if (rows.length === 0) return [];
@@ -224,7 +225,9 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
     .map((r) => r as Existing)
     .filter((r) => ["pending", "review", "ready"].includes(r.status) && !refreshed.includes(r.id))
     .map((r) => r.id);
-  const fresh = rows.filter((r) => !byWeekly.has(r.id) && r.draft);
+  // Sourced rows with no draft (no group matched) come in too: Seb picks the
+  // sequence and the email is built from that group's template.
+  const fresh = rows.filter((r) => !byWeekly.has(r.id) && (r.draft || r.sourcing_job_id));
   if (fresh.length === 0) return [...refreshed, ...recheck];
 
   // Billing state is what the time zone needs; Weekly Outreach rows carry country and city only.
@@ -529,6 +532,54 @@ export function withGreeting(body: string, firstName: string | null | undefined)
   return `${name ? `Hi ${name},` : "Hi,"}\n\n${text}`;
 }
 
+/** The group a sequence belongs to, from the fixed mapping. */
+export function groupForSequence(sequenceName: string | null | undefined): string | null {
+  if (!sequenceName) return null;
+  const want = normalizeSequenceName(sequenceName);
+  return Object.entries(GROUP_SEQUENCE_NAMES).find(([, seq]) => normalizeSequenceName(seq) === want)?.[0] ?? null;
+}
+
+async function storedResultFor(send: E1Send): Promise<{ jobId: string; idx: number; stored: Record<string, unknown>; items: Array<Record<string, unknown>>; result: SourcingResult } | null> {
+  if (!send.sourcing_job_id || !send.weekly_outreach_id) return null;
+  const job = await getJob(send.sourcing_job_id).catch(() => null);
+  if (!job?.result) return null;
+  const idx = (((job.input ?? {}) as { weeklyOutreachIds?: string[] }).weeklyOutreachIds ?? []).indexOf(send.weekly_outreach_id);
+  const stored = job.result as Record<string, unknown>;
+  const items = Array.isArray(stored.items) ? (stored.items as Array<Record<string, unknown>>) : [];
+  const result = idx >= 0 ? (items[idx]?.result as SourcingResult | null | undefined) ?? null : null;
+  return result ? { jobId: job.id, idx, stored, items, result } : null;
+}
+
+/**
+ * Seb picked a sequence. If it belongs to a different group than the draft
+ * (or there is no draft yet), rewrite the email from that group's template
+ * using the research Sourcing already did: hook, town, restaurant stay; the
+ * group paragraph and template change. One model call.
+ */
+export async function rebuildForSequence(id: string): Promise<{ rebuilt: boolean; note: string | null }> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  const group = groupForSequence(send.sequence_name);
+  if (!group) return { rebuilt: false, note: send.body ? null : "This sequence is not mapped to a group, so no email could be written. Write it by hand or pick a mapped sequence." };
+  if (group === send.group_name && send.body?.trim()) return { rebuilt: false, note: null };
+  const found = await storedResultFor(send);
+  if (!found) return { rebuilt: false, note: "No sourcing result on this row to build from. Run Sourcing for it again." };
+  const key = findGroupFileName(group, loadGroupFiles());
+  const mainGroup = key?.includes("/") ? key.split("/")[0] : null;
+  const rebuilt = await reclassifySourcingResult(found.result, { matched: true, group, mainGroup, confidence: 100 });
+  const pe = rebuilt.prepackagedEmail;
+  if (!pe || pe.skipped || !pe.body) return { rebuilt: false, note: `No template for ${group}: ${pe?.skipReason ?? "unknown reason"}` };
+  // Keep the sourcing run and Weekly Outreach in step with the new draft.
+  found.items[found.idx] = { ...found.items[found.idx], result: rebuilt };
+  await markSucceeded(found.jobId, { ...found.stored, items: found.items }, false).catch(() => null);
+  const draft = [pe.subject, pe.body].filter(Boolean).join("\n\n");
+  if (send.weekly_outreach_id) {
+    await getSupabaseAdmin().from("weekly_outreach").update({ draft, group_name: group, industry: mainGroup, status: "draft_ready" }).eq("id", send.weekly_outreach_id).then(() => null, () => null);
+  }
+  await updateSend(id, { group_name: group, subject: pe.subject ?? send.subject, body: pe.body, hook: hookInfoFrom(rebuilt), restaurant_options: (rebuilt.restaurants ?? []).map((x) => ({ name: x.name, description: x.description ?? "" })) });
+  return { rebuilt: true, note: null };
+}
+
 /** Put a different restaurant in the subject line, keeping the date part. */
 export async function chooseRestaurant(id: string, name: string): Promise<E1Send> {
   const send = await getSend(id);
@@ -654,6 +705,9 @@ function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "seq
   const out: ReviewFlag[] = [];
   // Deterministic first: a placeholder in the text is never a judgement call,
   // and the model review has let these through.
+  if (!send.body?.trim()) {
+    out.push({ kind: "sequence", severity: "red", message: "No email yet: Sourcing found no group for this company. Pick the sequence and the email is written from that group's template." });
+  }
   const placeholders = findPlaceholders(`${send.subject ?? ""}\n${send.body ?? ""}`);
   if (placeholders.length > 0) {
     out.push({ kind: "placeholder", severity: "red", message: `Unfilled placeholder in the draft: ${placeholders.join(", ")}. Fill it in before approving.` });

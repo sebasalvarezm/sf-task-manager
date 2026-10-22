@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planSendSlots, recipientTimeZone } from "../lib/send-slots";
 import { interpret } from "../lib/email-verify";
 import { estimateCost } from "../lib/model-cost";
-import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting } from "../lib/e1-sends";
+import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting, groupForSequence } from "../lib/e1-sends";
 
 describe("recipientTimeZone", () => {
   it("maps states, provinces and countries", () => {
@@ -201,5 +201,15 @@ describe("withGreeting", () => {
     expect(withGreeting("I have studied Acme going back to 2001.", "Noel")).toBe("Hi Noel,\n\nI have studied Acme going back to 2001.");
     expect(withGreeting("Hi Noel,\n\nI have studied Acme.", "Noel")).toBe("Hi Noel,\n\nI have studied Acme.");
     expect(withGreeting("I have studied Acme.", null)).toBe("Hi,\n\nI have studied Acme.");
+  });
+});
+
+describe("groupForSequence", () => {
+  it("maps every fixed sequence back to its group, and nothing else", () => {
+    expect(groupForSequence("[E] - Waste")).toBe("Waste Recycling");
+    expect(groupForSequence("[E] - Logistics — Freight & Supply Chain Enablement")).toBe("Freight Supply Chain Enablement");
+    expect(groupForSequence("[E] - Logistics — Industrial Gate & Yard")).toBe("Industrial Gate Yard");
+    expect(groupForSequence("[D-E] - Carveout - Construction & Materials")).toBeNull();
+    expect(groupForSequence(null)).toBeNull();
   });
 });

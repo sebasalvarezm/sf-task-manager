@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { addContactAndUse, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { addContactAndUse, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences } from "@/lib/outreach";
 import { currentWeekStart } from "@/lib/weekly-outreach";
 import { isVerifyConfigured } from "@/lib/email-verify";
@@ -122,6 +122,11 @@ export async function PATCH(request: NextRequest) {
     // An approved row that gets edited goes back to review so the change is looked at again.
     if (send.status === "approved") patch.status = "ready";
     await updateSend(id, patch);
+    // A sequence from another group (or none before) rewrites the email from that group's template.
+    if (patch.sequence_id) {
+      const r = await rebuildForSequence(id);
+      if (r.note) await updateSend(id, { status_reason: r.note });
+    }
     // Any edit re-runs the cheap checks, so a filled placeholder clears its flag at once.
     const item = await recheckSend(id);
     return NextResponse.json({ item });

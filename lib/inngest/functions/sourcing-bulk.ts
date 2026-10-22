@@ -22,6 +22,7 @@ import {
   type BulkSourcingItem,
 } from "@/lib/jobs/sourcing-bulk-runner";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { findGroupFileName, loadGroupFiles } from "@/lib/scout";
 import { createJob } from "@/lib/jobs";
 
 // Bulk sourcing. Each company is processed as its OWN `step.run`, so every
@@ -122,9 +123,14 @@ export const sourcingBulkJob = inngest.createFunction(
                     .select("group_name, industry, source")
                     .eq("id", presetId)
                     .maybeSingle();
-                  if (preset?.group_name) {
-                    // Seb's own verdict: as sure as it gets.
-                    return { matched: true, group: preset.group_name, mainGroup: preset.industry ?? null, confidence: 100 } as SourcingResult["portfolioMatch"];
+                  // Only a subgroup that is a real group file counts. Rows from
+                  // the Outreach pool can carry a Salesforce industry label
+                  // ("Transport & Logistics") that is not a group; those go to
+                  // the classifier like any other row.
+                  const presetKey = preset?.group_name ? findGroupFileName(preset.group_name, loadGroupFiles()) : null;
+                  if (presetKey) {
+                    const mainGroup = presetKey.includes("/") ? presetKey.split("/")[0] : preset?.industry ?? null;
+                    return { matched: true, group: preset!.group_name, mainGroup, confidence: 100 } as SourcingResult["portfolioMatch"];
                   }
                 }
                 const cached = await findRecentSourcingByUrl(
@@ -338,8 +344,7 @@ export const sourcingBulkJob = inngest.createFunction(
                 .from("weekly_outreach")
                 .update({
                   status: "needs_context",
-                  sourcing_job_id: null,
-                  context_summary: `No group matched: ${why} Set the subgroup on this row and run the batch again.`,
+                  context_summary: `No group matched: ${why} Pick the sequence in the Send queue and the email is built from it.`,
                 })
                 .eq("id", weeklyIds[i]);
               if (rowError) throw new Error(rowError.message);
