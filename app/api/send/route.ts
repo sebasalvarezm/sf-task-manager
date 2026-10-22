@@ -4,7 +4,14 @@ import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { addContactAndUse, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
-import { listSequences } from "@/lib/outreach";
+import { listSequences, type OutreachSequence } from "@/lib/outreach";
+import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
+
+/** Only the 20 group sequences from the fixed mapping, in a stable order. */
+function platformSequences(all: OutreachSequence[]): OutreachSequence[] {
+  const byName = new Map(all.filter((s) => s.enabled).map((s) => [normalizeSequenceName(s.name), s]));
+  return Object.values(GROUP_SEQUENCE_NAMES).map((n) => byName.get(normalizeSequenceName(n))).filter((s): s is OutreachSequence => !!s);
+}
 import { currentWeekStart } from "@/lib/weekly-outreach";
 import { isVerifyConfigured } from "@/lib/email-verify";
 import { getValidCredentials } from "@/lib/token-manager";
@@ -25,7 +32,7 @@ export async function GET(request: NextRequest) {
       runningJob(),
       getValidCredentials().catch(() => null),
     ]);
-    return NextResponse.json({ week, items, settings, sequences: sequences.filter((s) => s.enabled), job, verifierConfigured: isVerifyConfigured(), sfInstanceUrl: creds?.instance_url ?? null });
+    return NextResponse.json({ week, items, settings, sequences: platformSequences(sequences), job, verifierConfigured: isVerifyConfigured(), sfInstanceUrl: creds?.instance_url ?? null });
   } catch (err) {
     return NextResponse.json({ error: friendly(err) }, { status: 500 });
   }

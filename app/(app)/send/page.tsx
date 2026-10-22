@@ -200,13 +200,23 @@ export default function SendQueuePage() {
     }
   }
   async function edit(id: string, patch: Record<string, unknown>) {
+    // Show the choice at once; a sequence pick can take ~20s while the email is written.
+    setItems((prev) => prev.map((r) => (r.id === id ? ({ ...r, ...patch } as Row) : r)));
+    const writing = typeof patch.sequence_id === "string" && patch.sequence_id;
+    if (writing) {
+      setBusy((b) => new Set(b).add(id));
+      setNotice("Writing the email from that sequence's template, about 20 seconds…");
+    }
     try {
       const res = await fetch("/api/send", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...patch }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not save");
       if (data.item) replace(data.item as Row);
+      if (writing) setNotice((data.item as Row | undefined)?.status_reason ?? "Email written. Check it, then approve.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      if (writing) setBusy((b) => { const n = new Set(b); n.delete(id); return n; });
     }
   }
   async function approveAllClean() {
