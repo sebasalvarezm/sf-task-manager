@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { tidyStepTasks } from "@/lib/e1-sends";
 import { isAdmin } from "@/lib/auth";
 import { addProspectToSequence, findProspectByEmail, listMailboxes, listSequences, outreachRequest } from "@/lib/outreach";
 
@@ -62,6 +63,34 @@ export async function GET(request: NextRequest) {
   const mailboxes = await listMailboxes();
   const mailbox = mailboxes.find((m) => m.email.toLowerCase() === "sebastian@valstonecorp.com") ?? mailboxes[0];
   if (!mailbox) return NextResponse.json({ error: "No mailbox on the Outreach connection." }, { status: 500 });
+
+  // ── Part 5: inspect a step task and try to complete it ───────────────────
+  // ?task=<id> shows the task; &complete=1 tries the completion variants in
+  // turn and reports which one Outreach accepts. ?prospect=<id> lists tasks.
+  if (q.get("tidy") === "1") {
+    note("tidy", await tidyStepTasks());
+    return NextResponse.json(report);
+  }
+  const prospectParam = q.get("prospect");
+  if (prospectParam) {
+    const res = await outreachRequest(`/tasks?filter[prospect][id]=${prospectParam}&page[size]=10`);
+    note("tasks", await json(res));
+    return NextResponse.json(report);
+  }
+  const taskParam = q.get("task");
+  if (taskParam) {
+    note("before", await json(await outreachRequest(`/tasks/${taskParam}`)));
+    if (q.get("complete") === "1") {
+      const variants: Array<Record<string, unknown>> = [{ state: "complete" }, { completed: true }, { state: "completed" }, { completedAt: new Date().toISOString() }];
+      for (const attributes of variants) {
+        const r = await outreachRequest(`/tasks/${taskParam}`, { method: "PATCH", body: JSON.stringify({ data: { type: "task", id: Number(taskParam), attributes } }) });
+        note(`patch_${Object.keys(attributes)[0]}`, { status: r.status, attributes, body: r.ok ? "" : (await text(r)).slice(0, 300) });
+        if (r.ok) break;
+      }
+      note("after", await json(await outreachRequest(`/tasks/${taskParam}`)));
+    }
+    return NextResponse.json(report);
+  }
 
   // ── Part 4: flip a drafted mailing to scheduled (sends for real), or back ─
   const scheduleId = q.get("schedule");
