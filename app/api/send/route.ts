@@ -9,7 +9,8 @@ import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
 
 /** Only the 20 group sequences from the fixed mapping, in a stable order. */
 function platformSequences(all: OutreachSequence[]): OutreachSequence[] {
-  const byName = new Map(all.filter((s) => s.enabled).map((s) => [normalizeSequenceName(s.name), s]));
+  // [E] only: "[RCE] - Bulk Liquids" normalizes to the same name as "[E] - Bulk Liquids".
+  const byName = new Map(all.filter((s) => s.enabled && /^\s*\[E\]/i.test(s.name)).map((s) => [normalizeSequenceName(s.name), s]));
   return Object.values(GROUP_SEQUENCE_NAMES).map((n) => byName.get(normalizeSequenceName(n))).filter((s): s is OutreachSequence => !!s);
 }
 import { currentWeekStart } from "@/lib/weekly-outreach";
