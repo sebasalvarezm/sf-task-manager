@@ -343,7 +343,7 @@ export const GROUP_SEQUENCE_NAMES: Record<string, string> = {
 export function matchSequence(groupName: string | null, sequences: OutreachSequence[], overrides: Record<string, string>): OutreachSequence | null {
   if (!groupName) return null;
   const override = overrides[groupName];
-  if (override) return sequences.find((s) => s.id === override) ?? null;
+  if (override) return sequences.find((s) => String(s.id) === String(override)) ?? null;
   const want = normalizeSequenceName(groupName);
   if (!want) return null;
   // Only the "[E]" sequences are first-touch sequences; "[D-E]" and others are not.

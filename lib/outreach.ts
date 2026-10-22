@@ -149,7 +149,8 @@ export async function listSequences(): Promise<OutreachSequence[]> {
 
     for (const row of body.data ?? []) {
       all.push({
-        id: row.id,
+        // Outreach sends numeric ids; the app compares them with strings from forms.
+        id: String(row.id),
         name: row.attributes?.name ?? "(unnamed)",
         tags: row.attributes?.tags ?? [],
         enabled: row.attributes?.enabled ?? true,

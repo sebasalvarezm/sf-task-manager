@@ -122,8 +122,8 @@ export async function PATCH(request: NextRequest) {
     }
     if (body.sequence_id !== undefined) {
       const seqs = await listSequences().catch(() => []);
-      const s = seqs.find((x) => x.id === body.sequence_id) ?? null;
-      patch.sequence_id = s?.id ?? null;
+      const s = seqs.find((x) => String(x.id) === String(body.sequence_id)) ?? null;
+      patch.sequence_id = s ? String(s.id) : null;
       patch.sequence_name = s?.name ?? null;
     }
     // An approved row that gets edited goes back to review so the change is looked at again.
