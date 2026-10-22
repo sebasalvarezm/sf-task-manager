@@ -145,7 +145,14 @@ export async function updateSend(id: string, patch: Partial<E1Send>): Promise<E1
     .select("*")
     .single();
   if (error) throw new Error(error.message);
-  return data as E1Send;
+  const row = data as E1Send;
+  // Weekly Outreach mirrors the outcome: sent once the E1 is scheduled or
+  // enrolled, back to draft_ready if it is cancelled or rejected after that.
+  if (patch.status && row.weekly_outreach_id) {
+    const weekly = patch.status === "scheduled" || patch.status === "sent" ? "sent" : ["rejected", "failed"].includes(patch.status) ? "draft_ready" : null;
+    if (weekly) await getSupabaseAdmin().from("weekly_outreach").update({ status: weekly }).eq("id", row.weekly_outreach_id).then(() => null, () => null);
+  }
+  return row;
 }
 
 // ── Creating rows from this week's sourced E1s ──────────────────────────────
