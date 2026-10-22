@@ -88,6 +88,8 @@ export type E1Send = {
 export type SendSettings = {
   /** Create the Outreach draft but never flip it to scheduled. On until Seb has seen one real draft. */
   dryRun: boolean;
+  /** Bridge mode: on schedule, only enrol the prospect (custom1 set, E1 task logged); Seb sends the E1 himself from Outreach. */
+  manualSend: boolean;
   /** Group name → Outreach sequence id, for the groups the name match gets wrong. */
   sequenceMap: Record<string, string>;
   /** Plain-text signature override for Outreach sends; empty means use the stored Outlook signature. */
@@ -97,13 +99,14 @@ export type SendSettings = {
 };
 
 const SETTINGS_KEY = "e1_send_settings";
-const DEFAULT_SETTINGS: SendSettings = { dryRun: true, sequenceMap: {}, signatureText: "", reviewWithModel: true };
+const DEFAULT_SETTINGS: SendSettings = { dryRun: true, manualSend: true, sequenceMap: {}, signatureText: "", reviewWithModel: true };
 
 export async function getSendSettings(): Promise<SendSettings> {
   const { data } = await getSupabaseAdmin().from("app_settings").select("value").eq("key", SETTINGS_KEY).maybeSingle();
   const v = (data?.value ?? {}) as Partial<SendSettings>;
   return {
     dryRun: typeof v.dryRun === "boolean" ? v.dryRun : DEFAULT_SETTINGS.dryRun,
+    manualSend: typeof v.manualSend === "boolean" ? v.manualSend : DEFAULT_SETTINGS.manualSend,
     sequenceMap: v.sequenceMap && typeof v.sequenceMap === "object" ? v.sequenceMap : {},
     signatureText: typeof v.signatureText === "string" ? v.signatureText : "",
     reviewWithModel: typeof v.reviewWithModel === "boolean" ? v.reviewWithModel : true,
@@ -937,6 +940,19 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   if (!send || !send.body) throw new Error("Send row has no body.");
   // A run that was reset or cancelled while this job slept must not act.
   if (send.status !== "scheduling") return send;
+
+  // Bridge: Seb sends the E1 himself from Outreach. The prospect is enrolled
+  // (custom1 carries the subject for the follow-ups) and the E1 is logged in
+  // Salesforce as of today; nothing is mailed from here.
+  if (settings.manualSend) {
+    const sfTaskId = await logE1Task(send, new Date());
+    return updateSend(id, {
+      outreach_task_id: sfTaskId,
+      scheduled_for: null,
+      status: "scheduled",
+      status_reason: `Enrolled in Outreach for you to send: copy the subject and email into the step-1 task.${sfTaskId ? "" : " Salesforce did not accept the E1 task; log it by hand."}`,
+    });
+  }
   const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
 
   // The mailing is created on its own, not attached to the step task: a

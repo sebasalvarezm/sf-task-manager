@@ -22,6 +22,8 @@ type Hook = { text: string | null; anchor: string | null; sourceUrl: string | nu
 type Contact = { id: string; name: string; firstName: string | null; lastName: string | null; title: string | null; email: string | null; rank: number };
 type Row = {
   id: string;
+  sf_account_id: string;
+  outreach_prospect_id: string | null;
   account_name: string;
   website: string | null;
   country: string | null;
@@ -49,7 +51,7 @@ type Row = {
   outreach_mailing_id: string | null;
 };
 type Sequence = { id: string; name: string };
-type Settings = { dryRun: boolean; sequenceMap: Record<string, string>; signatureText: string; reviewWithModel: boolean };
+type Settings = { dryRun: boolean; manualSend: boolean; sequenceMap: Record<string, string>; signatureText: string; reviewWithModel: boolean };
 type JobInfo = { id: string; kind: string; status: string; progress?: { step?: string; pct?: number } | null } | null;
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -89,6 +91,7 @@ export default function SendQueuePage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [sequences, setSequences] = useState<Sequence[]>([]);
   const [job, setJob] = useState<JobInfo>(null);
+  const [sfUrl, setSfUrl] = useState<string | null>(null);
   const [verifierConfigured, setVerifierConfigured] = useState(true);
   const [week, setWeek] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,6 +112,7 @@ export default function SendQueuePage() {
       setSettings(data.settings ?? null);
       setSequences(data.sequences ?? []);
       setJob(data.job ?? null);
+      if (typeof data.sfInstanceUrl === "string") setSfUrl(data.sfInstanceUrl);
       setWeek(data.week ?? null);
       setVerifierConfigured(data.verifierConfigured !== false);
       setError(null);
@@ -196,7 +200,7 @@ export default function SendQueuePage() {
     try {
       const data = await post({ action: "schedule" });
       setJob({ id: String(data.jobId), kind: "e1_schedule", status: "queued" });
-      setNotice(data.dryRun ? `Dry run: creating ${data.count} drafts in Outreach, nothing will send.` : `Scheduling ${data.count} emails.`);
+      setNotice(data.manualSend ? `Enrolling ${data.count} in Outreach for you to send.` : data.dryRun ? `Dry run: creating ${data.count} drafts in Outreach, nothing will send.` : `Scheduling ${data.count} emails.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start");
     }
@@ -228,7 +232,7 @@ export default function SendQueuePage() {
                 Approve all clean ({counts.ready})
               </Button>
               <Button size="sm" disabled={counts.approved === 0 || !!job} onClick={() => void scheduleApproved()}>
-                {settings?.dryRun ? "Dry run" : "Schedule"} approved ({counts.approved})
+                {settings?.manualSend ? "Enrol" : settings?.dryRun ? "Dry run" : "Schedule"} approved ({counts.approved})
               </Button>
             </>
           ) : null}
@@ -261,6 +265,30 @@ export default function SendQueuePage() {
       {notice ? <p className="mb-4 text-sm text-ink-secondary">{notice}</p> : null}
       {!verifierConfigured ? <p className="mb-4 rounded-sm border border-warn bg-white px-3 py-2 text-sm text-ink">Email verification is off: add QUICKEMAILVERIFICATION_API_KEY in Vercel and redeploy.</p> : null}
 
+      {view === "done" && done.some((r) => r.status === "scheduled" || r.status === "sent") ? (
+        <div className="mb-4 rounded-sm border border-line bg-white px-3 py-2 text-[13px] text-ink">
+          <div className="flex items-center justify-between">
+            <span className="text-ink-secondary">Sent this week, for the manual E2 and E3 next week:</span>
+            <button
+              type="button"
+              className="text-info underline underline-offset-2 hover:text-ink"
+              onClick={() => {
+                const lines = done.filter((r) => r.status === "scheduled" || r.status === "sent").map((r) => `${r.account_name}\t${r.contact_name ?? ""}\t${r.contact_email ?? ""}\t${r.subject ?? ""}\t${r.sequence_name ?? ""}`);
+                void navigator.clipboard?.writeText(["Account\tContact\tEmail\tSubject\tSequence", ...lines].join("\n"));
+                setNotice(`${lines.length} rows copied (paste into Excel).`);
+              }}
+            >
+              Copy list
+            </button>
+          </div>
+          <ul className="mt-1 space-y-0.5">
+            {done.filter((r) => r.status === "scheduled" || r.status === "sent").map((r) => (
+              <li key={r.id}>{r.account_name} · {r.contact_name ?? "?"} ({r.contact_email ?? "?"}) · {r.subject ?? ""}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {view === "settings" && settings ? (
         <SettingsPanel settings={settings} sequences={sequences} groups={Array.from(new Set(items.map((r) => r.group_name).filter((g): g is string => !!g)))} onSaved={(s) => { setSettings(s); setNotice("Settings saved."); setView("queue"); }} />
       ) : loading ? (
@@ -278,8 +306,9 @@ export default function SendQueuePage() {
               sequences={sequences}
               busy={busy.has(row.id)}
               open={open === row.id}
+              sfUrl={sfUrl}
               onToggle={() => setOpen((v) => (v === row.id ? null : row.id))}
-              onApprove={() => void act(row.id, "approve")}
+              onApprove={() => { setOpen(null); void act(row.id, "approve"); }}
               onReject={() => void act(row.id, "reject")}
               onCancel={() => void act(row.id, "cancel")}
               onRecheck={() => void act(row.id, "recheck")}
@@ -323,7 +352,8 @@ function HookLine({ hook }: { hook: Hook }) {
   );
 }
 
-function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, onCancel, onRecheck, onRehook, onAddContact, onEdit }: {
+function SendRow({ row, sequences, busy, open, sfUrl, onToggle, onApprove, onReject, onCancel, onRecheck, onRehook, onAddContact, onEdit }: {
+  sfUrl: string | null;
   row: Row;
   sequences: Sequence[];
   busy: boolean;
@@ -486,6 +516,8 @@ function SendRow({ row, sequences, busy, open, onToggle, onApprove, onReject, on
           </label>
           <div className="flex flex-wrap items-center gap-3 text-[13px]">
             {row.website ? <a href={/^https?:/i.test(row.website) ? row.website : `https://${row.website}`} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">{row.website.replace(/^https?:\/\/(www\.)?/, "")}</a> : null}
+            {sfUrl ? <a href={`${sfUrl}/${row.sf_account_id}`} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">Salesforce</a> : null}
+            {row.outreach_prospect_id ? <a href={`https://web.outreach.io/prospects/${row.outreach_prospect_id}/sequences`} target="_blank" rel="noreferrer" className="text-info no-underline hover:underline">Outreach</a> : null}
             <span className="text-ink-muted">{[row.city, row.state, row.country].filter(Boolean).join(", ")}{row.time_zone ? ` · ${row.time_zone}` : ""}</span>
             {editable ? <button type="button" onClick={onRecheck} className="text-info underline underline-offset-2 hover:text-ink">Re-check email and sequence</button> : null}
             {editable ? <button type="button" disabled={busy} onClick={onRehook} className="text-info underline underline-offset-2 hover:text-ink disabled:opacity-60">{busy ? "Researching…" : "Deep research this hook"}</button> : null}
@@ -542,6 +574,13 @@ function SettingsPanel({ settings, sequences, groups, onSaved }: { settings: Set
   }
   return (
     <div className="max-w-2xl space-y-5 rounded-md border border-line bg-white p-5">
+      <label className="flex items-start gap-3 text-sm text-ink">
+        <input type="checkbox" checked={form.manualSend} onChange={(e) => setForm((f) => ({ ...f, manualSend: e.target.checked }))} className="mt-1 h-4 w-4 accent-ink" />
+        <span>
+          Send E1 myself from Outreach
+          <span className="block text-[13px] text-ink-secondary">On approve and enrol, the app adds the prospect to the sequence, puts the subject in custom1 and logs the E1 in Salesforce. You copy the subject and email into the step-1 task in Outreach and send. Off: the app schedules the E1 itself.</span>
+        </span>
+      </label>
       <label className="flex items-start gap-3 text-sm text-ink">
         <input type="checkbox" checked={form.dryRun} onChange={(e) => setForm((f) => ({ ...f, dryRun: e.target.checked }))} className="mt-1 h-4 w-4 accent-ink" />
         <span>

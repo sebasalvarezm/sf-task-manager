@@ -7,6 +7,7 @@ import { addContactAndUse, approveSend, cancelSend, chooseRestaurant, getSendSet
 import { listSequences } from "@/lib/outreach";
 import { currentWeekStart } from "@/lib/weekly-outreach";
 import { isVerifyConfigured } from "@/lib/email-verify";
+import { getValidCredentials } from "@/lib/token-manager";
 
 export const dynamic = "force-dynamic";
 // "rehook" runs the public-source research ladder inline: a few searches and a page read.
@@ -17,13 +18,14 @@ export async function GET(request: NextRequest) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const week = new URL(request.url).searchParams.get("week") || currentWeekStart();
-    const [items, settings, sequences, job] = await Promise.all([
+    const [items, settings, sequences, job, creds] = await Promise.all([
       listSends(week),
       getSendSettings(),
       listSequences().catch(() => []),
       runningJob(),
+      getValidCredentials().catch(() => null),
     ]);
-    return NextResponse.json({ week, items, settings, sequences: sequences.filter((s) => s.enabled), job, verifierConfigured: isVerifyConfigured() });
+    return NextResponse.json({ week, items, settings, sequences: sequences.filter((s) => s.enabled), job, verifierConfigured: isVerifyConfigured(), sfInstanceUrl: creds?.instance_url ?? null });
   } catch (err) {
     return NextResponse.json({ error: friendly(err) }, { status: 500 });
   }
@@ -69,7 +71,7 @@ export async function POST(request: NextRequest) {
         const settings = await getSendSettings();
         const job = await createJob({ kind: "e1_schedule", input: { ids }, label: `Send queue: ${settings.dryRun ? "dry run" : "scheduling"} ${ids.length} email${ids.length === 1 ? "" : "s"}`, resultRoute: "/send" });
         await start(job.id, "job/e1_schedule", job.input);
-        return NextResponse.json({ jobId: job.id, count: ids.length, dryRun: settings.dryRun });
+        return NextResponse.json({ jobId: job.id, count: ids.length, dryRun: settings.dryRun, manualSend: settings.manualSend });
       }
       case "settings": {
         const { action: _a, id: _i, ids: _s, week: _w, reason: _r, ...patch } = body;
