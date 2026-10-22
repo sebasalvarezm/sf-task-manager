@@ -185,7 +185,7 @@ export default function SendQueuePage() {
       return n;
     });
   }
-  async function act(id: string, action: "approve" | "reject" | "unapprove" | "cancel" | "recheck" | "rehook" | "add_contact", extra: Record<string, unknown> = {}): Promise<boolean> {
+  async function act(id: string, action: "approve" | "reject" | "unapprove" | "cancel" | "recheck" | "rehook" | "add_contact" | "confirm", extra: Record<string, unknown> = {}): Promise<boolean> {
     setRowBusy(id, true);
     setError(null);
     try {
@@ -371,6 +371,7 @@ export default function SendQueuePage() {
                     onRetry={() => void retry(row)}
                     onPullBack={() => void act(row.id, "unapprove")}
                     onCancel={() => void act(row.id, "cancel")}
+                    onConfirm={() => void act(row.id, "confirm")}
                   />
                 ),
               )}
@@ -472,7 +473,7 @@ function useCopy() {
 }
 
 /** Ready, Scheduled, Sent and Rejected: a simple card, the status in words, and at most two actions. */
-function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onRetry, onPullBack, onCancel }: {
+function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onRetry, onPullBack, onCancel, onConfirm }: {
   row: Row;
   now: number;
   sending: boolean;
@@ -483,6 +484,7 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
   onRetry: () => void;
   onPullBack: () => void;
   onCancel: () => void;
+  onConfirm?: () => void;
 }) {
   const line = statusLine(row, { now, sending, manualSend });
   const stage = stageOf(row, now, sending);
@@ -493,7 +495,7 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
   const meta = [row.contact_name ? `${row.contact_name}${row.contact_title ? `, ${row.contact_title}` : ""}` : "No contact", sequenceShort(row.sequence_name), place(row)].filter(Boolean).join(" · ");
 
   return (
-    <div className="rounded-md border border-line bg-white p-4 md:flex md:items-center md:gap-4 md:rounded-none md:border-0">
+    <div className={`rounded-md border border-line p-4 md:flex md:items-center md:gap-4 md:rounded-none md:border-0 ${row.status === "sent" ? "bg-ok-soft" : "bg-white"}`}>
       <div className="min-w-0 flex-1">
         <p className="break-words text-[15px] font-medium text-ink">{row.account_name}</p>
         <p className="truncate text-[13px] text-ink-secondary">{meta}</p>
@@ -512,7 +514,10 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
             {row.outreach_prospect_id ? <a href={`https://web.outreach.io/prospects/${row.outreach_prospect_id}/sequences`} target="_blank" rel="noreferrer" className={TEXT_BTN}>Open in Outreach</a> : null}
             <button type="button" onClick={() => copy(row.subject ?? "", "subject")} className={TEXT_BTN}>{copied === "subject" ? "Copied" : "Copy subject"}</button>
             <button type="button" onClick={() => copy(row.body ?? "", "body")} className={TEXT_BTN}>{copied === "body" ? "Copied" : "Copy email"}</button>
+            {onConfirm ? <button type="button" onClick={onConfirm} disabled={busy} className="rounded-sm border border-ok px-2 py-0.5 text-ok hover:bg-ok-soft disabled:opacity-60">Confirm sent in Outreach</button> : null}
           </div>
+        ) : row.status === "sent" && !row.scheduled_for ? (
+          <p className="mt-1 text-[13px] text-ok">Confirmed sent from Outreach</p>
         ) : null}
       </div>
       {ready ? (

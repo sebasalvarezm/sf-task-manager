@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { addContactAndUse, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { addContactAndUse, confirmSent, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences, type OutreachSequence } from "@/lib/outreach";
 import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
 
@@ -72,6 +72,7 @@ export async function POST(request: NextRequest) {
       case "unapprove": return NextResponse.json({ item: await unapproveSend(need(body.id)) });
       case "reject": return NextResponse.json({ item: await rejectSend(need(body.id), body.reason ?? null) });
       case "cancel": return NextResponse.json({ item: await cancelSend(need(body.id)) });
+      case "confirm": return NextResponse.json({ item: await confirmSent(need(body.id)) });
       case "schedule": {
         const existing = await runningJob();
         if (existing) return NextResponse.json({ jobId: existing.id, duplicate: true });

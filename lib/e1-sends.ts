@@ -150,7 +150,9 @@ export async function updateSend(id: string, patch: Partial<E1Send>): Promise<E1
   // Weekly Outreach mirrors the outcome: sent once the E1 is scheduled or
   // enrolled, back to draft_ready if it is cancelled or rejected after that.
   if (patch.status && row.weekly_outreach_id) {
-    const weekly = patch.status === "scheduled" || patch.status === "sent" ? "sent" : ["rejected", "failed"].includes(patch.status) ? "draft_ready" : null;
+    // A manual-mode enrolment (no scheduled time) is not a send yet: Weekly
+    // Outreach waits for Seb's "Confirm sent".
+    const weekly = patch.status === "sent" || (patch.status === "scheduled" && row.scheduled_for) ? "sent" : ["rejected", "failed"].includes(patch.status) ? "draft_ready" : null;
     if (weekly) await getSupabaseAdmin().from("weekly_outreach").update({ status: weekly }).eq("id", row.weekly_outreach_id).then(() => null, () => null);
   }
   return row;
@@ -578,6 +580,14 @@ export async function rebuildForSequence(id: string): Promise<{ rebuilt: boolean
   }
   await updateSend(id, { group_name: group, subject: pe.subject ?? send.subject, body: pe.body, hook: hookInfoFrom(rebuilt), restaurant_options: (rebuilt.restaurants ?? []).map((x) => ({ name: x.name, description: x.description ?? "" })) });
   return { rebuilt: true, note: null };
+}
+
+/** Manual mode: Seb sent or scheduled the E1 from the step-1 task in Outreach. */
+export async function confirmSent(id: string): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (send.status !== "scheduled") throw new Error("Only an enrolled email can be confirmed.");
+  return updateSend(id, { status: "sent", status_reason: null });
 }
 
 /** Put a different restaurant in the subject line, keeping the date part. */
