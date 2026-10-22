@@ -4,7 +4,8 @@ import { sfQuery } from "./sf-query";
 import { fetchContactsForAccounts, type SfContact } from "./salesforce-contacts";
 import { sfFetch } from "./sf-query";
 import { verifyEmail, type VerifyDetail, type VerifyResult } from "./email-verify";
-import { listSequences, listMailboxes, findProspectByEmail, createProspect, addProspectToSequence, outreachRequest, type OutreachSequence } from "./outreach";
+import { listSequences, listMailboxes, findProspectByEmail, createProspect, addProspectToSequence, setProspectCustomFields, outreachRequest, type OutreachSequence } from "./outreach";
+import { getValidCredentials } from "./token-manager";
 import { getStoredSignature, saveStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
 import { importSignatureFromSentItems } from "./microsoft";
 import { trackedCreate } from "./model-cost";
@@ -818,6 +819,7 @@ export async function enrolSend(id: string): Promise<{ prospectId: string; state
         const mailboxes = await listMailboxes();
         const mailbox = mailboxes.find((m) => m.email.toLowerCase() === "sebastian@valstonecorp.com") ?? mailboxes[0];
         if (!mailbox) return { blocked: "No Outreach mailbox on the connection." };
+        if (send.subject?.trim()) await setProspectCustomFields(existing.id, { custom1: send.subject.trim() }).catch(() => null);
         await updateSend(id, { outreach_prospect_id: existing.id, status: "scheduling" });
         return { prospectId: existing.id, stateId: own.id, mailboxId: mailbox.id };
       }
@@ -849,9 +851,45 @@ export async function enrolSend(id: string): Promise<{ prospectId: string; state
       title: send.contact_title ?? undefined,
       company: send.account_name,
     }));
+  // The follow-up steps use {{custom1}} as their subject, so the thread
+  // keeps the E1 subject. Set before enrolling, and refuse if it did not stick.
+  if (!send.subject?.trim()) return { blocked: "No subject on this row." };
+  await setProspectCustomFields(prospect.id, { custom1: send.subject.trim() });
   const state = await addProspectToSequence({ prospectId: prospect.id, sequenceId: send.sequence_id, mailboxId: mailbox.id });
   await updateSend(id, { outreach_prospect_id: prospect.id, outreach_state_id: state.id, status: "scheduling" });
   return { prospectId: prospect.id, stateId: state.id, mailboxId: mailbox.id };
+}
+
+/**
+ * Log the E1 in Salesforce the way a sequence send would: a completed Email
+ * task typed E1 on the contact and account. Outreach's own sync cannot tag
+ * an email it did not send from a step. Never throws: a Salesforce hiccup is
+ * noted on the row, not allowed to fail a send.
+ */
+async function logE1Task(send: E1Send, sendAt: Date): Promise<string | null> {
+  try {
+    const credentials = await getValidCredentials();
+    if (!credentials) return null;
+    const res = await sfFetch("/services/data/v62.0/sobjects/Task", {
+      method: "POST",
+      body: JSON.stringify({
+        Subject: send.subject ?? "E1",
+        Type: "Email",
+        Subject_Type__c: "E1",
+        Status: "Completed",
+        ActivityDate: sendAt.toISOString().slice(0, 10),
+        WhatId: send.sf_account_id,
+        WhoId: send.contact_id,
+        OwnerId: credentials.salesforce_user_id,
+        Description: withGreeting(send.body ?? "", send.contact_first_name).slice(0, 30000),
+      }),
+    }, credentials);
+    if (!res.ok) return null;
+    const out = (await res.json()) as { id?: string };
+    return out.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** The manual step's task, once Outreach has activated the state. Null when not there yet. */
@@ -894,7 +932,7 @@ export async function storedSignaturePreview(): Promise<string | null> {
  * signature, tracking on, and the send time. Dry run leaves it as a draft in
  * the outbox; otherwise it is flipped to scheduled.
  */
-export async function createMailingForSend(id: string, ids: { prospectId: string; mailboxId: string; taskId: string | null }, sendAt: Date, settings: SendSettings): Promise<E1Send> {
+export async function createMailingForSend(id: string, ids: { prospectId: string; mailboxId: string }, sendAt: Date, settings: SendSettings): Promise<E1Send> {
   const send = await getSend(id);
   if (!send || !send.body) throw new Error("Send row has no body.");
   // A run that was reset or cancelled while this job slept must not act.
@@ -933,71 +971,44 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   }
 
   const patch: Partial<E1Send> = { outreach_mailing_id: String(mailingId), scheduled_for: sendAt.toISOString() };
-  if (settings.dryRun) return updateSend(id, { ...patch, outreach_task_id: ids.taskId, status: "dry_run", status_reason: "Dry run: draft created in Outreach, not scheduled. The step task is left open." });
+  if (settings.dryRun) return updateSend(id, { ...patch, status: "dry_run", status_reason: "Dry run: draft created in Outreach, not scheduled." });
   const flip = await outreachRequest(`/mailings/${mailingId}`, {
     method: "PATCH",
     body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), attributes: { state: "scheduled", scheduledAt: sendAt.toISOString() } } }),
   });
   if (!flip.ok) throw new Error(`Outreach would not schedule the mailing: ${(await flip.text()).slice(0, 300)}`);
 
-  // Close the step's manual-email task so the sequence moves on to step 2.
-  // Best effort: the email is scheduled either way, and the note says if the
-  // task has to be ticked by hand.
-  const taskDone = ids.taskId ? await completeTask(ids.taskId) : false;
+  // Salesforce: the E1 task, as a sequence send would have logged it.
+  const sfTaskId = await logE1Task(send, sendAt);
   return updateSend(id, {
     ...patch,
-    outreach_task_id: taskDone ? ids.taskId : null,
+    outreach_task_id: sfTaskId,
     status: "scheduled",
-    status_reason: taskDone ? null : "Scheduled. The sequence's step-1 task is not open yet (sequence pending); it is ticked off automatically once Outreach creates it.",
+    status_reason: sfTaskId ? null : "Scheduled. Salesforce did not accept the E1 task; log it there by hand.",
   });
 }
 
-/**
- * Sequences on a schedule stay "pending" until their window opens, so the
- * step-1 task often does not exist yet when the email is scheduled. This
- * sweep (run hourly) finds the task later and ticks it, so the sequence
- * moves on to step 2 on its own. Dry runs are left alone.
- */
-export async function tidyStepTasks(): Promise<{ checked: number; completed: number }> {
-  // Every row scheduled in the last three weeks: the open task is looked up
-  // in Outreach each time, so a row that recorded a task id before the task
-  // was actually ticked is not skipped.
-  const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
+/** One-off: rows already out the door get custom1 and the Salesforce E1 task. */
+export async function backfillSentRows(): Promise<Array<{ account: string; custom1: string; sfTask: string }>> {
   const { data } = await getSupabaseAdmin()
     .from("e1_sends")
-    .select("id, outreach_state_id, status")
+    .select("*")
     .in("status", ["scheduled", "sent"])
-    .not("outreach_state_id", "is", null)
-    .gte("updated_at", since)
-    .limit(200);
-  let completed = 0;
-  const rows = (data ?? []) as Array<{ id: string; outreach_state_id: string }>;
-  for (const row of rows) {
-    const taskId = await findOpenStepTask(row.outreach_state_id).catch(() => null);
-    if (!taskId) continue;
-    if (await completeTask(taskId)) {
-      completed++;
-      await updateSend(row.id, { outreach_task_id: taskId, status_reason: null });
+    .not("outreach_prospect_id", "is", null)
+    .is("outreach_task_id", null)
+    .limit(100);
+  const out: Array<{ account: string; custom1: string; sfTask: string }> = [];
+  for (const row of (data ?? []) as E1Send[]) {
+    let custom1 = "skipped";
+    if (row.subject?.trim() && row.outreach_prospect_id) {
+      custom1 = await setProspectCustomFields(row.outreach_prospect_id, { custom1: row.subject.trim() }).then(() => "set").catch((e: Error) => e.message);
     }
+    const taskId = await logE1Task(row, new Date(row.scheduled_for ?? row.updated_at));
+    // outreach_task_id now holds the Salesforce task id, so a rerun skips this row.
+    if (taskId) await updateSend(row.id, { outreach_task_id: taskId, status_reason: null });
+    out.push({ account: row.account_name, custom1, sfTask: taskId ?? "failed" });
   }
-  return { checked: rows.length, completed };
-}
-
-/** The step task that is still open for a sequence state, or null when none (or all done). */
-export async function findOpenStepTask(stateId: string): Promise<string | null> {
-  const res = await outreachRequest(`/tasks?filter[sequenceState][id]=${stateId}&page[size]=5&fields[task]=taskType,state,completed`);
-  if (!res.ok) return null;
-  const body = (await res.json()) as { data?: Array<{ id: string; attributes?: { completed?: boolean; state?: string } }> };
-  const open = (body.data ?? []).find((t) => !t.attributes?.completed && t.attributes?.state !== "complete");
-  return open?.id ?? null;
-}
-
-async function completeTask(taskId: string): Promise<boolean> {
-  for (const attributes of [{ state: "complete" }, { completed: true }]) {
-    const r = await outreachRequest(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify({ data: { type: "task", id: Number(taskId), attributes } }) }).catch(() => null);
-    if (r?.ok) return true;
-  }
-  return false;
+  return out;
 }
 
 /** Undo a scheduled or dry-run send: mailing back to draft, prospect out of the sequence. */

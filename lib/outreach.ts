@@ -222,6 +222,24 @@ export async function findProspectByEmail(
   };
 }
 
+/** Write prospect custom fields (custom1..custom150). Read back to confirm. */
+export async function setProspectCustomFields(prospectId: string, fields: Record<string, string>): Promise<void> {
+  const res = await outreachFetch(`/prospects/${prospectId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ data: { type: "prospect", id: Number(prospectId), attributes: fields } }),
+  });
+  if (!res.ok) {
+    const err = await upstreamErrorText("Outreach", res);
+    throw new Error(`Outreach could not set the prospect fields: ${err}`);
+  }
+  const keys = Object.keys(fields);
+  const check = await outreachFetch(`/prospects/${prospectId}?fields[prospect]=${keys.join(",")}`);
+  const body = (await check.json().catch(() => null)) as { data?: { attributes?: Record<string, unknown> } } | null;
+  for (const k of keys) {
+    if ((body?.data?.attributes?.[k] ?? "") !== fields[k]) throw new Error(`Outreach did not keep ${k} on the prospect.`);
+  }
+}
+
 export async function createProspect(params: {
   firstName: string;
   lastName: string;

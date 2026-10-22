@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { tidyStepTasks } from "@/lib/e1-sends";
+import { backfillSentRows } from "@/lib/e1-sends";
 import { isAdmin } from "@/lib/auth";
 import { addProspectToSequence, findProspectByEmail, listMailboxes, listSequences, outreachRequest } from "@/lib/outreach";
 
@@ -67,8 +67,10 @@ export async function GET(request: NextRequest) {
   // ── Part 5: inspect a step task and try to complete it ───────────────────
   // ?task=<id> shows the task; &complete=1 tries the completion variants in
   // turn and reports which one Outreach accepts. ?prospect=<id> lists tasks.
-  if (q.get("tidy") === "1") {
-    note("tidy", await tidyStepTasks());
+  // ?backfill=1: for rows already scheduled or sent, set custom1 on the
+  // prospect and log the E1 task in Salesforce where missing.
+  if (q.get("backfill") === "1") {
+    note("backfill", await backfillSentRows());
     return NextResponse.json(report);
   }
   const prospectParam = q.get("prospect");

@@ -1,7 +1,7 @@
 import { inngest } from "@/lib/inngest/client";
 import { markJobFailedFromInngest } from "@/lib/inngest/on-failure";
 import { markRunning, markSucceeded, markFailed, updateProgress } from "@/lib/jobs";
-import { createMailingForSend, enrolSend, findStepTask, getSend, getSendSettings, listSends, planSlotsFor, updateSend } from "@/lib/e1-sends";
+import { createMailingForSend, enrolSend, getSend, getSendSettings, listSends, planSlotsFor, updateSend } from "@/lib/e1-sends";
 import { outreachRequest } from "@/lib/outreach";
 
 /**
@@ -57,17 +57,9 @@ export const e1ScheduleJob = inngest.createFunction(
           counts.failed++;
           continue;
         }
-        // The mailing no longer hangs off the step task, so there is nothing
-        // to wait for: look for the task a few times over a couple of minutes
-        // (to tick it off after scheduling) and carry on either way.
-        let taskId: string | null = null;
-        for (let i = 0; i < 3 && !taskId; i++) {
-          taskId = await step.run(`task-${id}-${i}`, () => findStepTask(enrol.stateId));
-          if (!taskId) await step.sleep(`wait-task-${id}-${i}`, TASK_WAITS[i]);
-        }
         const outcome = await step.run(`mailing-${id}`, async () => {
           try {
-            const row = await createMailingForSend(id, { prospectId: enrol.prospectId, mailboxId: enrol.mailboxId, taskId }, new Date(sendAt), settings);
+            const row = await createMailingForSend(id, { prospectId: enrol.prospectId, mailboxId: enrol.mailboxId }, new Date(sendAt), settings);
             return row.status;
           } catch (err) {
             await outreachRequest(`/sequenceStates/${enrol.stateId}`, { method: "DELETE" }).catch(() => null);

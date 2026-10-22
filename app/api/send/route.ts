@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { addContactAndUse, approveSend, cancelSend, chooseRestaurant, tidyStepTasks, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { addContactAndUse, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences } from "@/lib/outreach";
 import { currentWeekStart } from "@/lib/weekly-outreach";
 import { isVerifyConfigured } from "@/lib/email-verify";
@@ -53,7 +53,6 @@ export async function POST(request: NextRequest) {
       }
       case "recheck": return NextResponse.json({ item: await recheckSend(need(body.id)) });
       case "rehook": return NextResponse.json({ item: await rehookSend(need(body.id)) });
-      case "tidy": return NextResponse.json(await tidyStepTasks());
       case "add_contact": {
         const c = (body as { contact?: { firstName?: string; lastName?: string; email?: string; title?: string } }).contact ?? {};
         return NextResponse.json({ item: await addContactAndUse(need(body.id), { firstName: c.firstName ?? "", lastName: c.lastName ?? "", email: c.email ?? "", title: c.title ?? null }) });
