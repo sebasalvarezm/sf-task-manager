@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { SalesforceTask } from "@/lib/salesforce";
 import WeekSelector, { WeekRange, generateWeeks, currentWeekIndex } from "@/app/components/WeekSelector";
@@ -180,6 +180,40 @@ function TasksPageContent() {
   const looksBs = (t: SalesforceTask) =>
     (t.AccountFounded != null && t.AccountFounded > BS_FOUNDED_AFTER) ||
     (t.AccountEmployees != null && t.AccountEmployees < BS_MIN_EMPLOYEES);
+  // ── Nudges: accounts that wrote in within 45 days ─────────────────────────
+  const [nudges, setNudges] = useState<Record<string, { lastInAt: string; topic: string }> | undefined>(undefined);
+  const weekAccountKey = Array.from(new Set(weekTasks.map((t) => t.AccountId).filter(Boolean))).sort().join(",");
+  useEffect(() => {
+    if (!weekAccountKey) {
+      setNudges({});
+      return;
+    }
+    let cancelled = false;
+    setNudges(undefined);
+    fetch("/api/nudges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "classify", accountIds: weekAccountKey.split(",") }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setNudges(data.nudges ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setNudges({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [weekAccountKey]);
+  const [nudgeTask, setNudgeTask] = useState<SalesforceTask | null>(null);
+  const nudgeQueue = weekTasks.filter((t) => t.AccountId && nudges?.[t.AccountId] && !actions.has(t.Id));
+  function openNextNudge(after: SalesforceTask) {
+    const rest = nudgeQueue.filter((t) => t.Id !== after.Id);
+    const idx = nudgeQueue.findIndex((t) => t.Id === after.Id);
+    setNudgeTask(rest[idx] ?? rest[0] ?? null);
+  }
+
   const bsCandidates = weekTasks.filter((t) => looksBs(t) && !actions.has(t.Id));
 
   function preMarkBs() {
@@ -367,6 +401,8 @@ function TasksPageContent() {
                 tasks={weekTasks}
                 actions={actions}
                 onActionChange={handleActionChange}
+                nudges={nudges}
+                onOpenNudge={setNudgeTask}
               />
             )}
 
@@ -429,6 +465,22 @@ function TasksPageContent() {
         </div>
       )}
 
+      {nudgeTask && nudges && nudgeTask.AccountId && nudges[nudgeTask.AccountId] ? (
+        <NudgePanel
+          key={nudgeTask.Id}
+          task={nudgeTask}
+          topic={nudges[nudgeTask.AccountId].topic}
+          remaining={nudgeQueue.length}
+          onClose={() => setNudgeTask(null)}
+          onSent={(sent, note) => {
+            setAllTasks((prev) => prev.filter((t) => t.Id !== sent.Id));
+            if (note) setTasksError(note);
+            openNextNudge(sent);
+          }}
+          onSkip={(task) => openNextNudge(task)}
+        />
+      ) : null}
+
       {/* Delete Confirmation Modal */}
       {confirmDeleteCount !== null && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -460,5 +512,199 @@ function TasksPageContent() {
         </div>
       )}
     </>
+  );
+}
+
+type PreparedNudge = {
+  replyToMessageId: string;
+  sender: { name: string | null; email: string };
+  subject: string;
+  thread: Array<{ from: string; email: string; at: string; mine: boolean; text: string }>;
+  body: string;
+};
+
+function NudgePanel(props: {
+  task: SalesforceTask;
+  topic: string;
+  remaining: number;
+  onClose: () => void;
+  onSent: (task: SalesforceTask, note: string | null) => void;
+  onSkip: (task: SalesforceTask) => void;
+}) {
+  const { task } = props;
+  const [prepared, setPrepared] = useState<PreparedNudge | null>(null);
+  const [body, setBody] = useState("");
+  const [days, setDays] = useState("7");
+  const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const armTimer = useRef<number | null>(null);
+  const sendRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/nudges", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "prepare", accountId: task.AccountId, accountName: task.AccountName, website: task.AccountWebsite, topic: props.topic }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error ?? "Could not prepare the nudge");
+        if (!cancelled) {
+          setPrepared(data);
+          setBody(data.body ?? "");
+        }
+      })
+      .catch((e: Error) => !cancelled && setError(e.message));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.Id]);
+
+  const daysValue = days.trim() === "" ? null : Number(days.replace(/[^0-9]/g, ""));
+  const daysValid = days.trim() === "" || (Number.isFinite(daysValue) && (daysValue ?? 0) > 0);
+  const canSend = Boolean(prepared) && body.trim().length > 0 && daysValid && !sending;
+
+  async function send() {
+    if (!canSend || !prepared) return;
+    if (!armed) {
+      setArmed(true);
+      if (armTimer.current !== null) window.clearTimeout(armTimer.current);
+      armTimer.current = window.setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    if (armTimer.current !== null) window.clearTimeout(armTimer.current);
+    setArmed(false);
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/nudges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send",
+          replyToMessageId: prepared.replyToMessageId,
+          sender: prepared.sender,
+          body,
+          taskId: task.Id,
+          accountId: task.AccountId,
+          subject: task.Subject,
+          days: daysValue,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Not sent");
+      props.onSent(task, data.notes?.length ? `${task.AccountName}: email sent, but ${data.notes.join(" ")}` : null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Not sent");
+    } finally {
+      setSending(false);
+    }
+  }
+  useEffect(() => {
+    sendRef.current = () => void send();
+  });
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") props.onClose();
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        sendRef.current();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const nextDate = daysValue ? new Date(Date.now() + daysValue * 86_400_000).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end bg-black/40 sm:items-center sm:justify-center sm:p-6"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) props.onClose();
+      }}
+    >
+      <div className="flex h-[100dvh] w-full flex-col border border-line bg-white sm:h-auto sm:max-h-[92vh] sm:max-w-2xl sm:rounded-lg">
+        <div className="flex items-start justify-between gap-2 border-b border-line px-5 py-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-lg text-ink">{task.AccountName}</h2>
+            <p className="truncate text-xs text-ink-secondary">
+              Nudge · {props.topic}
+              {prepared ? ` · to ${prepared.sender.name ?? prepared.sender.email} · ${prepared.subject}` : ""}
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-3 text-sm">
+            {props.remaining > 1 ? (
+              <button type="button" className="text-ink-secondary hover:text-ink" onClick={() => props.onSkip(task)}>
+                Skip ›
+              </button>
+            ) : null}
+            <button type="button" className="text-ink-secondary hover:text-ink" onClick={props.onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+          {!prepared && !error ? <Spinner center label="Finding the thread and drafting…" /> : null}
+          {prepared ? (
+            <>
+              <div className="space-y-2">
+                {prepared.thread.map((m, i) => (
+                  <div key={i} className={`rounded-md border border-line p-3 text-sm ${m.mine ? "bg-surface-2" : "bg-white"}`}>
+                    <p className="mb-1 text-xs text-ink-secondary">
+                      {m.mine ? "You" : m.from || m.email} · {m.at.slice(0, 10)}
+                    </p>
+                    <p className="line-clamp-6 whitespace-pre-wrap text-ink">{m.text}</p>
+                  </div>
+                ))}
+              </div>
+              <label className="mt-4 block text-sm text-ink" htmlFor="nudge-body">
+                Your nudge
+              </label>
+              <textarea
+                id="nudge-body"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                className="mt-1 min-h-40 w-full rounded-sm border border-line-strong p-3 text-[15px] leading-6 text-ink focus:border-ink focus:outline-none"
+              />
+              <div className="mt-3 flex items-center gap-3 text-sm">
+                <label htmlFor="nudge-days" className="text-ink">
+                  Next task in
+                </label>
+                <input
+                  id="nudge-days"
+                  value={days}
+                  onChange={(e) => setDays(e.target.value)}
+                  placeholder="none"
+                  className={`h-9 w-20 rounded-sm border px-2 ${daysValid ? "border-line-strong" : "border-danger"}`}
+                />
+                <span className="text-ink-secondary">{days.trim() === "" ? "days (empty: no new task)" : nextDate ? `days · ${nextDate}` : "days"}</span>
+              </div>
+              <p className="mt-1 text-xs text-ink-secondary">Replies in the same thread (reply all). On send, this open task is completed.</p>
+            </>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 border-t border-line px-5 py-3">
+          <p className="min-w-0 truncate text-xs text-danger" role="alert">
+            {error}
+          </p>
+          <Button
+            loading={sending}
+            disabled={!canSend}
+            onClick={() => void send()}
+            title="Ctrl+Enter also works: once to arm, again to send"
+            className={armed ? "!bg-ok !text-white" : undefined}
+          >
+            {armed ? "Tap again to send" : "Send"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

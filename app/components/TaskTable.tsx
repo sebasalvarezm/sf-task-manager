@@ -49,7 +49,30 @@ type Props = {
   tasks: SalesforceTask[];
   actions: Map<string, TaskAction>;
   onActionChange: (taskId: string, action: TaskAction) => void;
+  /** accountId → nudge info; accounts not in it are reconnects. Undefined while loading. */
+  nudges?: Record<string, { lastInAt: string; topic: string }>;
+  onOpenNudge?: (task: SalesforceTask) => void;
 };
+
+function KindChip({ task, nudges, onOpenNudge }: { task: SalesforceTask; nudges?: Record<string, { lastInAt: string; topic: string }>; onOpenNudge?: (task: SalesforceTask) => void }) {
+  if (!nudges) return <span className="text-xs text-ink-muted">…</span>;
+  const n = task.AccountId ? nudges[task.AccountId] : undefined;
+  if (!n) return <span className="text-xs text-ink-secondary">Reconnect</span>;
+  const days = Math.max(0, Math.floor((Date.now() - new Date(n.lastInAt).getTime()) / 86_400_000));
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenNudge?.(task);
+      }}
+      title={`They last wrote ${days} day${days === 1 ? "" : "s"} ago. Open a reply in that thread.`}
+      className="rounded-sm bg-info-soft px-2 py-0.5 text-left text-xs font-medium text-info hover:underline"
+    >
+      Nudge · {n.topic}
+    </button>
+  );
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -57,6 +80,8 @@ export default function TaskTable({
   tasks,
   actions,
   onActionChange,
+  nudges,
+  onOpenNudge,
 }: Props) {
   const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
   const [inputValues, setInputValues] = useState<Map<string, string>>(new Map());
@@ -280,6 +305,7 @@ export default function TaskTable({
           <tr>
             <th className="w-8" />
             <th>Account / company</th>
+            <th>Kind</th>
             <th>Salesforce</th>
             <th>Task subject</th>
             <th>Due date</th>
@@ -340,6 +366,10 @@ export default function TaskTable({
                 <span className="font-medium text-ink text-sm">
                   {task.AccountName ?? <span className="text-ink-muted italic text-sm font-normal">No account</span>}
                 </span>
+              </td>
+
+              <td className={cellBase}>
+                <KindChip task={task} nudges={nudges} onOpenNudge={onOpenNudge} />
               </td>
 
               {/* Salesforce link — col 2 */}
@@ -463,6 +493,10 @@ export default function TaskTable({
               <span className="text-xs text-ink-muted font-mono tabular-nums shrink-0 mt-0.5">
                 #{rowIdx + 1}
               </span>
+            </div>
+
+            <div className="mt-1">
+              <KindChip task={task} nudges={nudges} onOpenNudge={onOpenNudge} />
             </div>
 
             {/* Meta chips: due date and SF link */}
