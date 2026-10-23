@@ -1125,7 +1125,7 @@ export async function dedupeE1Tasks(apply: boolean): Promise<Array<{ account: st
   const { data } = await getSupabaseAdmin()
     .from("e1_sends")
     .select("*")
-    .in("status", ["scheduled", "sent"])
+    // Any status: a reply moves a row on from "sent", and it still has the duplicate.
     .is("scheduled_for", null)
     .like("outreach_task_id", "00T%")
     .limit(500);
