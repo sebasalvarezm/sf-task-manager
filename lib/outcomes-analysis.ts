@@ -92,10 +92,13 @@ export type OutcomesReport = {
 };
 
 export type SubjectStyle = "generic" | "specific";
-export type StyleStat = { sends: number; replies: number; rate: number; low: number; high: number };
+export type StyleStat = { sends: number; replies: number; rate: number; low: number; high: number; /** Share of these sends that went to clean companies. */ cleanShare: number };
 export type StyleCompare = { label: string; generic: StyleStat; specific: StyleStat; verdict: string };
 export type SubjectLinesReport = {
+  /** All companies, for reference: can flatter whichever style went to weaker companies. */
   team: StyleCompare;
+  /** Clean companies only (all three BS checks passed): the fair comparison. */
+  teamClean: StyleCompare;
   you: StyleCompare | null;
   bySender: StyleCompare[];
   byGroup: StyleCompare[];
@@ -123,7 +126,8 @@ function styleStat(rows: SendRow[]): StyleStat {
   const replies = rows.filter((r) => !!r.replied_at).length;
   const rate = sends ? replies / sends : 0;
   const { low, high } = sends ? wilson(replies, sends) : { low: 0, high: 0 };
-  return { sends, replies, rate, low, high };
+  const cleanShare = sends ? rows.filter((r) => r.quality === "clean").length / sends : 0;
+  return { sends, replies, rate, low, high, cleanShare };
 }
 
 /** Plain verdict on whether the two reply rates really differ. */
@@ -157,12 +161,25 @@ export function buildSubjectLines(rows: SendRow[], youMatch = /sebastian/i): Sub
       .filter((c) => c.generic.sends + c.specific.sends >= 10)
       .sort((a, b) => b.generic.sends + b.specific.sends - (a.generic.sends + a.specific.sends));
   };
-  const mine = sorted.filter((r) => youMatch.test(r.sender ?? ""));
+  // Everything below the "all companies" line uses clean companies only, so a
+  // style sent mostly to weak companies cannot look better (or worse) for it.
+  const clean = sorted.filter((r) => r.quality === "clean");
+  const mine = clean.filter((r) => youMatch.test(r.sender ?? ""));
+  const bucketClean = (key: (r: SendRow) => string) => {
+    const m = new Map<string, SendRow[]>();
+    for (const r of clean) m.set(key(r), [...(m.get(key(r)) ?? []), r]);
+    return [...m.entries()]
+      .map(([k, list]) => compare(k, list))
+      .filter((c) => c.generic.sends + c.specific.sends >= 10)
+      .sort((a, b) => b.generic.sends + b.specific.sends - (a.generic.sends + a.specific.sends));
+  };
+  void bucket;
   return {
-    team: compare("Whole team", sorted),
-    you: mine.length ? compare("Your E1s", mine) : null,
-    bySender: bucket((r) => r.sender ?? "Unknown"),
-    byGroup: bucket(groupOf),
+    team: compare("Whole team, all companies", sorted),
+    teamClean: compare("Whole team, clean companies", clean),
+    you: mine.length ? compare("Your E1s, clean companies", mine) : null,
+    bySender: bucketClean((r) => r.sender ?? "Unknown"),
+    byGroup: bucketClean(groupOf),
     unsorted: e1.length - sorted.length,
   };
 }

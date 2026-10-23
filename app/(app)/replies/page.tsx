@@ -168,7 +168,7 @@ export default function RepliesPage() {
                 <div className="px-4 pt-4">
                   <h2 className="text-[15px] font-medium text-ink">Subject lines: generic vs specific</h2>
                   <p className="mt-0.5 text-[13px] text-ink-muted">
-                    E1s only. Generic is &ldquo;Lunch: Valstone&rdquo; and the like; specific has a restaurant and a date, like &ldquo;40 West Nov 11: Valstone&rdquo;. A reply anywhere in the sequence within 45 days counts.
+                    E1s only. Generic is &ldquo;Lunch: Valstone&rdquo; and the like; specific has a restaurant and a date, like &ldquo;40 West Nov 11: Valstone&rdquo;. A reply anywhere in the sequence within 45 days counts. The verdicts compare clean companies only (all three BS checks passed), so a style that mostly went to weaker companies can&apos;t look better for it; the all-companies line is there for reference, with the share of each style that went to clean companies.
                     {report.subjectLines.unsorted ? ` ${report.subjectLines.unsorted.toLocaleString()} E1s with other subjects are left out.` : ""}
                   </p>
                 </div>
@@ -183,11 +183,12 @@ export default function RepliesPage() {
                       </Table.HeadRow>
                     </Table.Head>
                     <Table.Body>
-                      <SubjectRow c={report.subjectLines.team} strong />
+                      {report.subjectLines.teamClean ? <SubjectRow c={report.subjectLines.teamClean} strong /> : null}
                       {report.subjectLines.you ? <SubjectRow c={report.subjectLines.you} strong /> : null}
-                      {report.subjectLines.bySender.length ? <SubjectHeading label="By sender" /> : null}
+                      <SubjectRow c={report.subjectLines.team} muted />
+                      {report.subjectLines.bySender.length ? <SubjectHeading label="By sender (clean companies)" /> : null}
                       {report.subjectLines.bySender.map((c) => <SubjectRow key={`s-${c.label}`} c={c} />)}
-                      {report.subjectLines.byGroup.length ? <SubjectHeading label="By group" /> : null}
+                      {report.subjectLines.byGroup.length ? <SubjectHeading label="By group (clean companies)" /> : null}
                       {report.subjectLines.byGroup.map((c) => <SubjectRow key={`g-${c.label}`} c={c} />)}
                     </Table.Body>
                   </Table>
@@ -296,14 +297,15 @@ function styleCell(x: StyleCompare["generic"]): string {
   return x.sends ? `${pct(x.rate)} · ${x.replies}/${x.sends.toLocaleString()}` : "–";
 }
 
-function SubjectRow({ c, strong }: { c: StyleCompare; strong?: boolean }) {
-  const tone = c.verdict.startsWith("Clear") ? "text-ok" : c.verdict.startsWith("Probably") ? "text-warn" : "text-ink-muted";
+function SubjectRow({ c, strong, muted }: { c: StyleCompare; strong?: boolean; muted?: boolean }) {
+  const tone = muted ? "text-ink-muted" : c.verdict.startsWith("Clear") ? "text-ok" : c.verdict.startsWith("Probably") ? "text-warn" : "text-ink-muted";
+  const mix = (x: StyleCompare["generic"]) => (muted && x.sends && x.cleanShare != null ? ` · ${Math.round(x.cleanShare * 100)}% clean` : "");
   return (
     <Table.Row>
-      <Table.Cell className={strong ? "font-medium text-ink" : "text-ink-secondary"}>{c.label}</Table.Cell>
-      <Table.Cell className="text-right tabular-nums text-ink-secondary">{styleCell(c.generic)}</Table.Cell>
-      <Table.Cell className="text-right tabular-nums text-ink-secondary">{styleCell(c.specific)}</Table.Cell>
-      <Table.Cell className={`text-[13px] ${tone}`}>{c.verdict}</Table.Cell>
+      <Table.Cell className={strong ? "font-medium text-ink" : muted ? "text-ink-muted" : "text-ink-secondary"}>{c.label}</Table.Cell>
+      <Table.Cell className={`text-right tabular-nums ${muted ? "text-ink-muted" : "text-ink-secondary"}`}>{styleCell(c.generic)}{mix(c.generic)}</Table.Cell>
+      <Table.Cell className={`text-right tabular-nums ${muted ? "text-ink-muted" : "text-ink-secondary"}`}>{styleCell(c.specific)}{mix(c.specific)}</Table.Cell>
+      <Table.Cell className={`text-[13px] ${tone}`}>{muted ? `${c.verdict} (not adjusted for company quality)` : c.verdict}</Table.Cell>
     </Table.Row>
   );
 }
