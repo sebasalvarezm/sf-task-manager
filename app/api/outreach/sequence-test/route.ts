@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { backfillSentRows } from "@/lib/e1-sends";
+import { backfillSentRows, dedupeE1Tasks } from "@/lib/e1-sends";
 import { isAdmin } from "@/lib/auth";
 import { addProspectToSequence, findProspectByEmail, listMailboxes, listSequences, outreachRequest } from "@/lib/outreach";
 
@@ -69,6 +69,13 @@ export async function GET(request: NextRequest) {
   // turn and reports which one Outreach accepts. ?prospect=<id> lists tasks.
   // ?backfill=1: for rows already scheduled or sent, set custom1 on the
   // prospect and log the E1 task in Salesforce where missing.
+  // ?dedupe-e1=1 lists duplicate E1 tasks; add &apply=1 to delete the app's copy.
+  if (q.get("dedupe-e1") === "1") {
+    const rows = await dedupeE1Tasks(q.get("apply") === "1");
+    note("summary", rows.reduce<Record<string, number>>((m, r) => ((m[r.action] = (m[r.action] ?? 0) + 1), m), {}));
+    note("rows", rows);
+    return NextResponse.json(report);
+  }
   if (q.get("backfill") === "1") {
     note("backfill", await backfillSentRows());
     return NextResponse.json(report);

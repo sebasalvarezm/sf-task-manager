@@ -1030,12 +1030,12 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
   if (settings.manualSend) {
     // No draft: the E1 must be sent from the sequence's step-1 task so the
     // follow-ups run. The row keeps subject and email for copying.
-    const sfTaskId = await logE1Task(send, new Date());
+    // No Salesforce task here: sent from the step task, Outreach logs the
+    // E1 itself ("[E1] - <subject>"). Logging one too double-counted it.
     return updateSend(id, {
-      outreach_task_id: sfTaskId,
       scheduled_for: null,
       status: "scheduled",
-      status_reason: `Enrolled. Open the step-1 task in Outreach, paste the subject and email, send.${sfTaskId ? "" : " Salesforce did not accept the E1 task; log it by hand."}`,
+      status_reason: "Enrolled. Open the step-1 task in Outreach, paste the subject and email, send.",
     });
   }
   const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
@@ -1108,6 +1108,44 @@ export async function backfillSentRows(): Promise<Array<{ account: string; custo
     // outreach_task_id now holds the Salesforce task id, so a rerun skips this row.
     if (taskId) await updateSend(row.id, { outreach_task_id: taskId, status_reason: null });
     out.push({ account: row.account_name, custom1, sfTask: taskId ?? "failed" });
+  }
+  return out;
+}
+
+/**
+ * One-off: remove the E1 task this app logged for rows sent from Outreach's
+ * step-1 task (manual mode, scheduled_for null), where Outreach logged its
+ * own "[E1] - <subject>". Rows sent as standalone mailings (scheduled_for
+ * set) are never touched: Outreach did not log those. A row is only cleaned
+ * when Outreach's task is found, so nothing loses its E1. apply=false lists.
+ */
+export async function dedupeE1Tasks(apply: boolean): Promise<Array<{ account: string; subject: string; appTask: string; outreachTask: string | null; action: string }>> {
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("No Salesforce connection.");
+  const { data } = await getSupabaseAdmin()
+    .from("e1_sends")
+    .select("*")
+    .in("status", ["scheduled", "sent"])
+    .is("scheduled_for", null)
+    .like("outreach_task_id", "00T%")
+    .limit(500);
+  const out: Array<{ account: string; subject: string; appTask: string; outreachTask: string | null; action: string }> = [];
+  for (const row of (data ?? []) as E1Send[]) {
+    const appTask = row.outreach_task_id as string;
+    const subj = (row.subject ?? "").trim().replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const soql = `SELECT Id, Subject FROM Task WHERE WhatId = '${row.sf_account_id}' AND Id != '${appTask}' AND Subject LIKE '%${subj}%' LIMIT 5`;
+    const res = await sfFetch(`/services/data/v62.0/query?q=${encodeURIComponent(soql)}`, {}, credentials);
+    const body = (await res.json().catch(() => null)) as { records?: Array<{ Id: string; Subject: string }> } | null;
+    const other = (body?.records ?? []).find((t) => /\[E1\]/i.test(t.Subject)) ?? null;
+    let action = other ? "duplicate: would delete app task" : "no Outreach E1 found: keep";
+    if (other && apply) {
+      const del = await sfFetch(`/services/data/v62.0/sobjects/Task/${appTask}`, { method: "DELETE" }, credentials);
+      if (del.ok || del.status === 404) {
+        await updateSend(row.id, { outreach_task_id: null });
+        action = "deleted app task";
+      } else action = `delete failed (${del.status})`;
+    }
+    out.push({ account: row.account_name, subject: row.subject ?? "", appTask, outreachTask: other?.Id ?? null, action });
   }
   return out;
 }
