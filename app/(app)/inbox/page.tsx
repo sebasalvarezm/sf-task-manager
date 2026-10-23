@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Inbox as InboxIcon, ChevronDown, ChevronUp, MoreHorizontal, Send, Asterisk } from "lucide-react";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
@@ -94,6 +94,10 @@ export default function InboxPage() {
   const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
   const [draftBody, setDraftBody] = useState("");
   const [drafting, setDrafting] = useState(false);
+  // Tap-twice send: first press arms (button turns green), second sends. Resets after 3s.
+  const [armed, setArmed] = useState(false);
+  const armTimer = useRef<number | null>(null);
+  const sendRef = useRef<() => void>(() => {});
   const [draftIssues, setDraftIssues] = useState<string[]>([]);
   const [rceInput, setRceInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -320,6 +324,29 @@ export default function InboxPage() {
       setDrafting(false);
     }
   }
+  const armedLabel = (() => {
+    if (!open) return "Tap again to send";
+    const days = parseRce(rceInput);
+    const sf = open.account_id && !open.is_broker_intro ? ` + Salesforce${days ? `, RCE ${days}d` : ""}` : "";
+    return `Tap again to send${sf}`;
+  })();
+  useEffect(() => {
+    sendRef.current = () => {
+      if (canSend) void send();
+    };
+  });
+  useEffect(() => {
+    setArmed(false);
+    if (!openId) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        sendRef.current();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openId]);
   async function send() {
     if (!open || sending) return;
     const days = parseRce(rceInput);
@@ -331,7 +358,17 @@ export default function InboxPage() {
     const sfPart = open.account_id && !open.is_broker_intro
       ? ` and update ${open.account_name} in Salesforce${days ? ` (RCE in ${days} days)` : ""}`
       : "";
-    if (!window.confirm(`Send this reply to ${target}${sfPart}?`)) return;
+    if (!armed) {
+      setArmed(true);
+      setSheetError(null);
+      if (armTimer.current !== null) window.clearTimeout(armTimer.current);
+      armTimer.current = window.setTimeout(() => setArmed(false), 3000);
+      return;
+    }
+    if (armTimer.current !== null) window.clearTimeout(armTimer.current);
+    setArmed(false);
+    void target;
+    void sfPart;
     setSending(true);
     setSheetError(null);
     try {
@@ -634,8 +671,15 @@ export default function InboxPage() {
                 {isSent ? (
                   <Button variant="secondary" onClick={() => setOpenId(null)}>Done</Button>
                 ) : (
-                  <Button leftIcon={<Send size={16} />} loading={sending} disabled={!canSend} onClick={() => void send()}>
-                    Send
+                  <Button
+                    leftIcon={<Send size={16} />}
+                    loading={sending}
+                    disabled={!canSend}
+                    onClick={() => void send()}
+                    title="Ctrl+Enter also works: once to arm, again to send"
+                    className={armed ? "!bg-ok !text-white" : undefined}
+                  >
+                    {armed ? armedLabel : "Send"}
                   </Button>
                 )}
               </div>

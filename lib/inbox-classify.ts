@@ -55,6 +55,8 @@ export function isAutomatedSender(email: string, subject: string): boolean {
   if (AUTOMATED_LOCAL_PARTS.test(local)) return true;
   if (AUTOMATED_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return true;
   if (CALENDAR_SUBJECT.test(subject ?? "")) return true;
+  // Bulk-mail subdomains: global@email.datasite.com, news@mail.x.com, etc.
+  if (/^(email|e|mail|mailer|news|newsletter|marketing|info|go|em|send|updates?)\./.test(domain)) return true;
   return false;
 }
 

@@ -257,21 +257,35 @@ async function reconcileWithOutlook(identities: Set<string>, summary: InboxRefre
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from("inbox_replies")
-    .select("message_id, conversation_id, received_at")
+    .select("message_id, conversation_id, received_at, from_email, subject")
     .in("status", ["new", "drafted"])
     .order("received_at", { ascending: false })
-    .limit(80);
-  const open = (data ?? []) as Array<{ message_id: string; conversation_id: string; received_at: string }>;
-  if (open.length === 0) return;
+    .limit(300);
+  const rowsInPile = (data ?? []) as Array<{ message_id: string; conversation_id: string; received_at: string; from_email: string | null; subject: string | null }>;
   const now = new Date().toISOString();
+  // Bulk mail that got in before the filter knew better leaves the pile.
+  const bulk = rowsInPile.filter((r) => isAutomatedSender(r.from_email ?? "", r.subject ?? ""));
+  if (bulk.length > 0) {
+    await supabase.from("inbox_replies").update({ status: "skipped", updated_at: now }).in("message_id", bulk.map((r) => r.message_id));
+  }
+  const open = rowsInPile.filter((r) => !bulk.includes(r));
+  if (open.length === 0) return;
   await mapLimit(open, 5, async (row) => {
-    let full: Awaited<ReturnType<typeof fetchEmailThread>>;
+    let full: Awaited<ReturnType<typeof fetchEmailThread>> = [];
     try {
       full = await fetchEmailThread(row.conversation_id);
     } catch {
+      full = [];
+    }
+    if (full.length === 0) {
+      // Thread unreadable: ask Outlook about the message itself.
+      const state = await messageReadState(row.message_id);
+      if (state === "read" || state === "gone") {
+        await supabase.from("inbox_replies").update({ status: "skipped", updated_at: now }).eq("message_id", row.message_id);
+        summary.readInOutlook++;
+      }
       return;
     }
-    if (full.length === 0) return;
     const self = full.find((e) => e.id === row.message_id);
     const myReply = full
       .filter((e) => isSelfAddress(e.from.email, identities) && e.receivedDateTime > row.received_at)
@@ -296,6 +310,19 @@ async function reconcileWithOutlook(identities: Set<string>, summary: InboxRefre
       summary.readInOutlook++;
     }
   });
+}
+
+async function messageReadState(messageId: string): Promise<"read" | "unread" | "gone" | "unknown"> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) return "unknown";
+  const res = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}?$select=isRead,parentFolderId`, {
+    headers: { Authorization: `Bearer ${credentials.access_token}` },
+  }).catch(() => null);
+  if (!res) return "unknown";
+  if (res.status === 404) return "gone";
+  if (!res.ok) return "unknown";
+  const body = (await res.json().catch(() => null)) as { isRead?: boolean } | null;
+  return body?.isRead ? "read" : "unread";
 }
 
 /**
@@ -334,6 +361,15 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
   const candidates = Array.from(latestByConversation.values());
   if (candidates.length === 0) return summary;
 
+  // Senders Seb already took out of the pile: a new non-reply from them
+  // (newsletters, cold pitches) stays out too.
+  const { data: dismissedRows } = await supabase
+    .from("inbox_replies")
+    .select("from_email")
+    .eq("status", "skipped")
+    .limit(2000);
+  const dismissedSenders = new Set((dismissedRows ?? []).map((r: { from_email: string | null }) => (r.from_email ?? "").toLowerCase()).filter(Boolean));
+
   // Skip threads we already hold (by conversation), unless a newer message arrived.
   const { data: known } = await supabase
     .from("inbox_replies")
@@ -356,7 +392,7 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
   const subjectNames = fresh.map((c) => companyFromSubject(c.subject)).filter((n): n is string => Boolean(n));
   const { byEmail, byDomain, byName } = await matchAccounts(emails, domains, subjectNames);
 
-  const rows = await mapLimit(fresh, 4, async (m) => {
+  const rawRows = await mapLimit(fresh, 4, async (m) => {
     const email = (m.from?.emailAddress?.address ?? "").toLowerCase();
     const domain = domainOf(email);
     let thread: ThreadMessage[] = [];
@@ -376,6 +412,7 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
       thread = [{ from: m.from?.emailAddress?.name ?? "", email, at: m.receivedDateTime, mine: false, text: trimReplyBody(m.body?.content ?? m.bodyPreview ?? "") }];
     }
     const hasMine = thread.some((t) => t.mine);
+    if (!hasMine && dismissedSenders.has(email)) return null;
 
     let account: AccountHit | null = null;
     let matchedBy: "contact" | "domain" | "subject" | null = null;
@@ -420,6 +457,8 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
     };
   });
 
+  const rows = rawRows.filter((r): r is NonNullable<typeof r> => r !== null);
+  if (rows.length === 0) return summary;
   // Replace older rows of the same thread so the list shows one card per thread.
   const staleIds = rows
     .map((r) => knownByConversation.get(r.conversation_id)?.message_id)
