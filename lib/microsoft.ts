@@ -793,6 +793,21 @@ export async function updateOutlookDraft(draftId: string, body: string): Promise
   }
 }
 
+/** Point a draft at one new recipient (the takeover contact picker). */
+export async function setOutlookDraftRecipient(draftId: string, email: string, name: string | null): Promise<void> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draftId)}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${credentials.access_token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ toRecipients: [{ emailAddress: { address: email, ...(name ? { name } : {}) } }] }),
+  });
+  if (!response.ok) {
+    if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+    throw new Error(`Could not change the recipient: ${await upstreamErrorText("Outlook", response)}`);
+  }
+}
+
 /** Send an existing Outlook draft. Microsoft moves it to Sent Items. */
 export async function sendOutlookDraft(draftId: string): Promise<void> {
   const credentials = await getMsValidCredentials();

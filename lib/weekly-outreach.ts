@@ -77,6 +77,12 @@ export type WeeklyOutreachTakeover = {
   groupName: string | null;
   mainGroup: string | null;
   groupConfidence: number | null;
+  /** Salesforce contact picked in the review box (null: use contactEmail, or newContact). */
+  contactId?: string | null;
+  /** Typed in the review box; created in Salesforce only when the email is sent. */
+  newContact?: { firstName: string; lastName: string; email: string; title?: string | null } | null;
+  /** Set once ownership and the RCE tasks were written, so a retry does not repeat them. */
+  salesforceDoneAt?: string | null;
 };
 
 export type WeeklyOutreachSourceMetadata = {

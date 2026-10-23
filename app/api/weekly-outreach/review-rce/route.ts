@@ -7,6 +7,7 @@ import {
   getOutlookDraftThreadInfo,
   isSelfAddress,
   sendOutlookDraft,
+  setOutlookDraftRecipient,
   updateOutlookDraft,
   OUTLOOK_DRAFT_PERMISSION_MESSAGE,
   OUTLOOK_NOT_CONNECTED_MESSAGE,
@@ -17,8 +18,9 @@ import {
   writeWeeklyOutreachSourceMetadata,
   type WeeklyOutreachItem,
 } from "@/lib/weekly-outreach";
+import { listAccountContacts, runTakeoverSalesforce, type NewContactInput } from "@/lib/rce-takeover";
 
-type ReviewAction = "save" | "send" | "dismiss";
+type ReviewAction = "save" | "send" | "dismiss" | "mark_sent" | "contacts" | "recipient";
 
 export async function POST(request: Request) {
   if (!(await isAdmin())) {
@@ -28,6 +30,8 @@ export async function POST(request: Request) {
     id?: string;
     action?: ReviewAction;
     draft?: string;
+    contactId?: string | null;
+    newContact?: NewContactInput | null;
   };
   if (!body.id || !body.action) {
     return NextResponse.json({ error: "Missing row or review action" }, { status: 400 });
@@ -48,7 +52,79 @@ export async function POST(request: Request) {
   }
   const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
 
+  // Takeover only: own the account, log today's RCE, open one for next week.
+  // A normal RCE starts from an open task that the Tasks page already rolls.
+  const takeoverSalesforce = async (sentDraft: string): Promise<string[]> => {
+    const t = metadata.takeover;
+    if (!t || t.salesforceDoneAt) return [];
+    const email = metadata.recipients[0]?.email ?? t.contactEmail ?? null;
+    const result = await runTakeoverSalesforce({
+      accountId: item.sf_account_id,
+      contactId: t.contactId ?? null,
+      newContact: t.newContact ?? null,
+      email,
+      subject: metadata.replySubject ?? `Valstone / ${item.account_name}`,
+      body: sentDraft,
+    });
+    t.contactId = result.contactId;
+    if (result.notes.length === 0) t.salesforceDoneAt = new Date().toISOString();
+    return result.notes;
+  };
+
   try {
+    if (body.action === "contacts") {
+      return NextResponse.json({ contacts: await listAccountContacts(item.sf_account_id) });
+    }
+
+    if (body.action === "recipient") {
+      if (!metadata.takeover) return NextResponse.json({ error: "Only takeover emails can change contact here" }, { status: 400 });
+      let email: string;
+      let name: string | null;
+      if (body.newContact) {
+        const nc = body.newContact;
+        if (!nc.firstName?.trim() || !nc.lastName?.trim() || !/^\S+@\S+\.\S+$/.test(nc.email ?? "")) {
+          return NextResponse.json({ error: "First name, last name and a valid email are needed" }, { status: 400 });
+        }
+        email = nc.email.trim().toLowerCase();
+        name = `${nc.firstName.trim()} ${nc.lastName.trim()}`;
+        metadata.takeover.contactId = null;
+        metadata.takeover.newContact = { firstName: nc.firstName.trim(), lastName: nc.lastName.trim(), email, title: nc.title?.trim() || null };
+      } else {
+        const contact = (await listAccountContacts(item.sf_account_id)).find((c) => c.id === body.contactId);
+        if (!contact?.email) return NextResponse.json({ error: "That contact has no email in Salesforce" }, { status: 400 });
+        email = contact.email;
+        name = contact.name;
+        metadata.takeover.contactId = contact.id;
+        metadata.takeover.newContact = null;
+      }
+      metadata.takeover.contactName = name;
+      metadata.takeover.contactEmail = email;
+      metadata.recipients = [{ name, email }];
+      if (metadata.outlookDraftId) await setOutlookDraftRecipient(metadata.outlookDraftId, email, name);
+      const { data: updated, error: updateError } = await supabase
+        .from("weekly_outreach")
+        .update({ source_reference: writeWeeklyOutreachSourceMetadata(metadata) })
+        .eq("id", item.id)
+        .select("*")
+        .single();
+      if (updateError) throw new Error(updateError.message);
+      return NextResponse.json({ item: withWeeklyOutreachClientMetadata(updated) });
+    }
+
+    if (body.action === "mark_sent") {
+      // Sent by hand from Outlook: record it, and do the takeover bookkeeping.
+      const sentDraft = body.draft?.trim() || item.draft || "";
+      const notes = await takeoverSalesforce(sentDraft);
+      const { data: updated, error: updateError } = await supabase
+        .from("weekly_outreach")
+        .update({ draft: sentDraft || null, status: "sent", source_reference: writeWeeklyOutreachSourceMetadata(metadata) })
+        .eq("id", item.id)
+        .select("*")
+        .single();
+      if (updateError) throw new Error(updateError.message);
+      return NextResponse.json({ item: withWeeklyOutreachClientMetadata(updated), salesforceNotes: notes });
+    }
+
     if (body.action === "dismiss") {
       if (metadata.outlookDraftId) await deleteOutlookDraft(metadata.outlookDraftId);
       metadata.outlookDraftId = null;
@@ -76,6 +152,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "The reconnect draft is empty" }, { status: 400 });
     }
 
+    let salesforceNotes: string[] = [];
     if (metadata.outlookDraftId) {
       await updateOutlookDraft(metadata.outlookDraftId, draft);
     } else if (body.action === "send") {
@@ -114,6 +191,7 @@ export async function POST(request: Request) {
       metadata.rceFirstSentAt = new Date().toISOString();
       metadata.conversationId = threadInfo.conversationId;
       metadata.recipients = threadInfo.recipients;
+      salesforceNotes = await takeoverSalesforce(draft);
     }
 
     const { data: updated, error: updateError } = await supabase
@@ -127,7 +205,7 @@ export async function POST(request: Request) {
       .select("*")
       .single();
     if (updateError) throw new Error(updateError.message);
-    return NextResponse.json({ item: withWeeklyOutreachClientMetadata(updated) });
+    return NextResponse.json({ item: withWeeklyOutreachClientMetadata(updated), salesforceNotes });
   } catch (reviewError) {
     const message = reviewError instanceof Error ? reviewError.message : "Could not review reconnect";
     if (message === "OUTLOOK_RECONNECT_REQUIRED" || message === "MS_NOT_CONNECTED") {

@@ -192,6 +192,30 @@ export default function WeeklyOutreachPage() {
   const [reviewQueueIds, setReviewQueueIds] = useState<string[]>([]);
   // "Approve & Send" turns into "Confirm send" in place for a few seconds.
   const [confirmingSend, setConfirmingSend] = useState(false);
+  // Tap-twice confirms (no browser popups): which row/button is armed right now.
+  const [armedKey, setArmedKey] = useState<string | null>(null);
+  const armedTimer = useRef<number | null>(null);
+  function armOrRun(key: string, run: () => void) {
+    if (armedTimer.current !== null) window.clearTimeout(armedTimer.current);
+    if (armedKey === key) {
+      armedTimer.current = null;
+      setArmedKey(null);
+      run();
+      return;
+    }
+    setArmedKey(key);
+    armedTimer.current = window.setTimeout(() => {
+      armedTimer.current = null;
+      setArmedKey(null);
+    }, 3000);
+  }
+  // Takeover contact picker in the review box.
+  const [takeoverContacts, setTakeoverContacts] = useState<
+    Array<{ id: string; name: string; firstName: string | null; email: string | null; title: string | null }> | null
+  >(null);
+  const [newContactOpen, setNewContactOpen] = useState(false);
+  const [newContact, setNewContact] = useState({ firstName: "", lastName: "", email: "", title: "" });
+  const [recipientSaving, setRecipientSaving] = useState(false);
   const confirmSendTimer = useRef<number | null>(null);
   // One-line error shown next to the sheet's buttons (not at the top of the page).
   const [sheetError, setSheetError] = useState<string | null>(null);
@@ -313,13 +337,24 @@ export default function WeeklyOutreachPage() {
 
   // Kept on a ref so the Escape listener always sees the current draft text.
   const closeRceReviewRef = useRef<() => void>(() => {});
+  // Ctrl/Cmd+Enter: first press arms Approve & send, second press sends.
+  const sendShortcutRef = useRef<() => void>(() => {});
   useEffect(() => {
     closeRceReviewRef.current = () => void closeRceReview();
+    sendShortcutRef.current = () => {
+      if (!reviewingRce?.outlook_draft_ready || reviewSaving || !reviewDraft.trim()) return;
+      if (confirmingSend) void reviewRce("send");
+      else startConfirmSend();
+    };
   });
   useEffect(() => {
     if (!reviewingRceId) return;
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") closeRceReviewRef.current();
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        sendShortcutRef.current();
+      }
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -1033,13 +1068,6 @@ export default function WeeklyOutreachPage() {
 
   async function sendFollowUp() {
     if (!followUpItem || followUpSending) return;
-    if (
-      !window.confirm(
-        `Send this follow-up to ${followUpItem.account_name} through Outlook now?`,
-      )
-    ) {
-      return;
-    }
     setFollowUpSending(true);
     setFollowUpError(null);
     try {
@@ -1216,6 +1244,21 @@ export default function WeeklyOutreachPage() {
     }
     cancelAutoSaveTimer();
     setReviewingRceId(item.id);
+    setTakeoverContacts(null);
+    setNewContactOpen(false);
+    setNewContact({ firstName: "", lastName: "", email: "", title: "" });
+    if (item.takeover) {
+      void fetch("/api/weekly-outreach/review-rce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, action: "contacts" }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (reviewingIdRef.current === item.id) setTakeoverContacts(data.contacts ?? []);
+        })
+        .catch(() => setTakeoverContacts([]));
+    }
     setReviewDraft(item.draft ?? "");
     reviewDraftRef.current = item.draft ?? "";
     reviewingIdRef.current = item.id;
@@ -1378,6 +1421,45 @@ export default function WeeklyOutreachPage() {
     }
   }
 
+  function reportSalesforceNotes(account: string, notes: unknown) {
+    if (Array.isArray(notes) && notes.length > 0) {
+      setError(`${account}: email sent, but Salesforce needs a hand. ${notes.join(" ")}`);
+    }
+  }
+
+  /** Swap the greeting's name when the recipient changes. */
+  function withFirstName(text: string, firstName: string | null): string {
+    if (!firstName) return text;
+    return text.replace(/^(\s*(?:Hi|Hello|Hey|Dear)\s+)[^,\n]+,/i, `$1${firstName},`);
+  }
+
+  async function changeTakeoverRecipient(choice: { contactId: string } | { newContact: typeof newContact }) {
+    if (!reviewingRce || recipientSaving) return;
+    setRecipientSaving(true);
+    setSheetError(null);
+    try {
+      const res = await fetch("/api/weekly-outreach/review-rce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: reviewingRce.id, action: "recipient", ...choice }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not change the contact");
+      setItems((previous) => previous.map((row) => (row.id === data.item.id ? data.item : row)));
+      const first =
+        "contactId" in choice
+          ? takeoverContacts?.find((c) => c.id === choice.contactId)?.firstName ?? null
+          : choice.newContact.firstName.trim();
+      const swapped = withFirstName(reviewDraftRef.current, first);
+      if (swapped !== reviewDraftRef.current) handleReviewDraftChange(swapped);
+      setNewContactOpen(false);
+    } catch (recipientError) {
+      setSheetError(recipientError instanceof Error ? recipientError.message : "Could not change the contact");
+    } finally {
+      setRecipientSaving(false);
+    }
+  }
+
   async function copyReviewDraft() {
     if (!reviewDraft.trim()) return;
     await navigator.clipboard.writeText(reviewDraft);
@@ -1436,6 +1518,7 @@ export default function WeeklyOutreachPage() {
       setItems((previous) =>
         previous.map((item) => (item.id === reviewingRce.id ? data.item : item)),
       );
+      if (action === "send") reportSalesforceNotes(reviewingRce.account_name, data.salesforceNotes);
       if (action === "send") {
         advanceRceReview(next);
       } else {
@@ -1475,10 +1558,22 @@ export default function WeeklyOutreachPage() {
         setSheetError("Your last edit didn't save, so this email stays open. Retry the save first.");
         return;
       }
-      const saved = await updateRow(sentItem, {
-        status: "sent",
-        draft: reviewDraft,
-      });
+      let saved = false;
+      if (sentItem.takeover) {
+        const res = await fetch("/api/weekly-outreach/review-rce", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: sentItem.id, action: "mark_sent", draft: reviewDraftRef.current }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.item) {
+          saved = true;
+          setItems((previous) => previous.map((row) => (row.id === sentItem.id ? data.item : row)));
+          reportSalesforceNotes(sentItem.account_name, data.salesforceNotes);
+        }
+      } else {
+        saved = Boolean(await updateRow(sentItem, { status: "sent", draft: reviewDraft }));
+      }
       if (!saved) {
         setSheetError(`Couldn't mark ${sentItem.account_name} sent. Try again.`);
         return;
@@ -1848,7 +1943,11 @@ export default function WeeklyOutreachPage() {
                       <Button
                         variant="secondary"
                         className="col-span-2 w-full"
-                        onClick={() => void openFollowUp(item)}
+                        onClick={() =>
+                          item.rce_follow_up_trackable
+                            ? void openFollowUp(item)
+                            : armOrRun(`second:${item.id}`, () => void confirmSecondRceSent(item))
+                        }
                         title={
                           item.rce_follow_up_trackable
                             ? "Preview and send the short follow-up into the same Outlook thread"
@@ -1857,7 +1956,9 @@ export default function WeeklyOutreachPage() {
                       >
                         {item.rce_follow_up_trackable
                           ? `Send follow-up${item.rce_first_sent_at ? ` · ${Math.max(0, Math.floor((Date.now() - new Date(item.rce_first_sent_at).getTime()) / 86_400_000))}d` : ""}`
-                          : "Confirm second email sent"}
+                          : armedKey === `second:${item.id}`
+                            ? "Tap again to confirm"
+                            : "Confirm second email sent"}
                       </Button>
                     )
                   ) : item.draft ? (
@@ -2059,8 +2160,14 @@ export default function WeeklyOutreachPage() {
                             ref={registerGridCell(index, 9)}
                             type="button"
                             onKeyDown={(event) => handleGridNavigation(event, index, 9)}
-                            onClick={() => void openFollowUp(item)}
-                            className="h-11 w-full px-2 text-left text-info underline underline-offset-2 hover:bg-surface-3"
+                            onClick={() =>
+                              item.rce_follow_up_trackable
+                                ? void openFollowUp(item)
+                                : armOrRun(`second:${item.id}`, () => void confirmSecondRceSent(item))
+                            }
+                            className={`h-11 w-full px-2 text-left underline underline-offset-2 hover:bg-surface-3 ${
+                              armedKey === `second:${item.id}` ? "font-medium text-ok" : "text-info"
+                            }`}
                             title={
                               item.rce_follow_up_trackable
                                 ? "Preview and send the short follow-up into the same Outlook thread"
@@ -2069,7 +2176,9 @@ export default function WeeklyOutreachPage() {
                           >
                             {item.rce_follow_up_trackable
                               ? `Follow-up${item.rce_first_sent_at ? ` · ${Math.max(0, Math.floor((Date.now() - new Date(item.rce_first_sent_at).getTime()) / 86_400_000))}d` : ""}`
-                              : "Confirm 2nd sent"}
+                              : armedKey === `second:${item.id}`
+                                ? "Tap to confirm"
+                                : "Confirm 2nd sent"}
                           </button>
                         )
                       ) : item.outreach_type === "RCE" && !item.draft ? (
@@ -2450,9 +2559,9 @@ export default function WeeklyOutreachPage() {
                         /\[First name\]/i.test(followUpBody) ||
                         (Boolean(followUpPreview.replyDetected) && !followUpIgnoreReply)
                       }
-                      onClick={() => void sendFollowUp()}
+                      onClick={() => armOrRun(`fu-send:${followUpItem.id}`, () => void sendFollowUp())}
                     >
-                      Send follow-up
+                      {armedKey === `fu-send:${followUpItem.id}` ? "Tap again to send" : "Send follow-up"}
                     </Button>
                   ) : (
                     <Button
@@ -2508,7 +2617,19 @@ export default function WeeklyOutreachPage() {
                       ? `New email: ${reviewingRce.outlook_reply_subject || "(subject pending)"}`
                       : reviewingRce.outlook_reply_subject || "No Outlook chain attached"}
                   </p>
-                  {reviewingRce.outlook_draft_ready && reviewingRce.outlook_reply_to && reviewingRce.outlook_reply_to.length > 0 ? (
+                  {reviewingRce.takeover ? (
+                    <TakeoverRecipient
+                      item={reviewingRce}
+                      contacts={takeoverContacts}
+                      saving={recipientSaving}
+                      newOpen={newContactOpen}
+                      setNewOpen={setNewContactOpen}
+                      draft={newContact}
+                      setDraft={setNewContact}
+                      onPick={(contactId) => void changeTakeoverRecipient({ contactId })}
+                      onCreate={() => void changeTakeoverRecipient({ newContact })}
+                    />
+                  ) : reviewingRce.outlook_draft_ready && reviewingRce.outlook_reply_to && reviewingRce.outlook_reply_to.length > 0 ? (
                     <p className="mt-0.5 truncate text-xs text-ink">
                       <span className="text-ink-secondary">To:</span>{" "}
                       {reviewingRce.outlook_reply_to.map((r) => (r.name ? `${r.name} <${r.email}>` : r.email)).join(", ")}
@@ -2828,5 +2949,95 @@ export default function WeeklyOutreachPage() {
         ) : null}
       </PageContent>
     </>
+  );
+}
+
+/** Does the email look like it belongs to this person? Flags Branko <dejan@...>. */
+function emailMatchesName(name: string | null, email: string | null): boolean {
+  if (!name || !email) return true;
+  const local = email.split("@")[0].toLowerCase().replace(/[^a-z]/g, "");
+  const parts = name.toLowerCase().normalize("NFD").replace(/[^a-z ]/g, "").split(/\s+/).filter((p) => p.length >= 2);
+  if (parts.length === 0 || /^(info|sales|contact|hello|admin|office)/.test(local)) return true;
+  return parts.some((p) => local.includes(p) || local.startsWith(p[0] + (parts[parts.length - 1] ?? "")));
+}
+
+function TakeoverRecipient(props: {
+  item: WeeklyOutreachItem;
+  contacts: Array<{ id: string; name: string; firstName: string | null; email: string | null; title: string | null }> | null;
+  saving: boolean;
+  newOpen: boolean;
+  setNewOpen: (open: boolean) => void;
+  draft: { firstName: string; lastName: string; email: string; title: string };
+  setDraft: (draft: { firstName: string; lastName: string; email: string; title: string }) => void;
+  onPick: (contactId: string) => void;
+  onCreate: () => void;
+}) {
+  const current = props.item.outlook_reply_to?.[0] ?? null;
+  const currentEmail = current?.email?.toLowerCase() ?? props.item.takeover?.contactEmail ?? null;
+  const currentName = current?.name ?? props.item.takeover?.contactName ?? null;
+  const selected = props.item.takeover?.contactId
+    ? props.item.takeover.contactId
+    : props.item.takeover?.newContact
+      ? "__new_saved"
+      : props.contacts?.find((c) => c.email && c.email === currentEmail)?.id ?? "";
+  const mismatch = !emailMatchesName(currentName, currentEmail);
+  const field = "h-8 rounded-sm border border-line-strong px-2 text-xs text-ink focus:border-ink focus:outline-none";
+  return (
+    <div className="mt-1 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-ink-secondary">To:</span>
+        <select
+          className={`${field} max-w-full`}
+          disabled={props.saving || props.contacts === null}
+          value={selected}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "__new") props.setNewOpen(true);
+            else if (value && value !== "__new_saved") props.onPick(value);
+          }}
+        >
+          {props.contacts === null ? <option value="">{currentName ? `${currentName} <${currentEmail}>` : "Loading contacts…"}</option> : null}
+          {selected === "" && props.contacts !== null ? (
+            <option value="">{currentName ? `${currentName} <${currentEmail ?? "no email"}>` : "Pick a contact"}</option>
+          ) : null}
+          {props.item.takeover?.newContact ? (
+            <option value="__new_saved">
+              {currentName} &lt;{currentEmail}&gt; (new, created on send)
+            </option>
+          ) : null}
+          {(props.contacts ?? []).map((c) => (
+            <option key={c.id} value={c.id} disabled={!c.email}>
+              {c.name}
+              {c.title ? `, ${c.title}` : ""} {c.email ? `<${c.email}>` : "(no email)"}
+            </option>
+          ))}
+          <option value="__new">+ New contact…</option>
+        </select>
+        {props.saving ? <span className="text-ink-secondary">Updating…</span> : null}
+      </div>
+      {mismatch ? (
+        <p className="mt-1 text-warn">The email doesn&apos;t look like {currentName}&apos;s. Check it, or pick another contact.</p>
+      ) : null}
+      {props.newOpen ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input className={`${field} w-28`} placeholder="First name" value={props.draft.firstName} onChange={(e) => props.setDraft({ ...props.draft, firstName: e.target.value })} />
+          <input className={`${field} w-28`} placeholder="Last name" value={props.draft.lastName} onChange={(e) => props.setDraft({ ...props.draft, lastName: e.target.value })} />
+          <input className={`${field} w-48`} placeholder="Email" value={props.draft.email} onChange={(e) => props.setDraft({ ...props.draft, email: e.target.value })} />
+          <input className={`${field} w-32`} placeholder="Title (optional)" value={props.draft.title} onChange={(e) => props.setDraft({ ...props.draft, title: e.target.value })} />
+          <button
+            type="button"
+            className="h-8 rounded-sm bg-ink px-3 text-xs text-white disabled:opacity-50"
+            disabled={props.saving || !props.draft.firstName.trim() || !props.draft.lastName.trim() || !/^\S+@\S+\.\S+$/.test(props.draft.email)}
+            onClick={props.onCreate}
+          >
+            Use this contact
+          </button>
+          <button type="button" className="h-8 px-2 text-xs text-ink-secondary" onClick={() => props.setNewOpen(false)}>
+            Cancel
+          </button>
+          <span className="w-full text-ink-secondary">Added to Salesforce when the email is sent.</span>
+        </div>
+      ) : null}
+    </div>
   );
 }
