@@ -145,12 +145,20 @@ export async function screenCompany(input: { name: string; website: string | nul
     };
   }
   const excluded = await excludedMarkets().catch(() => "");
+  const lessons = await skipLessons().catch(() => "");
   const user = [
     `Company: ${input.name}`,
     `Website: ${input.website ?? "unknown"}`,
     `Salesforce industry: ${input.industry ?? "unknown"}`,
     `Salesforce employees: ${input.employees ?? "unknown"}`,
     ...(excluded ? ["", "Markets Seb has excluded by hand (company: his note):", excluded] : []),
+    ...(lessons
+      ? [
+          "",
+          "Other companies Seb skipped by hand, with his reason and note. Treat each note as a rule: if this company has the same problem (for example most staff outside the target geography, or too small, or mostly services), exclude it with verdict wrong_market (or acquired for ownership) and say which rule in the reason. Do not exclude on a loose resemblance.",
+          lessons,
+        ]
+      : []),
     "",
     "Website text:",
     site.text.slice(0, 7000),
@@ -202,6 +210,38 @@ export async function excludedMarkets(): Promise<string> {
   if (error) throw new Error(error.message);
   const text = formatExcluded((data ?? []) as Array<{ account_name: string; skip_reason: string | null; screen_facts: { softwareType?: string | null } | null }>);
   excludedCache = { at: Date.now(), text };
+  return text;
+}
+
+let lessonsCache: { at: number; text: string } | null = null;
+/** Every other skip reason that came with a note, newest first. */
+export async function skipLessons(): Promise<string> {
+  if (lessonsCache && Date.now() - lessonsCache.at < 10 * 60 * 1000) return lessonsCache.text;
+  const { data, error } = await getSupabaseAdmin()
+    .from("outreach_candidates")
+    .select("account_name, skip_reason")
+    .eq("review_status", "skipped")
+    .like("skip_reason", "%:%")
+    .not("skip_reason", "ilike", "Wrong end market%")
+    .order("reviewed_at", { ascending: false })
+    .limit(60);
+  if (error) throw new Error(error.message);
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const r of (data ?? []) as Array<{ account_name: string; skip_reason: string | null }>) {
+    const raw = (r.skip_reason ?? "").trim();
+    const i = raw.indexOf(":");
+    const reason = raw.slice(0, i).trim();
+    const note = raw.slice(i + 1).trim();
+    if (!note) continue;
+    const key = `${reason}|${note}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`- ${reason}, ${r.account_name}: ${note}`);
+    if (lines.length >= 40) break;
+  }
+  const text = lines.join("\n");
+  lessonsCache = { at: Date.now(), text };
   return text;
 }
 

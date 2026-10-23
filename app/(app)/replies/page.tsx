@@ -11,7 +11,7 @@ import { Badge } from "@/app/components/ui/Badge";
 import { Spinner } from "@/app/components/ui/Spinner";
 import { Table } from "@/app/components/ui/Table";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { MIN_LEVEL, type OutcomesReport, type FeatureReport, type LevelStat } from "@/lib/outcomes-analysis";
+import { MIN_LEVEL, type OutcomesReport, type FeatureReport, type LevelStat, type StyleCompare } from "@/lib/outcomes-analysis";
 
 /**
  * What gets replies: every sequence start of the last year next to what
@@ -162,6 +162,43 @@ export default function RepliesPage() {
               />
             </div>
 
+            {/* Subject lines: generic vs specific */}
+            {report.subjectLines ? (
+              <Card padded={false} className="mb-6">
+                <div className="px-4 pt-4">
+                  <h2 className="text-[15px] font-medium text-ink">Subject lines: generic vs specific</h2>
+                  <p className="mt-0.5 text-[13px] text-ink-muted">
+                    E1s only. Generic is &ldquo;Lunch: Valstone&rdquo; and the like; specific has a restaurant and a date, like &ldquo;40 West Nov 11: Valstone&rdquo;. A reply anywhere in the sequence within 45 days counts.
+                    {report.subjectLines.unsorted ? ` ${report.subjectLines.unsorted.toLocaleString()} E1s with other subjects are left out.` : ""}
+                  </p>
+                </div>
+                <div className="mt-3 overflow-x-auto">
+                  <Table>
+                    <Table.Head>
+                      <Table.HeadRow>
+                        <Table.HeadCell> </Table.HeadCell>
+                        <Table.HeadCell className="text-right">Generic</Table.HeadCell>
+                        <Table.HeadCell className="text-right">Specific</Table.HeadCell>
+                        <Table.HeadCell>Verdict</Table.HeadCell>
+                      </Table.HeadRow>
+                    </Table.Head>
+                    <Table.Body>
+                      <SubjectRow c={report.subjectLines.team} strong />
+                      {report.subjectLines.you ? <SubjectRow c={report.subjectLines.you} strong /> : null}
+                      {report.subjectLines.bySender.length ? <SubjectHeading label="By sender" /> : null}
+                      {report.subjectLines.bySender.map((c) => <SubjectRow key={`s-${c.label}`} c={c} />)}
+                      {report.subjectLines.byGroup.length ? <SubjectHeading label="By group" /> : null}
+                      {report.subjectLines.byGroup.map((c) => <SubjectRow key={`g-${c.label}`} c={c} />)}
+                    </Table.Body>
+                  </Table>
+                </div>
+              </Card>
+            ) : (
+              <Card className="mb-6">
+                <p className="text-[13px] text-ink-muted">Subject line comparison: rebuild the report to fill it in.</p>
+              </Card>
+            )}
+
             {/* Sender scorecard */}
             {(report.senders ?? []).length > 0 ? (
               <Card padded={false} className="mb-6">
@@ -252,6 +289,33 @@ export default function RepliesPage() {
         ) : null}
       </PageContent>
     </>
+  );
+}
+
+function styleCell(x: StyleCompare["generic"]): string {
+  return x.sends ? `${pct(x.rate)} · ${x.replies}/${x.sends.toLocaleString()}` : "–";
+}
+
+function SubjectRow({ c, strong }: { c: StyleCompare; strong?: boolean }) {
+  const tone = c.verdict.startsWith("Clear") ? "text-ok" : c.verdict.startsWith("Probably") ? "text-warn" : "text-ink-muted";
+  return (
+    <Table.Row>
+      <Table.Cell className={strong ? "font-medium text-ink" : "text-ink-secondary"}>{c.label}</Table.Cell>
+      <Table.Cell className="text-right tabular-nums text-ink-secondary">{styleCell(c.generic)}</Table.Cell>
+      <Table.Cell className="text-right tabular-nums text-ink-secondary">{styleCell(c.specific)}</Table.Cell>
+      <Table.Cell className={`text-[13px] ${tone}`}>{c.verdict}</Table.Cell>
+    </Table.Row>
+  );
+}
+
+function SubjectHeading({ label }: { label: string }) {
+  return (
+    <Table.Row>
+      <Table.Cell className="pt-4 text-[12px] uppercase tracking-wide text-ink-muted">{label}</Table.Cell>
+      <Table.Cell> </Table.Cell>
+      <Table.Cell> </Table.Cell>
+      <Table.Cell> </Table.Cell>
+    </Table.Row>
   );
 }
 

@@ -87,7 +87,85 @@ export type OutcomesReport = {
   senders: SenderScore[];
   /** Tracked sends by week (Monday start), for the trend line. Weeks under 20 sends are left out. */
   weekly: WeekPoint[];
+  /** Generic "Lunch: Valstone" vs specific "40 West Nov 11: Valstone" E1 subjects. */
+  subjectLines?: SubjectLinesReport;
 };
+
+export type SubjectStyle = "generic" | "specific";
+export type StyleStat = { sends: number; replies: number; rate: number; low: number; high: number };
+export type StyleCompare = { label: string; generic: StyleStat; specific: StyleStat; verdict: string };
+export type SubjectLinesReport = {
+  team: StyleCompare;
+  you: StyleCompare | null;
+  bySender: StyleCompare[];
+  byGroup: StyleCompare[];
+  /** E1s whose subject fit neither pattern, left out of every figure. */
+  unsorted: number;
+};
+
+const MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec";
+/**
+ * Specific: carries a date ("Nov 11", "11 Nov", "October 5"), which is what a
+ * restaurant-and-date subject always has. Generic: "Lunch: Valstone" and its
+ * cousins, no date. Anything else is left unsorted rather than guessed.
+ */
+export function subjectStyle(subject: string | null): SubjectStyle | null {
+  const s = (subject ?? "").trim().toLowerCase();
+  if (!s) return null;
+  const hasDate = new RegExp(`\\b(${MONTHS})[a-z]*\\.?\\s+\\d{1,2}\\b|\\b\\d{1,2}\\s+(${MONTHS})[a-z]*\\b`).test(s);
+  if (hasDate) return "specific";
+  if (/^(re:\s*)?(lunch|coffee|dinner|breakfast)\s*[:\-|/]?\s*valstone\b/.test(s) || /^valstone\s*[:\-|/]?\s*(lunch|coffee|dinner)\b/.test(s)) return "generic";
+  return null;
+}
+
+function styleStat(rows: SendRow[]): StyleStat {
+  const sends = rows.length;
+  const replies = rows.filter((r) => !!r.replied_at).length;
+  const rate = sends ? replies / sends : 0;
+  const { low, high } = sends ? wilson(replies, sends) : { low: 0, high: 0 };
+  return { sends, replies, rate, low, high };
+}
+
+/** Plain verdict on whether the two reply rates really differ. */
+export function compareVerdict(g: StyleStat, sp: StyleStat): string {
+  if (g.sends < 20 || sp.sends < 20) return "Too few emails to tell";
+  const p = (g.replies + sp.replies) / (g.sends + sp.sends);
+  const se = Math.sqrt(p * (1 - p) * (1 / g.sends + 1 / sp.sends));
+  const z = se > 0 ? (sp.rate - g.rate) / se : 0;
+  const better = z > 0 ? "Specific" : "Generic";
+  if (Math.abs(z) >= 1.96) return `Clear difference: ${better} gets more replies`;
+  if (Math.abs(z) >= 1.28) return `Probably a difference: ${better} looks better`;
+  return "No clear difference";
+}
+
+function compare(label: string, rows: SendRow[]): StyleCompare {
+  const g = styleStat(rows.filter((r) => subjectStyle(r.subject) === "generic"));
+  const sp = styleStat(rows.filter((r) => subjectStyle(r.subject) === "specific"));
+  return { label, generic: g, specific: sp, verdict: compareVerdict(g, sp) };
+}
+
+/** Only E1s matched to an Outreach mailing (the ones with a subject and a visible reply). */
+export function buildSubjectLines(rows: SendRow[], youMatch = /sebastian/i): SubjectLinesReport {
+  const e1 = rows.filter((r) => r.subject_type === "E1" && r.mailing_id && r.subject);
+  const sorted = e1.filter((r) => subjectStyle(r.subject) !== null);
+  const groupOf = (r: SendRow) => (r.sequence_name ?? "").replace(/^\s*\[[^\]]*\]\s*-?\s*/, "").trim() || "No sequence";
+  const bucket = (key: (r: SendRow) => string) => {
+    const m = new Map<string, SendRow[]>();
+    for (const r of sorted) m.set(key(r), [...(m.get(key(r)) ?? []), r]);
+    return [...m.entries()]
+      .map(([k, list]) => compare(k, list))
+      .filter((c) => c.generic.sends + c.specific.sends >= 10)
+      .sort((a, b) => b.generic.sends + b.specific.sends - (a.generic.sends + a.specific.sends));
+  };
+  const mine = sorted.filter((r) => youMatch.test(r.sender ?? ""));
+  return {
+    team: compare("Whole team", sorted),
+    you: mine.length ? compare("Your E1s", mine) : null,
+    bySender: bucket((r) => r.sender ?? "Unknown"),
+    byGroup: bucket(groupOf),
+    unsorted: e1.length - sorted.length,
+  };
+}
 
 export type SenderScore = {
   sender: string;
@@ -431,6 +509,7 @@ export function buildReport(rows: SendRow[], builtAt = new Date().toISOString())
     findings: null,
     senders,
     weekly,
+    subjectLines: buildSubjectLines(all),
   };
 }
 
