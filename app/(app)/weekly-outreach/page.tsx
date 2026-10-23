@@ -8,8 +8,9 @@ import {
   useState,
 } from "react";
 import Link from "next/link";
+import WeekPicker from "@/app/components/WeekPicker";
 import { useRouter } from "next/navigation";
-import { addDays, format, parse, startOfWeek } from "date-fns";
+import { addDays, format, startOfWeek } from "date-fns";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
@@ -73,15 +74,6 @@ type GridCellElement = HTMLInputElement | HTMLSelectElement | HTMLButtonElement;
 
 function thisWeek(): string {
   return format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd");
-}
-
-function weekPickerValue(weekStart: string): string {
-  return format(new Date(`${weekStart}T12:00:00`), "RRRR-'W'II");
-}
-
-function weekStartFromPicker(value: string): string {
-  const parsed = parse(value, "RRRR-'W'II", new Date());
-  return format(startOfWeek(parsed, { weekStartsOn: 1 }), "yyyy-MM-dd");
 }
 
 function weekLabel(weekStart: string): string {
@@ -1649,15 +1641,7 @@ export default function WeeklyOutreachPage() {
         title="Weekly outreach"
         subtitle={`${counts.total} / ${WEEKLY_GOAL} weekly goal · ${counts.rce} RCE · ${counts.e1} E1 · ${counts.ready} drafts ready`}
         actions={
-          <input
-            type="week"
-            value={weekPickerValue(weekStart)}
-            onChange={(event) => {
-              if (event.target.value) setWeekStart(weekStartFromPicker(event.target.value));
-            }}
-            aria-label="Weekly Outreach week"
-            className="h-9 rounded-sm border border-line-strong bg-white px-3 text-sm text-ink focus:border-ink focus:outline-none focus:ring-2 focus:ring-surface-4"
-          />
+          <WeekPicker value={weekStart} onChange={setWeekStart} />
         }
       />
       <PageContent>

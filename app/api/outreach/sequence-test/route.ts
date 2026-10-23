@@ -69,6 +69,19 @@ export async function GET(request: NextRequest) {
   // turn and reports which one Outreach accepts. ?prospect=<id> lists tasks.
   // ?backfill=1: for rows already scheduled or sent, set custom1 on the
   // prospect and log the E1 task in Salesforce where missing.
+  // ?own=<accountId>: move the account to the connected user and report
+  // Salesforce's exact answer (takeover owner change debugging).
+  const ownId = q.get("own");
+  if (ownId) {
+    const { getValidCredentials } = await import("@/lib/token-manager");
+    const { sfFetch } = await import("@/lib/sf-query");
+    const creds = await getValidCredentials();
+    if (!creds || !/^[a-zA-Z0-9]{15,18}$/.test(ownId)) return NextResponse.json({ error: "No Salesforce or bad id" }, { status: 400 });
+    const res = await sfFetch(`/services/data/v62.0/sobjects/Account/${ownId}`, { method: "PATCH", body: JSON.stringify({ OwnerId: creds.salesforce_user_id }) }, creds);
+    note("status", res.status);
+    note("salesforce", await res.text());
+    return NextResponse.json(report);
+  }
   // ?dedupe-e1=1 lists duplicate E1 tasks; add &apply=1 to delete the app's copy.
   if (q.get("dedupe-e1") === "1") {
     const rows = await dedupeE1Tasks(q.get("apply") === "1");
