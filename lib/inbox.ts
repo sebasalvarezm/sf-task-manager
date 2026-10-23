@@ -632,7 +632,10 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
     source = "fallback";
   }
   const issues = validateDraft(body, theirs.length);
-  const item = await updateInboxRow(messageId, { draft_body: body, status: row.status === "new" ? "drafted" : row.status });
+  // Seb may have dismissed or sent the row while the model was writing; never
+  // pull it back into the pile. Only a row still "new" becomes "drafted".
+  await supabase.from("inbox_replies").update({ status: "drafted" }).eq("message_id", messageId).eq("status", "new");
+  const item = await updateInboxRow(messageId, { draft_body: body });
   return { item, draft: { body, issues, source } };
 }
 
