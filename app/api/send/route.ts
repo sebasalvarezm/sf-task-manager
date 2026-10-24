@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { addContactAndUse, confirmSent, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences, type OutreachSequence } from "@/lib/outreach";
 import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
 
@@ -72,6 +72,16 @@ export async function POST(request: NextRequest) {
       case "unapprove": return NextResponse.json({ item: await unapproveSend(need(body.id)) });
       case "reject": return NextResponse.json({ item: await rejectSend(need(body.id), body.reason ?? null) });
       case "cancel": return NextResponse.json({ item: await cancelSend(need(body.id)) });
+      case "resume": {
+        // A row waiting for step 1 whose background job never ran (e.g. Inngest
+        // had not picked up a new deploy): hand it to the fill job again, sending
+        // now. Safe to repeat: the fill never rewrites or resends a step 1 email
+        // that is already scheduled or sent.
+        const row = await getSend(need(body.id));
+        if (!row || row.status !== "scheduling" || !row.outreach_state_id) return NextResponse.json({ error: "Only an email waiting for Outreach can be resumed." }, { status: 400 });
+        await inngest.send({ name: "e1/fill-step", data: { id: row.id, stateId: String(row.outreach_state_id), sendAt: new Date().toISOString() } });
+        return NextResponse.json({ item: await updateSend(row.id, { status_reason: "Resumed: the app is filling in step 1 and sending now." }) });
+      }
       case "confirm": return NextResponse.json({ item: await confirmSent(need(body.id)) });
       case "schedule": {
         const existing = await runningJob();
