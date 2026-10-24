@@ -14,13 +14,14 @@ export const maxDuration = 60;
  *
  * Reads (GET) are open. Every write is refused unless it can only touch test
  * data:
- *   Outreach: the test prospect (TEST_EMAIL), sequences named "[TEST]...",
+ *   Outreach: test prospects (Seb's Gmail and its +plus addresses), sequences named "[TEST]...",
  *     templates named "[TEST]...", and mailings / sequence states / tasks that
  *     belong to the test prospect.
  *   Salesforce: records on the test account (TEST_ACCOUNT) only.
  * Every call is printed to the Vercel log with its verdict.
  */
-const TEST_EMAIL = "sebasalvarezm@gmail.com";
+/** Seb's Gmail and its plus-addresses (sebasalvarezm+anything@gmail.com) all land in his inbox. */
+const isTestEmail = (e: unknown) => typeof e === "string" && /^sebasalvarezm(\+[a-z0-9._-]+)?@gmail\.com$/i.test(e.trim());
 const TEST_ACCOUNT = "Amormino Inc.";
 
 type Json = Record<string, unknown>;
@@ -31,10 +32,12 @@ async function outreachGet(path: string): Promise<Json | null> {
   return (await res.json().catch(() => null)) as Json | null;
 }
 
-async function testProspectIds(): Promise<Set<string>> {
-  const body = await outreachGet(`/prospects?filter[emails]=${encodeURIComponent(TEST_EMAIL)}&page[size]=5`);
-  const rows = ((body?.data as Array<{ id: string | number }>) ?? []);
-  return new Set(rows.map((r) => String(r.id)));
+/** A prospect is test data when every email on it is Seb's Gmail or a plus-address of it. */
+async function isTestProspect(id: string | null): Promise<boolean> {
+  if (!id || !/^\d+$/.test(id)) return false;
+  const body = await outreachGet(`/prospects/${id}?fields[prospect]=emails`);
+  const emails = ((body?.data as { attributes?: { emails?: string[] } } | undefined)?.attributes?.emails) ?? [];
+  return emails.length > 0 && emails.every(isTestEmail);
 }
 
 function relId(obj: unknown, rel: string): string | null {
@@ -51,7 +54,7 @@ async function sequenceIsTest(id: string | null): Promise<boolean> {
 
 /** Why an Outreach write is allowed, or null when it is not. */
 async function outreachWriteAllowed(method: string, path: string, body: unknown): Promise<string | null> {
-  const prospects = await testProspectIds();
+  const prospects = { has: async (pid: string) => isTestProspect(pid) };
   const data = (body as { data?: Json } | undefined)?.data;
   const clean = path.split("?")[0];
   const m = clean.match(/^\/([a-zA-Z]+)(?:\/(\d+))?(?:\/actions\/\w+)?$/);
@@ -61,26 +64,26 @@ async function outreachWriteAllowed(method: string, path: string, body: unknown)
   if (kind === "prospects") {
     if (method === "POST" && !id) {
       const emails = ((data?.attributes as Json | undefined)?.emails as string[] | undefined) ?? [];
-      return emails.length > 0 && emails.every((e) => e.toLowerCase() === TEST_EMAIL) ? "new test prospect" : null;
+      return emails.length > 0 && emails.every(isTestEmail) ? "new test prospect" : null;
     }
-    return id && prospects.has(id) ? "test prospect" : null;
+    return id && await prospects.has(id) ? "test prospect" : null;
   }
   if (kind === "sequenceStates") {
     if (!id) {
-      return prospects.has(relId(data, "prospect") ?? "") && (await sequenceIsTest(relId(data, "sequence"))) ? "test prospect into [TEST] sequence" : null;
+      return await prospects.has(relId(data, "prospect") ?? "") && (await sequenceIsTest(relId(data, "sequence"))) ? "test prospect into [TEST] sequence" : null;
     }
     const st = await outreachGet(`/sequenceStates/${id}`);
-    return prospects.has(relId(st?.data, "prospect") ?? "") ? "test prospect's sequence state" : null;
+    return await prospects.has(relId(st?.data, "prospect") ?? "") ? "test prospect's sequence state" : null;
   }
   if (kind === "mailings") {
-    if (!id) return prospects.has(relId(data, "prospect") ?? "") ? "mailing to test prospect" : null;
+    if (!id) return await prospects.has(relId(data, "prospect") ?? "") ? "mailing to test prospect" : null;
     const ml = await outreachGet(`/mailings/${id}`);
-    return prospects.has(relId(ml?.data, "prospect") ?? "") ? "test prospect's mailing" : null;
+    return await prospects.has(relId(ml?.data, "prospect") ?? "") ? "test prospect's mailing" : null;
   }
   if (kind === "tasks") {
-    if (!id) return prospects.has(relId(data, "prospect") ?? "") ? "task for test prospect" : null;
+    if (!id) return await prospects.has(relId(data, "prospect") ?? "") ? "task for test prospect" : null;
     const t = await outreachGet(`/tasks/${id}`);
-    return prospects.has(relId(t?.data, "prospect") ?? "") ? "test prospect's task" : null;
+    return await prospects.has(relId(t?.data, "prospect") ?? "") ? "test prospect's task" : null;
   }
   if (kind === "sequences") {
     if (!id) return String((data?.attributes as Json | undefined)?.name ?? "").startsWith("[TEST]") ? "new [TEST] sequence" : null;
@@ -120,14 +123,16 @@ async function salesforceWriteAllowed(method: string, path: string, body: unknow
   const [, object, id] = m;
   const b = (body ?? {}) as Json;
   if (!id) {
-    if (object === "Contact") return b.AccountId === accountId ? "contact on test account" : null;
+    if (object === "Contact") return b.AccountId === accountId && isTestEmail(b.Email) ? "test contact on test account" : null;
     if (object === "Task") return b.WhatId === accountId ? "task on test account" : null;
     return null;
   }
   const field = object === "Contact" ? "AccountId" : object === "Task" ? "WhatId" : null;
   if (!field) return null;
-  const res = await sfFetch(`/services/data/v62.0/sobjects/${object}/${id}?fields=${field}`);
+  const res = await sfFetch(`/services/data/v62.0/sobjects/${object}/${id}?fields=${field}${object === "Contact" ? ",Email" : ""}`);
   const rec = res.ok ? ((await res.json()) as Json) : null;
+  // A contact on Seb's own test address may be moved onto the test account.
+  if (object === "Contact" && method === "PATCH" && isTestEmail(rec?.Email) && b.AccountId === accountId) return "test contact moved to test account";
   if (rec?.[field] !== accountId) return null;
   if (object === "Contact" && method === "PATCH" && "AccountId" in b && b.AccountId !== accountId) return null;
   return `${object} on test account`;

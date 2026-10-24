@@ -57,6 +57,17 @@ export const e1ScheduleJob = inngest.createFunction(
           counts.failed++;
           continue;
         }
+        if (settings.fillStep) {
+          // Automatic: a separate job per row waits for Outreach to open step 1, then fills and schedules it.
+          await step.run(`queue-fill-${id}`, async () => {
+            await updateSend(id, { status_reason: "Enrolled. Waiting for Outreach to open step 1, then the app fills it in and schedules it." });
+            await inngest.send({ name: "e1/fill-step", data: { id, stateId: enrol.stateId, sendAt } });
+          });
+          counts.scheduled++;
+          done++;
+          await step.run(`progress-${id}`, () => updateProgress(jobId, { step: `Queued ${done} of ${input.ids.length}`, pct: Math.round((done / input.ids.length) * 100) }));
+          continue;
+        }
         const outcome = await step.run(`mailing-${id}`, async () => {
           try {
             const row = await createMailingForSend(id, { prospectId: enrol.prospectId, mailboxId: enrol.mailboxId }, new Date(sendAt), settings);

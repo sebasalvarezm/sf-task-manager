@@ -97,10 +97,17 @@ export type SendSettings = {
   signatureText: string;
   /** Send the pre-review flags through the model (about 2 cents per email). */
   reviewWithModel: boolean;
+  /**
+   * Automatic: once Outreach opens step 1 for the prospect, the app writes the
+   * reviewed subject and email into that step's own email and schedules it.
+   * Outreach sends it as step 1, so the follow-ups run and Salesforce logs the
+   * E1 itself. Takes priority over manualSend.
+   */
+  fillStep: boolean;
 };
 
 const SETTINGS_KEY = "e1_send_settings";
-const DEFAULT_SETTINGS: SendSettings = { dryRun: true, manualSend: true, sequenceMap: {}, signatureText: "", reviewWithModel: true };
+const DEFAULT_SETTINGS: SendSettings = { dryRun: true, manualSend: true, sequenceMap: {}, signatureText: "", reviewWithModel: true, fillStep: false };
 
 export async function getSendSettings(): Promise<SendSettings> {
   const { data } = await getSupabaseAdmin().from("app_settings").select("value").eq("key", SETTINGS_KEY).maybeSingle();
@@ -111,6 +118,7 @@ export async function getSendSettings(): Promise<SendSettings> {
     sequenceMap: v.sequenceMap && typeof v.sequenceMap === "object" ? v.sequenceMap : {},
     signatureText: typeof v.signatureText === "string" ? v.signatureText : "",
     reviewWithModel: typeof v.reviewWithModel === "boolean" ? v.reviewWithModel : true,
+    fillStep: typeof v.fillStep === "boolean" ? v.fillStep : DEFAULT_SETTINGS.fillStep,
   };
 }
 
@@ -1087,6 +1095,79 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
     status: "scheduled",
     status_reason: sfTaskId ? null : "Scheduled. Salesforce did not accept the E1 task; log it there by hand.",
   });
+}
+
+/**
+ * Step 1's own email, once Outreach has opened the step for this enrolment.
+ * When the sequence state turns active, Outreach creates the step-1 task and
+ * a drafted mailing attached to it (mailingType "sequence", pre-filled with
+ * the step template). Null until then (outside the sequence schedule the
+ * state sits "pending" and neither exists yet).
+ */
+export async function findStepMailing(stateId: string): Promise<{ taskId: string; mailingId: string; state: string } | null> {
+  const res = await outreachRequest(`/tasks?filter[sequenceState][id]=${stateId}&page[size]=5`);
+  if (!res.ok) return null;
+  const body = (await res.json()) as { data?: Array<{ id: string | number; relationships?: { mailing?: { data?: { id?: string | number } | null } } }> };
+  for (const task of body.data ?? []) {
+    const mailingId = task.relationships?.mailing?.data?.id;
+    if (mailingId == null) continue;
+    const m = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=state`);
+    const mb = (await m.json().catch(() => null)) as { data?: { attributes?: { state?: string } } } | null;
+    return { taskId: String(task.id), mailingId: String(mailingId), state: mb?.data?.attributes?.state ?? "unknown" };
+  }
+  return null;
+}
+
+/**
+ * Write the reviewed E1 into step 1's own email and schedule it. Idempotent:
+ * a mailing already scheduled or sent is recorded, never rewritten or sent
+ * twice. Throws when Outreach does not keep exactly our subject and body.
+ */
+export async function fillStepMailing(id: string, mailingId: string, sendAt: Date, settings: SendSettings): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send || !send.body) throw new Error("Send row has no body.");
+  if (send.status !== "scheduling") return send; // cancelled or reset while waiting
+
+  const current = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=state,subject,scheduledAt`);
+  const cur = (await current.json().catch(() => null)) as { data?: { attributes?: { state?: string; subject?: string; scheduledAt?: string } } } | null;
+  const state = cur?.data?.attributes?.state ?? "";
+  if (state && state !== "drafted") {
+    // Already out of our hands (scheduled, delivering, delivered): record, never resend.
+    return updateSend(id, {
+      outreach_mailing_id: mailingId,
+      scheduled_for: cur?.data?.attributes?.scheduledAt ?? null,
+      status: "scheduled",
+      status_reason: `Step 1 email was already ${state} in Outreach; left as is.`,
+    });
+  }
+
+  const subject = (send.subject ?? "").trim();
+  if (!subject) throw new Error("No subject on this row.");
+  const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
+  const patch = await outreachRequest(`/mailings/${mailingId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), attributes: { subject, bodyHtml } } }),
+  });
+  if (!patch.ok) throw new Error(`Outreach refused the step 1 email edit: ${(await patch.text()).slice(0, 300)}`);
+  const check = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=subject,bodyHtml,state`);
+  const got = (await check.json().catch(() => null)) as { data?: { attributes?: { subject?: string; bodyHtml?: string } } } | null;
+  const squash = (v: string) => v.replace(/\s+/g, " ").trim();
+  if ((got?.data?.attributes?.subject ?? "").trim() !== subject || squash(got?.data?.attributes?.bodyHtml ?? "") !== squash(bodyHtml)) {
+    throw new Error(`Outreach did not keep the reviewed subject and email on step 1 (mailing ${mailingId}). Nothing scheduled.`);
+  }
+
+  const base = { outreach_mailing_id: mailingId } as Partial<E1Send>;
+  if (settings.dryRun) {
+    return updateSend(id, { ...base, status: "dry_run", status_reason: "Dry run: step 1 email filled in Outreach, not scheduled." });
+  }
+  const at = new Date(Math.max(sendAt.getTime(), Date.now() + 2 * 60_000));
+  const flip = await outreachRequest(`/mailings/${mailingId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), attributes: { state: "scheduled", scheduledAt: at.toISOString() } } }),
+  });
+  if (!flip.ok) throw new Error(`Outreach would not schedule step 1: ${(await flip.text()).slice(0, 300)}`);
+  // No Salesforce task here: Outreach logs "[E1] - <subject>" when step 1 sends.
+  return updateSend(id, { ...base, scheduled_for: at.toISOString(), status: "scheduled", status_reason: null });
 }
 
 /** One-off: rows already out the door get custom1 and the Salesforce E1 task. */

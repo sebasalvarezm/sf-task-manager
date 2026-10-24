@@ -56,7 +56,7 @@ type Row = {
   updated_at: string | null;
 };
 type Sequence = { id: string; name: string };
-type Settings = { dryRun: boolean; manualSend: boolean; sequenceMap: Record<string, string>; signatureText: string; reviewWithModel: boolean };
+type Settings = { dryRun: boolean; manualSend: boolean; sequenceMap: Record<string, string>; signatureText: string; reviewWithModel: boolean; fillStep: boolean };
 type JobInfo = { id: string; kind: string; status: string; progress?: { step?: string; pct?: number } | null } | null;
 type Tab = Stage;
 
@@ -776,6 +776,13 @@ function SettingsPanel({ settings, sequences, groups, onSaved }: { settings: Set
   }
   return (
     <div className="max-w-2xl space-y-5 rounded-md border border-line bg-white p-5">
+      <label className="flex items-start gap-3 text-sm text-ink">
+        <input type="checkbox" checked={!!form.fillStep} onChange={(e) => setForm((f) => ({ ...f, fillStep: e.target.checked }))} className="mt-1 h-4 w-4 accent-ink" />
+        <span>
+          Send E1 automatically as step 1
+          <span className="block text-[13px] text-ink-secondary">The app enrols the prospect, waits for Outreach to open step 1 (during the sequence&apos;s hours), writes the reviewed subject and email into that step&apos;s own email and schedules it. Outreach sends it as step 1, so the follow-ups run and Salesforce logs the E1 once. Overrides the option below.</span>
+        </span>
+      </label>
       <label className="flex items-start gap-3 text-sm text-ink">
         <input type="checkbox" checked={form.manualSend} onChange={(e) => setForm((f) => ({ ...f, manualSend: e.target.checked }))} className="mt-1 h-4 w-4 accent-ink" />
         <span>

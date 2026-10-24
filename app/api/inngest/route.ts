@@ -12,6 +12,7 @@ import { outreachScreenJob } from "@/lib/inngest/functions/outreach-screen";
 import { outcomesBuildJob } from "@/lib/inngest/functions/outcomes-build";
 import { e1PrepareJob } from "@/lib/inngest/functions/e1-prepare";
 import { e1ScheduleJob } from "@/lib/inngest/functions/e1-schedule";
+import { e1FillStepJob } from "@/lib/inngest/functions/e1-fill-step";
 
 export const maxDuration = 300;
 
@@ -30,5 +31,6 @@ export const { GET, POST, PUT } = serve({
     outcomesBuildJob,
     e1PrepareJob,
     e1ScheduleJob,
+    e1FillStepJob,
   ],
 });
