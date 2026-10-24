@@ -80,7 +80,9 @@ export async function POST(request: NextRequest) {
         const ids = (body.ids?.length ? all.filter((s) => body.ids!.includes(s.id)) : all).filter((s) => s.status === "approved").map((s) => s.id);
         if (ids.length === 0) return NextResponse.json({ error: "Nothing approved to schedule." }, { status: 400 });
         const settings = await getSendSettings();
-        const job = await createJob({ kind: "e1_schedule", input: { ids }, label: `Send queue: ${settings.dryRun ? "dry run" : "scheduling"} ${ids.length} email${ids.length === 1 ? "" : "s"}`, resultRoute: "/send" });
+        // sendNow: skip the planned morning/evening slots and send as soon as Outreach allows.
+        const sendNow = (body as { sendNow?: boolean }).sendNow === true;
+        const job = await createJob({ kind: "e1_schedule", input: { ids, sendNow }, label: `Send queue: ${settings.dryRun ? "dry run" : sendNow ? "sending now" : "scheduling"} ${ids.length} email${ids.length === 1 ? "" : "s"}`, resultRoute: "/send" });
         await start(job.id, "job/e1_schedule", job.input);
         return NextResponse.json({ jobId: job.id, count: ids.length, dryRun: settings.dryRun, manualSend: settings.manualSend });
       }

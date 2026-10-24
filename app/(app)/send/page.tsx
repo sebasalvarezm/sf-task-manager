@@ -237,11 +237,11 @@ export default function SendQueuePage() {
     }
   }
   /** Hand approved rows to Outreach. They show under Scheduled straight away. */
-  async function send(ids: string[]) {
+  async function send(ids: string[], sendNow = false) {
     if (ids.length === 0) return;
     setError(null);
     try {
-      const data = await post({ action: "schedule", ids });
+      const data = await post({ action: "schedule", ids, sendNow });
       setSending(new Set(ids));
       setJob({ id: String(data.jobId), kind: "e1_schedule", status: "queued" });
       setNotice(settings?.dryRun ? "Dry run is on: Outreach gets drafts with their times, nothing will send." : null);
@@ -368,6 +368,7 @@ export default function SendQueuePage() {
                     busy={busy.has(row.id)}
                     jobRunning={!!job}
                     onSend={() => void send([row.id])}
+                    onSendNow={() => void send([row.id], true)}
                     onRetry={() => void retry(row)}
                     onPullBack={() => void act(row.id, "unapprove")}
                     onCancel={() => void act(row.id, "cancel")}
@@ -473,7 +474,7 @@ function useCopy() {
 }
 
 /** Ready, Scheduled, Sent and Rejected: a simple card, the status in words, and at most two actions. */
-function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onRetry, onPullBack, onCancel, onConfirm }: {
+function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onSendNow, onRetry, onPullBack, onCancel, onConfirm }: {
   row: Row;
   now: number;
   sending: boolean;
@@ -481,6 +482,7 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
   busy: boolean;
   jobRunning: boolean;
   onSend: () => void;
+  onSendNow?: () => void;
   onRetry: () => void;
   onPullBack: () => void;
   onCancel: () => void;
@@ -491,7 +493,14 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
   const { copied, copy } = useCopy();
   const ready = stage === "ready";
   const enrolledManual = manualSend && row.status === "scheduled" && !row.scheduled_for && stage === "scheduled";
-  const canCancel = (row.status === "scheduled" || row.status === "dry_run") && stage === "scheduled";
+  const canCancel = (row.status === "scheduled" || row.status === "dry_run" || row.status === "scheduling") && stage === "scheduled";
+  // "Send now" asks twice (the button turns green for 3 seconds), like the other send buttons.
+  const [nowArmed, setNowArmed] = useState(false);
+  useEffect(() => {
+    if (!nowArmed) return;
+    const t = window.setTimeout(() => setNowArmed(false), 3000);
+    return () => window.clearTimeout(t);
+  }, [nowArmed]);
   const meta = [row.contact_name ? `${row.contact_name}${row.contact_title ? `, ${row.contact_title}` : ""}` : "No contact", sequenceShort(row.sequence_name), place(row)].filter(Boolean).join(" · ");
 
   return (
@@ -521,10 +530,25 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
         ) : null}
       </div>
       {ready ? (
-        <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 md:mt-0 md:flex">
-          <Button variant="secondary" className="max-md:h-11" loading={busy} disabled={jobRunning} title={jobRunning ? "Wait for the current batch to finish" : undefined} onClick={row.status === "failed" ? onRetry : onSend}>
-            {row.status === "failed" ? "Retry" : "Send"}
+        <div className="mt-3 grid shrink-0 grid-cols-3 gap-2 md:mt-0 md:flex">
+          <Button variant="secondary" className="max-md:h-11" loading={busy} disabled={jobRunning} title={jobRunning ? "Wait for the current batch to finish" : "Send at the next planned slot (recipient's morning or evening)"} onClick={row.status === "failed" ? onRetry : onSend}>
+            {row.status === "failed" ? "Retry" : "Schedule"}
           </Button>
+          {row.status !== "failed" && onSendNow ? (
+            <Button
+              variant="secondary"
+              className={`max-md:h-11 ${nowArmed ? "!border-ok !bg-ok !text-white" : ""}`}
+              disabled={busy || jobRunning}
+              title="Skip the planned slot: goes out within a couple of minutes"
+              onClick={() => {
+                if (!nowArmed) return setNowArmed(true);
+                setNowArmed(false);
+                onSendNow();
+              }}
+            >
+              {nowArmed ? "Tap to send" : "Send now"}
+            </Button>
+          ) : null}
           <Button variant="ghost" className="max-md:h-11" disabled={busy || jobRunning} onClick={onPullBack}>Pull back</Button>
         </div>
       ) : canCancel ? (

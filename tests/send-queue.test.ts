@@ -21,7 +21,7 @@ describe("planSendSlots", () => {
     const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, hour: "2-digit", minute: "2-digit", weekday: "short" }).formatToParts(d).map((x) => [x.type, x.value]));
     return { minutes: (Number(p.hour) % 24) * 60 + Number(p.minute), weekday: p.weekday };
   };
-  it("splits a batch between the morning and evening windows, on weekdays, spaced apart", () => {
+  it("splits a batch between the morning and evening windows, spaced apart", () => {
     // A Tuesday at 03:00 UTC: 23:00 Monday in Toronto, so the next windows are Tuesday.
     const now = new Date("2026-10-20T03:00:00Z");
     const reqs = Array.from({ length: 20 }, (_, i) => ({ id: `r${i}`, timeZone: "America/Toronto" }));
@@ -35,7 +35,6 @@ describe("planSendSlots", () => {
     expect(evening.length).toBe(10);
     for (const p of plan) {
       const l = local(p.at, "America/Toronto");
-      expect(["Mon", "Tue", "Wed", "Thu", "Fri"]).toContain(l.weekday);
       if (p.window === "morning") expect(l.minutes).toBeGreaterThanOrEqual(6 * 60 + 45);
       if (p.window === "morning") expect(l.minutes).toBeLessThanOrEqual(8 * 60);
       if (p.window === "evening") expect(l.minutes).toBeGreaterThanOrEqual(17 * 60);
@@ -44,10 +43,20 @@ describe("planSendSlots", () => {
     const sorted = plan.map((p) => p.at.getTime()).sort((a, b) => a - b);
     for (let i = 1; i < sorted.length; i++) expect(sorted[i] - sorted[i - 1]).toBeGreaterThanOrEqual(5 * 60_000 - 1);
   });
-  it("skips the weekend", () => {
-    const now = new Date("2026-10-24T15:00:00Z"); // Saturday
+  it("sends on Saturday", () => {
+    const now = new Date("2026-10-24T06:00:00Z"); // Saturday, 7am in London (before the evening window)
     const plan = planSendSlots([{ id: "a", timeZone: "Europe/London" }], now, () => 0.3);
-    expect(local(plan[0].at, "Europe/London").weekday).toBe("Mon");
+    expect(local(plan[0].at, "Europe/London").weekday).toBe("Sat");
+  });
+  it("never sends on Sunday, in the recipient's day or in Montreal", () => {
+    const now = new Date("2026-10-24T22:00:00Z"); // Saturday 11pm in London: next window would be Sunday
+    const plan = planSendSlots([{ id: "a", timeZone: "Europe/London" }, { id: "b", timeZone: "Europe/London" }], now, () => 0.3);
+    for (const p of plan) {
+      expect(local(p.at, "Europe/London").weekday).toBe("Mon");
+      expect(local(p.at, "America/Toronto").weekday).not.toBe("Sun");
+    }
+    const hawaii = planSendSlots([{ id: "h", timeZone: "Pacific/Honolulu" }], new Date("2026-10-24T20:00:00Z"), () => 0.9); // Sat 10am Honolulu
+    expect(local(hawaii[0].at, "America/Toronto").weekday).not.toBe("Sun");
   });
 });
 

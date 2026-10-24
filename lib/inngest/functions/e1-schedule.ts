@@ -21,7 +21,7 @@ export const e1ScheduleJob = inngest.createFunction(
     onFailure: (failure) => markJobFailedFromInngest(failure),
   },
   async ({ event, step }) => {
-    const { jobId, input } = event.data as { jobId: string; input: { ids: string[] } };
+    const { jobId, input } = event.data as { jobId: string; input: { ids: string[]; sendNow?: boolean } };
     await step.run("mark-running", () => markRunning(jobId));
     try {
       const settings = await step.run("settings", () => getSendSettings());
@@ -29,6 +29,8 @@ export const e1ScheduleJob = inngest.createFunction(
       const slots = await step.run("plan-slots", async () => {
         const all = await listSends();
         const approved = all.filter((s) => input.ids.includes(s.id) && s.status === "approved");
+        // "Send now": every row gets the current time; Outreach sends within about two minutes.
+        if (input.sendNow) return Object.fromEntries(approved.map((s) => [s.id, new Date().toISOString()]));
         const plan = planSlotsFor(approved);
         return Object.fromEntries(Array.from(plan.entries()).map(([id, at]) => [id, at.toISOString()]));
       });

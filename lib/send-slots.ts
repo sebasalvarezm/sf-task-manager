@@ -2,7 +2,8 @@
  * When to send. Half the batch goes out between 6:45 and 8:00 in the
  * recipient's morning, half between 5:00 and 7:00 in their evening, spaced
  * five to six minutes apart in a shuffled order so the times look human. A
- * window that is full spills to the next weekday.
+ * window that is full spills to the next day. Saturdays yes, Sundays never
+ * (the outreach week starts on Sunday).
  */
 
 const MORNING = { start: 6 * 60 + 45, end: 8 * 60 };
@@ -87,6 +88,10 @@ export function recipientTimeZone(country: string | null | undefined, state: str
 
 type LocalParts = { year: number; month: number; day: number; hour: number; minute: number; weekday: number };
 
+function isSundayInMontreal(at: Date): boolean {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", weekday: "short" }).format(at) === "Sun";
+}
+
 function localParts(date: Date, timeZone: string): LocalParts {
   const fmt = new Intl.DateTimeFormat("en-US", { timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short" });
   const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]));
@@ -141,8 +146,10 @@ function place(req: SlotRequest, preferred: "morning" | "evening", now: Date, cu
   let window = preferred;
   // Up to ten days out is plenty; after that something is wrong and we just stack.
   for (let i = 0; i < 20; i++) {
-    const weekday = new Date(Date.UTC(day.year, day.month - 1, day.day)).getUTCDay();
-    if (weekday === 0 || weekday === 6) {
+    // Saturdays count (founders answer on a Saturday); Sundays do not, because
+    // the outreach week starts on Sunday and a Sunday send would land in next
+    // week's numbers. Checked in the recipient's day and in Seb's (Montreal).
+    if (new Date(Date.UTC(day.year, day.month - 1, day.day)).getUTCDay() === 0) {
       day = addDays(day.year, day.month, day.day, 1);
       continue;
     }
@@ -154,8 +161,14 @@ function place(req: SlotRequest, preferred: "morning" | "evening", now: Date, cu
     const cursor = cursors.get(key);
     const candidate = cursor === undefined ? earliest + Math.floor(random() * 4) : cursor + SPACING_MIN + Math.floor(random() * (SPACING_MAX - SPACING_MIN + 1));
     if (candidate <= range.end) {
+      const at = zonedTime(day.year, day.month, day.day, candidate, tz);
+      if (isSundayInMontreal(at)) {
+        // e.g. Saturday evening in Hawaii is already Sunday in Montreal.
+        day = addDays(day.year, day.month, day.day, 1);
+        continue;
+      }
       cursors.set(key, candidate);
-      return { id: req.id, at: zonedTime(day.year, day.month, day.day, candidate, tz), window, timeZone: tz };
+      return { id: req.id, at, window, timeZone: tz };
     }
     if (earliest > range.end) {
       // The window has already gone by today: same window, next day, so the

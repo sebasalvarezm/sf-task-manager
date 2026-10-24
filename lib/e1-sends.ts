@@ -1119,6 +1119,25 @@ export async function findStepMailing(stateId: string): Promise<{ taskId: string
 }
 
 /**
+ * The signature under a step-1 email. Outreach builds the step's draft as
+ * template + "<div><br/></div><div class="outreach-signature">...", and only
+ * that block survives our edit (the API does not re-add it on send, unlike
+ * automatic steps). Fallbacks: the mailbox signature from Outreach, then the
+ * plain-text override in settings.
+ */
+export async function stepSignature(draftHtml: string, settings: SendSettings): Promise<string> {
+  if (settings.signatureText.trim()) return `<div><br/></div><div>${textToHtml(settings.signatureText.trim())}</div>`;
+  const at = draftHtml.search(/<div><br\s*\/?><\/div>\s*<div class="outreach-signature"/);
+  if (at >= 0) return draftHtml.slice(at);
+  const only = draftHtml.indexOf('<div class="outreach-signature"');
+  if (only >= 0) return draftHtml.slice(only);
+  const mb = await outreachRequest(`/mailboxes?filter[email]=sebastian@valstonecorp.com&fields[mailbox]=emailSignature&page[size]=1`);
+  const mbBody = (await mb.json().catch(() => null)) as { data?: Array<{ attributes?: { emailSignature?: string } }> } | null;
+  const sig = mbBody?.data?.[0]?.attributes?.emailSignature ?? "";
+  return sig ? `<div><br/></div><div class="outreach-signature">${sig}</div>` : "";
+}
+
+/**
  * Write the reviewed E1 into step 1's own email and schedule it. Idempotent:
  * a mailing already scheduled or sent is recorded, never rewritten or sent
  * twice. Throws when Outreach does not keep exactly our subject and body.
@@ -1128,8 +1147,8 @@ export async function fillStepMailing(id: string, mailingId: string, sendAt: Dat
   if (!send || !send.body) throw new Error("Send row has no body.");
   if (send.status !== "scheduling") return send; // cancelled or reset while waiting
 
-  const current = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=state,subject,scheduledAt`);
-  const cur = (await current.json().catch(() => null)) as { data?: { attributes?: { state?: string; subject?: string; scheduledAt?: string } } } | null;
+  const current = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=state,subject,scheduledAt,bodyHtml`);
+  const cur = (await current.json().catch(() => null)) as { data?: { attributes?: { state?: string; subject?: string; scheduledAt?: string; bodyHtml?: string } } } | null;
   const state = cur?.data?.attributes?.state ?? "";
   if (state && state !== "drafted") {
     // Already out of our hands (scheduled, delivering, delivered): record, never resend.
@@ -1143,7 +1162,7 @@ export async function fillStepMailing(id: string, mailingId: string, sendAt: Dat
 
   const subject = (send.subject ?? "").trim();
   if (!subject) throw new Error("No subject on this row.");
-  const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), await signatureHtml(settings));
+  const bodyHtml = composeHtmlBody(withGreeting(send.body, send.contact_first_name), null) + (await stepSignature(cur?.data?.attributes?.bodyHtml ?? "", settings));
   const patch = await outreachRequest(`/mailings/${mailingId}`, {
     method: "PATCH",
     body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), attributes: { subject, bodyHtml } } }),
