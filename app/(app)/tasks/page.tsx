@@ -520,6 +520,7 @@ type PreparedNudge = {
   replyToMessageId: string | null;
   callNotes: { date: string; text: string } | null;
   advice?: string | null;
+  draftNote?: string | null;
   sender: { name: string | null; email: string };
   subject: string;
   thread: Array<{ from: string; email: string; at: string; mine: boolean; text: string }>;
@@ -689,6 +690,7 @@ function NudgePanel(props: {
                   </div>
                 ))}
               </div>
+              {prepared.draftNote ? <p className="mt-3 text-xs text-warn">{prepared.draftNote}</p> : null}
               <label className="mt-4 block text-sm text-ink" htmlFor="nudge-body">
                 {props.via === "sent" ? "Your follow-up" : "Your nudge"}
               </label>

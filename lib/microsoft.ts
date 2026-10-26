@@ -291,24 +291,30 @@ export async function fetchEmailThread(
     $top: "50",
   });
 
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`,
-    {
-      headers: {
-        Authorization: `Bearer ${credentials.access_token}`,
-        "Content-Type": "application/json",
-        Prefer: 'outlook.body-content-type="text"',
-      },
+  // A long thread spans several pages, and without a sort the first page is
+  // not the newest. Follow every page (up to 250 messages) so the latest
+  // exchange is never cut off.
+  const headers = {
+    Authorization: `Bearer ${credentials.access_token}`,
+    "Content-Type": "application/json",
+    Prefer: 'outlook.body-content-type="text"',
+  };
+  let next: string | null = `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const value: any[] = [];
+  for (let page = 0; next && page < 5; page++) {
+    const response: Response = await fetch(next, { headers });
+    if (!response.ok) {
+      const detail = await upstreamErrorText("Outlook", response);
+      if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+      throw new Error(`Outlook thread lookup failed (${response.status}): ${detail.slice(0, 300)}`);
     }
-  );
-
-  if (!response.ok) {
-    const detail = await upstreamErrorText("Outlook", response);
-    if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
-    throw new Error(`Outlook thread lookup failed (${response.status}): ${detail.slice(0, 300)}`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = (await response.json()) as { value?: any[]; "@odata.nextLink"?: string };
+    value.push(...(body.value ?? []));
+    next = body["@odata.nextLink"] ?? null;
   }
-
-  const data = await response.json();
+  const data = { value };
 
   const messages = (data.value ?? []).map(
     (e: {

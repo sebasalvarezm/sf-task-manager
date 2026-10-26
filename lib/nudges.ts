@@ -166,6 +166,8 @@ export type PreparedNudge = {
   callNotes: { date: string; text: string } | null;
   /** Set when the thread says a nudge is the wrong move (they declined, or Seb already followed up). */
   advice?: string | null;
+  /** Set when the AI draft failed and the standard line was used instead. */
+  draftNote?: string | null;
 };
 
 function domainOfWebsite(website: string | null): string | null {
@@ -209,8 +211,18 @@ export async function prepareNudge(params: { accountId: string; accountName: str
   let anyThread: { conversationId: string; at: string } | null = null;
   let lastSentTo: string | null = null;
   let lastSentAt = "";
-  for (const d of domains) {
-    const found = await searchMailboxMessages(d, 25).catch(() => []);
+  // Search by each person first ("participants:" covers from, to and cc), then
+  // by domain. Search results are ranked, not dated, so a broad domain search
+  // alone can miss last week's email; a per-person search is narrow enough to
+  // hold every message with that person.
+  const people = [...new Set([callEmail, ...contactEmails].filter((e): e is string => Boolean(e) && !isBotAddress(e)))].slice(0, 8);
+  const searches: Array<{ d: string; term: string }> = [
+    ...people.map((e) => ({ d: e.split("@")[1], term: `participants:${e}` })),
+    ...[...domains].map((d) => ({ d, term: d })),
+  ];
+  const seen = new Set<string>();
+  for (const { d, term } of searches) {
+    const found = (await searchMailboxMessages(term, 50).catch(() => [])).filter((m) => !seen.has(m.id) && (seen.add(m.id), true));
     for (const m of found) {
       if (!m.conversationId) continue;
       const fromThem = m.fromEmail && !isSelfAddress(m.fromEmail, identities) && !isBotAddress(m.fromEmail) && (m.fromEmail.endsWith(`@${d}`) || contactEmails.has(m.fromEmail));
@@ -223,7 +235,10 @@ export async function prepareNudge(params: { accountId: string; accountName: str
       }
     }
   }
-  const pick = theirs ?? anyThread;
+  // The most recent conversation with them wins, whoever wrote last: that is
+  // where the relationship actually stands.
+  const pick = anyThread ?? theirs;
+  void theirs;
 
   // Follow-up: Seb emailed, they never answered. Reply under his latest email
   // with one of his own follow-up lines (fixed text, no model).
@@ -263,8 +278,8 @@ export async function prepareNudge(params: { accountId: string; accountName: str
         ? { name: theirLast.from.name || null, email: theirLast.from.email }
         : { name: contacts.find((c) => (c.Email ?? "").toLowerCase() === toContact)?.Name ?? call?.Who?.Name ?? null, email: toContact };
       if (!sender.email) throw new Error(`No email address for anyone at ${params.accountName}.`);
-      const body = await draftNudge(thread, params.accountName, params.topic, sender.name, callNotes);
-      return { replyToMessageId: last.id, sender, subject: last.subject, thread: thread.slice(-4), body, callNotes };
+      const { body, note } = await draftNudge(thread, params.accountName, params.topic, sender.name, callNotes);
+      return { replyToMessageId: last.id, sender, subject: last.subject, thread: thread.slice(-4), body, callNotes, draftNote: note };
     }
   }
 
@@ -275,8 +290,8 @@ export async function prepareNudge(params: { accountId: string; accountName: str
       ? { name: contacts[0].Name, email: contacts[0].Email.toLowerCase() }
       : null;
   if (!person) throw new Error(`No email thread and no contact email for ${params.accountName}.`);
-  const body = await draftNudge([], params.accountName, params.topic, person.name, callNotes);
-  return { replyToMessageId: null, sender: person, subject: `Valstone / ${params.accountName}`, thread: [], body, callNotes };
+  const { body, note } = await draftNudge([], params.accountName, params.topic, person.name, callNotes);
+  return { replyToMessageId: null, sender: person, subject: `Valstone / ${params.accountName}`, thread: [], body, callNotes, draftNote: note };
 }
 
 /**
@@ -344,13 +359,13 @@ async function draftNudge(
   topic: string,
   theirName: string | null,
   callNotes: { date: string; text: string } | null = null,
-): Promise<string> {
+): Promise<{ body: string; note: string | null }> {
   const first = (theirName ?? "").trim().split(/\s+/)[0] || null;
   const fallback = `Hi${first ? ` ${first}` : ""},\n\nJust checking in${callNotes ? " after our call" : " on this"}. ${
     topic === "book the call" ? "Would love to get a call on the calendar. Does next week work?" : topic === "NDA" ? "Any questions on the NDA on your end?" : topic === "data request" ? "Any colour you can share on timing for the information would be helpful on our end." : "Any update on your side?"
   }\n\nBest,\nSebastian`;
   const client = getAnthropicClient();
-  if (!client) return fallback;
+  if (!client) return { body: fallback, note: "Standard draft: no AI key configured." };
   const lines = thread.slice(-5).map((m) => `--- ${m.mine ? "SEB" : m.from || m.email}, ${m.at.slice(0, 10)} ---\n${m.text.trim().slice(0, 1800)}`);
   const parts = [`Company: ${accountName}`];
   if (callNotes) parts.push(`Seb's own notes from his latest call with them (${callNotes.date}), shorthand, for context only, never quote them:\n${callNotes.text}`);
@@ -365,9 +380,10 @@ This one is a NUDGE: Seb is moving a live relationship to its next step. Topic: 
       messages: [{ role: "user", content: parts.join("\n\n") }],
     });
     const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim().replace(/[–—]/g, ",");
-    return text || fallback;
-  } catch {
-    return fallback;
+    return text ? { body: text, note: null } : { body: fallback, note: "Standard draft: the AI returned nothing." };
+  } catch (err) {
+    console.error("[nudges] draft failed", err);
+    return { body: fallback, note: `Standard draft: the AI draft failed (${err instanceof Error ? err.message.slice(0, 120) : "unknown"}).` };
   }
 }
 
