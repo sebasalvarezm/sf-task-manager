@@ -24,11 +24,13 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const body = (await request.json().catch(() => ({}))) as { limit?: number };
+    // manual: Seb clicked "Check the next N now". The pause switch stops the
+    // automatic refills only; the row and spend caps still apply.
+    const body = (await request.json().catch(() => ({}))) as { limit?: number; manual?: boolean };
     const existing = await runningJob();
     if (existing) return NextResponse.json({ jobId: existing.id, status: existing.status, duplicate: true });
     const [pending, linkedin, today, settings, spent] = await Promise.all([countUnscreenedEligible(), countLinkedInBackfill(), countScreenedToday(), getCandidateSettings(), spentTodayUsd(["outreach_screen", "outreach_linkedin"]).catch(() => 0)]);
-    if (settings.paused) return NextResponse.json({ jobId: null, status: "paused", pending });
+    if (settings.paused && !body.manual) return NextResponse.json({ jobId: null, status: "paused", pending });
     if (pending === 0 && linkedin === 0) return NextResponse.json({ jobId: null, status: "nothing_to_do", pending: 0 });
     // Two hard caps, both server side, both covering the LinkedIn lookups as
     // well as the screens: rows per day and dollars per day. A page bug once

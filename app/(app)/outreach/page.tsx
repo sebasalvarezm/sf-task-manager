@@ -198,20 +198,37 @@ function OutreachInner() {
   const ensureScreened = useCallback(
     async (batch: number, force = false) => {
       const running = await pollScreen();
-      if (running) return;
       const low = settingsRef.current?.refillBelow ?? 20;
       // Only the ready-row count starts a batch. LinkedIn lookups ride along
       // inside a batch; they used to re-trigger one on every poll.
+      if (running) {
+        if (force) setNotice("A check is already running. The list fills in as accounts finish.");
+        return;
+      }
       if (!force && readyRef.current >= low) return;
-      if (cappedRef.current || settingsRef.current?.paused) return;
+      // The pause switch and a reached cap stop the automatic refills; a click still tries (the server enforces the caps).
+      if (!force && (cappedRef.current || settingsRef.current?.paused)) return;
       try {
-        const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch }) });
+        const res = await fetch("/api/outreach/screen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: batch, manual: force }) });
         const data = await res.json();
-        if (res.ok && data.jobId) setScreen((s) => ({ ...s, running: true, step: null }));
-        else if (res.ok && (data.status === "daily_cap" || data.status === "spend_cap" || data.status === "paused")) setScreen((s) => ({ ...s, capped: true, checkedToday: data.checkedToday ?? s.checkedToday, dailyCap: data.dailyCap ?? s.dailyCap }));
-        else if (!res.ok && data.error) setError(data.error);
+        if (res.ok && data.jobId) {
+          setScreen((s) => ({ ...s, running: true, step: null }));
+          if (force) setNotice(data.duplicate ? "A check is already running. The list fills in as accounts finish." : `Checking the next ${batch} accounts now. Takes a few minutes; progress shows at the bottom of the list.`);
+        } else if (res.ok && (data.status === "daily_cap" || data.status === "spend_cap" || data.status === "paused")) {
+          setScreen((s) => ({ ...s, capped: true, checkedToday: data.checkedToday ?? s.checkedToday, dailyCap: data.dailyCap ?? s.dailyCap }));
+          if (force)
+            setNotice(
+              data.status === "spend_cap"
+                ? `Not started: today's check spend limit is reached ($${Number(data.spentToday ?? 0).toFixed(2)} of $${data.spendCap}). Raise it in Rules or try tomorrow.`
+                : data.status === "paused"
+                  ? "Not started: checks are paused in Rules."
+                  : `Not started: today's limit of ${data.dailyCap} checks is reached. Raise it in Rules or try tomorrow.`,
+            );
+        } else if (res.ok && data.status === "nothing_to_do") {
+          if (force) setNotice("Nothing left to check right now.");
+        } else if (!res.ok && data.error) setError(data.error);
       } catch {
-        /* next poll retries */
+        if (force) setNotice("Couldn't reach the server to start the check. Try again.");
       }
     },
     [pollScreen],
