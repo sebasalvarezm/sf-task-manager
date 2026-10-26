@@ -181,7 +181,7 @@ function TasksPageContent() {
     (t.AccountFounded != null && t.AccountFounded > BS_FOUNDED_AFTER) ||
     (t.AccountEmployees != null && t.AccountEmployees < BS_MIN_EMPLOYEES);
   // ── Nudges: accounts that wrote in within 45 days ─────────────────────────
-  const [nudges, setNudges] = useState<Record<string, { lastInAt: string; topic: string }> | undefined>(undefined);
+  const [nudges, setNudges] = useState<Record<string, { lastInAt: string; topic: string; via?: "email" | "call" | "sent" }> | undefined>(undefined);
   const weekAccountKey = Array.from(new Set(weekTasks.map((t) => t.AccountId).filter(Boolean))).sort().join(",");
   useEffect(() => {
     if (!weekAccountKey) {
@@ -470,6 +470,7 @@ function TasksPageContent() {
           key={nudgeTask.Id}
           task={nudgeTask}
           topic={nudges[nudgeTask.AccountId].topic}
+          via={nudges[nudgeTask.AccountId].via}
           remaining={nudgeQueue.length}
           onClose={() => setNudgeTask(null)}
           onSent={(sent, note) => {
@@ -516,7 +517,8 @@ function TasksPageContent() {
 }
 
 type PreparedNudge = {
-  replyToMessageId: string;
+  replyToMessageId: string | null;
+  callNotes: { date: string; text: string } | null;
   sender: { name: string | null; email: string };
   subject: string;
   thread: Array<{ from: string; email: string; at: string; mine: boolean; text: string }>;
@@ -526,6 +528,7 @@ type PreparedNudge = {
 function NudgePanel(props: {
   task: SalesforceTask;
   topic: string;
+  via?: "email" | "call" | "sent";
   remaining: number;
   onClose: () => void;
   onSent: (task: SalesforceTask, note: string | null) => void;
@@ -546,7 +549,7 @@ function NudgePanel(props: {
     fetch("/api/nudges", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "prepare", accountId: task.AccountId, accountName: task.AccountName, website: task.AccountWebsite, topic: props.topic }),
+      body: JSON.stringify({ action: "prepare", accountId: task.AccountId, accountName: task.AccountName, website: task.AccountWebsite, topic: props.topic, via: props.via }),
     })
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
@@ -586,6 +589,7 @@ function NudgePanel(props: {
         body: JSON.stringify({
           action: "send",
           replyToMessageId: prepared.replyToMessageId,
+          emailSubject: prepared.subject,
           sender: prepared.sender,
           body,
           taskId: task.Id,
@@ -633,8 +637,8 @@ function NudgePanel(props: {
           <div className="min-w-0">
             <h2 className="truncate text-lg text-ink">{task.AccountName}</h2>
             <p className="truncate text-xs text-ink-secondary">
-              Nudge · {props.topic}
-              {prepared ? ` · to ${prepared.sender.name ?? prepared.sender.email} · ${prepared.subject}` : ""}
+              {props.via === "sent" ? "Follow-up" : `Nudge · ${props.topic}`}
+              {prepared ? ` · to ${prepared.sender.name ?? prepared.sender.email} · ${prepared.replyToMessageId ? prepared.subject : `new email: ${prepared.subject}`}` : ""}
             </p>
           </div>
           <div className="flex shrink-0 gap-3 text-sm">
@@ -653,6 +657,15 @@ function NudgePanel(props: {
           {!prepared && !error ? <Spinner center label="Finding the thread and drafting…" /> : null}
           {prepared ? (
             <>
+              {prepared.callNotes ? (
+                <div className="mb-2 rounded-md border border-line bg-surface-2 p-3 text-sm">
+                  <p className="mb-1 text-xs text-ink-secondary">Your call notes · {prepared.callNotes.date}</p>
+                  <p className="line-clamp-6 whitespace-pre-wrap text-ink">{prepared.callNotes.text}</p>
+                </div>
+              ) : null}
+              {prepared.thread.length === 0 ? (
+                <p className="mb-2 text-xs text-ink-secondary">No email thread with them in Outlook, so this goes as a new email.</p>
+              ) : null}
               <div className="space-y-2">
                 {prepared.thread.map((m, i) => (
                   <div key={i} className={`rounded-md border border-line p-3 text-sm ${m.mine ? "bg-surface-2" : "bg-white"}`}>
@@ -664,7 +677,7 @@ function NudgePanel(props: {
                 ))}
               </div>
               <label className="mt-4 block text-sm text-ink" htmlFor="nudge-body">
-                Your nudge
+                {props.via === "sent" ? "Your follow-up" : "Your nudge"}
               </label>
               <textarea
                 id="nudge-body"
@@ -685,7 +698,7 @@ function NudgePanel(props: {
                 />
                 <span className="text-ink-secondary">{days.trim() === "" ? "days (empty: no new task)" : nextDate ? `days · ${nextDate}` : "days"}</span>
               </div>
-              <p className="mt-1 text-xs text-ink-secondary">Replies in the same thread (reply all). On send, this open task is completed.</p>
+              <p className="mt-1 text-xs text-ink-secondary">{prepared.replyToMessageId ? "Replies in the same thread (reply all)." : "Sends as a new email."} On send, this open task is completed.</p>
             </>
           ) : null}
         </div>

@@ -25,6 +25,7 @@ export async function POST(request: Request) {
           accountName: String(body.accountName ?? ""),
           website: typeof body.website === "string" ? body.website : null,
           topic: String(body.topic ?? "follow-up"),
+          via: body.via === "sent" || body.via === "call" || body.via === "email" ? body.via : undefined,
         }),
       );
     }
@@ -32,7 +33,8 @@ export async function POST(request: Request) {
       const days = typeof body.days === "number" && body.days > 0 ? Math.round(body.days) : null;
       return NextResponse.json(
         await sendNudge({
-          replyToMessageId: String(body.replyToMessageId ?? ""),
+          replyToMessageId: typeof body.replyToMessageId === "string" && body.replyToMessageId ? body.replyToMessageId : null,
+          emailSubject: typeof body.emailSubject === "string" ? body.emailSubject : undefined,
           sender: body.sender as { name: string | null; email: string },
           body: String(body.body ?? ""),
           taskId: String(body.taskId ?? ""),

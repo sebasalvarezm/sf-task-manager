@@ -50,11 +50,11 @@ type Props = {
   actions: Map<string, TaskAction>;
   onActionChange: (taskId: string, action: TaskAction) => void;
   /** accountId → nudge info; accounts not in it are reconnects. Undefined while loading. */
-  nudges?: Record<string, { lastInAt: string; topic: string }>;
+  nudges?: Record<string, { lastInAt: string; topic: string; via?: "email" | "call" | "sent" }>;
   onOpenNudge?: (task: SalesforceTask) => void;
 };
 
-function KindChip({ task, nudges, onOpenNudge }: { task: SalesforceTask; nudges?: Record<string, { lastInAt: string; topic: string }>; onOpenNudge?: (task: SalesforceTask) => void }) {
+function KindChip({ task, nudges, onOpenNudge }: { task: SalesforceTask; nudges?: Record<string, { lastInAt: string; topic: string; via?: "email" | "call" | "sent" }>; onOpenNudge?: (task: SalesforceTask) => void }) {
   if (!nudges) return <span className="text-xs text-ink-muted">…</span>;
   const n = task.AccountId ? nudges[task.AccountId] : undefined;
   if (!n) return <span className="text-xs text-ink-secondary">Reconnect</span>;
@@ -66,10 +66,16 @@ function KindChip({ task, nudges, onOpenNudge }: { task: SalesforceTask; nudges?
         e.stopPropagation();
         onOpenNudge?.(task);
       }}
-      title={`They last wrote ${days} day${days === 1 ? "" : "s"} ago. Open a reply in that thread.`}
-      className="rounded-sm bg-info-soft px-2 py-0.5 text-left text-xs font-medium text-info hover:underline"
+      title={
+        n.via === "sent"
+          ? `You emailed them ${days} day${days === 1 ? "" : "s"} ago, no reply. Open a short follow-up under that email.`
+          : n.via === "call"
+            ? `You spoke with them ${days} day${days === 1 ? "" : "s"} ago. Open a nudge drafted from your call notes.`
+            : `They last wrote ${days} day${days === 1 ? "" : "s"} ago. Open a reply in that thread.`
+      }
+      className={`rounded-sm px-2 py-0.5 text-left text-xs font-medium hover:underline ${n.via === "sent" ? "bg-surface-3 text-ink" : "bg-info-soft text-info"}`}
     >
-      Nudge · {n.topic}
+      {n.via === "sent" ? "Follow-up" : `Nudge · ${n.topic}`}
     </button>
   );
 }
