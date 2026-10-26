@@ -26,7 +26,7 @@ import {
 } from "./microsoft";
 import { trimReplyBody } from "./inbox-classify";
 import { INBOX_DRAFT_SYSTEM } from "./inbox-draft";
-import { buildRceFollowUp, firstNameFromGreeting, followUpCloser, greetingName } from "./rce-followup";
+import { buildRceFollowUp, firstNameFromGreeting, followUpCloser, greetingName, pickTemplateIndex, RCE_FOLLOW_UP_TEMPLATES } from "./rce-followup";
 
 export const NUDGE_WINDOW_DAYS = 45;
 
@@ -164,6 +164,8 @@ export type PreparedNudge = {
   body: string;
   /** Latest logged call or meeting in the window, when there is one. */
   callNotes: { date: string; text: string } | null;
+  /** Set when the thread says a nudge is the wrong move (they declined, or Seb already followed up). */
+  advice?: string | null;
 };
 
 function domainOfWebsite(website: string | null): string | null {
@@ -237,9 +239,9 @@ export async function prepareNudge(params: { accountId: string; accountName: str
     const contact = contacts.find((c) => (c.Email ?? "").toLowerCase() === toEmail);
     const first = contact?.FirstName ?? greetingName(contact?.Name ?? null, toEmail) ?? firstNameFromGreeting(trimReplyBody(mine.bodyText || mine.bodyPreview));
     const thread: NudgeThreadMessage[] = full.map((e) => ({ from: e.from.name, email: e.from.email, at: e.receivedDateTime, mine: isSelfAddress(e.from.email, identities), text: trimReplyBody(e.bodyText || e.bodyPreview) }));
-    const fallback = buildRceFollowUp({ seed: params.accountId, firstName: first, now: new Date() }).body;
-    const body = await draftFollowUp(thread, params.accountName, first, fallback);
-    return { replyToMessageId: last.id, sender: { name: contact?.Name ?? null, email: toEmail }, subject: last.subject, thread: thread.slice(-3), body, callNotes: null };
+    const fallback = freshTemplate(params.accountId, first, thread);
+    const { body, advice } = await draftFollowUp(thread, params.accountName, first, fallback);
+    return { replyToMessageId: last.id, sender: { name: contact?.Name ?? null, email: toEmail }, subject: last.subject, thread: thread.slice(-3), body, callNotes: null, advice };
   }
 
   if (pick) {
@@ -283,29 +285,56 @@ export async function prepareNudge(params: { accountId: string; accountName: str
  * in the style of his own follow-up lines, never longer than two sentences.
  * Falls back to one of those lines verbatim.
  */
-async function draftFollowUp(thread: NudgeThreadMessage[], accountName: string, first: string | null, fallback: string): Promise<string> {
+/** One of Seb's follow-up lines that he has not already used in this thread. */
+function freshTemplate(seed: string, first: string | null, thread: NudgeThreadMessage[]): string {
+  const said = thread.filter((m) => m.mine).map((m) => m.text.toLowerCase().replace(/\s+/g, " "));
+  const start = pickTemplateIndex(seed);
+  for (let k = 0; k < RCE_FOLLOW_UP_TEMPLATES.length; k++) {
+    const i = (start + k) % RCE_FOLLOW_UP_TEMPLATES.length;
+    const key = RCE_FOLLOW_UP_TEMPLATES[i].body.split("\n").pop()!.toLowerCase().slice(0, 40);
+    if (!said.some((t) => t.includes(key))) return buildRceFollowUp({ seed, firstName: first, now: new Date(), templateIndex: i }).body;
+  }
+  return buildRceFollowUp({ seed, firstName: first, now: new Date() }).body;
+}
+
+/**
+ * A follow-up under Seb's own unanswered email. The model reads the thread:
+ * it writes something new (never a line Seb already sent), picks up a concrete
+ * detail when there is one, and says plainly when a follow-up is the wrong
+ * move (they said they are not selling, or Seb has already followed up twice).
+ */
+async function draftFollowUp(thread: NudgeThreadMessage[], accountName: string, first: string | null, fallback: string): Promise<{ body: string; advice: string | null }> {
   const client = getAnthropicClient();
-  if (!client || thread.length === 0) return fallback;
-  const lines = thread.slice(-5).map((m) => `--- ${m.mine ? "SEB" : m.from || m.email}, ${m.at.slice(0, 10)} ---\n${m.text.trim().slice(0, 1800)}`);
+  if (!client || thread.length === 0) return { body: fallback, advice: null };
+  const lines = thread.slice(-6).map((m) => `--- ${m.mine ? "SEB" : m.from || m.email}, ${m.at.slice(0, 10)} ---\n${m.text.trim().slice(0, 1800)}`);
   const closer = followUpCloser(new Date());
   try {
     const res = await trackedCreate(client, "nudges", {
       model: MODELS.drafting,
-      max_tokens: 200,
+      max_tokens: 400,
       system: `${INBOX_DRAFT_SYSTEM}
 
-This one is a FOLLOW-UP: Seb's last email in this thread got no answer, and he is replying under it. Read the thread. If it holds something concrete worth picking up (a date or trip he mentioned, the group he pitched, a question he asked, something they said earlier), refer to it in a few words; otherwise keep it generic. One or two short sentences, calm, never needy, no apology, never restate his whole email.
-Seb's own follow-ups, match this length and tone:
-- "Following up once more. Would love to discuss a potential acquisition."
-- "Following up a final time. Are you available to catch-up and resume acquisition discussions in the next week or two?"
-- "Quickly following up on my last email. Would love to have a brief discussion in the next week or two. Our interest remains strong."
-Greeting: ${first ? `"Hi ${first},"` : "no name, just start"}. Closing: "${closer}" then "Seb" on its own line.`,
+This one is a FOLLOW-UP under Seb's own unanswered email. Read the whole thread first.
+
+1. Decide whether another nudge makes sense. It does NOT when they said they are not selling or not interested (respect it), or when Seb's last two or more emails are already unanswered follow-ups. In that case write "advice": one short sentence for Seb (e.g. "John said TowWorks isn't for sale and you've followed up twice since. Push this task out a few months instead of nudging."), and still write the gentlest possible body in case he sends anyway (no ask, just staying in touch, or none at all).
+2. The body must be NEW. Never repeat or lightly reword a sentence Seb already sent in this thread (check every SEB message). Do not reuse these stock lines either: "Following up once more", "Following up a final time", "Quickly following up on my last email", "Our interest remains strong".
+3. Pick up one concrete thing from the thread when there is one (a date, a trip, the group, something they said), in a few words. One or two short sentences. Calm, never needy, no apology.
+Greeting: ${first ? `"Hi ${first},"` : "no name, just start"}. Closing: "${closer}" then "Seb" on its own line.
+
+Answer JSON only: {"advice": null or "one sentence", "body": "the email"}`,
       messages: [{ role: "user", content: `Company: ${accountName}\n\nThread, oldest first. Reply under the last SEB email:\n\n${lines.join("\n\n")}` }],
     });
-    const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim().replace(/[–—]/g, ",");
-    return text && text.length < 700 ? text : fallback;
+    const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
+    const parsed = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)) as { advice?: string | null; body?: string };
+    const body = (parsed.body ?? "").trim().replace(/[–—]/g, ",");
+    const advice = parsed.advice && String(parsed.advice).trim() ? String(parsed.advice).trim().replace(/[–—]/g, ",") : null;
+    // Guard: if the model still echoed a sentence Seb already sent, use a fresh template line.
+    const norm = (v: string) => v.toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim();
+    const sent = thread.filter((m) => m.mine).map((m) => norm(m.text));
+    const echoes = body.split(/(?<=[.?!])\s+/).map(norm).filter((x) => x.length > 25).some((x) => sent.some((t) => t.includes(x)));
+    return { body: body && body.length < 800 && !echoes ? body : fallback, advice };
   } catch {
-    return fallback;
+    return { body: fallback, advice: null };
   }
 }
 

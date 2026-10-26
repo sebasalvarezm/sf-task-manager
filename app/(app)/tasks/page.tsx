@@ -519,6 +519,7 @@ function TasksPageContent() {
 type PreparedNudge = {
   replyToMessageId: string | null;
   callNotes: { date: string; text: string } | null;
+  advice?: string | null;
   sender: { name: string | null; email: string };
   subject: string;
   thread: Array<{ from: string; email: string; at: string; mine: boolean; text: string }>;
@@ -657,9 +658,15 @@ function NudgePanel(props: {
           {!prepared && !error ? <Spinner center label="Finding the thread and drafting…" /> : null}
           {prepared ? (
             <>
+              {prepared.advice ? (
+                <div className="mb-2 rounded-md border border-danger/30 bg-danger-soft p-3 text-sm text-ink">
+                  <span className="font-medium text-danger">Maybe don&apos;t send: </span>
+                  {prepared.advice}
+                </div>
+              ) : null}
               {prepared.callNotes ? (
-                <div className="mb-2 rounded-md border border-line bg-surface-2 p-3 text-sm">
-                  <p className="mb-1 text-xs text-ink-secondary">Your call notes · {prepared.callNotes.date}</p>
+                <div className="mb-2 rounded-md border border-warn/30 bg-warn-soft p-3 text-sm">
+                  <p className="mb-1 text-xs font-medium text-warn">Your call notes <span className="font-normal text-ink-secondary">· {prepared.callNotes.date}</span></p>
                   <p className="line-clamp-6 whitespace-pre-wrap text-ink">{prepared.callNotes.text}</p>
                 </div>
               ) : null}
@@ -667,10 +674,16 @@ function NudgePanel(props: {
                 <p className="mb-2 text-xs text-ink-secondary">No email thread with them in Outlook, so this goes as a new email.</p>
               ) : null}
               <div className="space-y-2">
-                {prepared.thread.map((m, i) => (
-                  <div key={i} className={`rounded-md border border-line p-3 text-sm ${m.mine ? "bg-surface-2" : "bg-white"}`}>
-                    <p className="mb-1 text-xs text-ink-secondary">
-                      {m.mine ? "You" : m.from || m.email} · {m.at.slice(0, 10)}
+                {prepared.thread.filter((m) => m.text.trim()).map((m, i) => (
+                  // Theirs on the left in white with a green edge; yours on the right, tinted blue.
+                  <div
+                    key={i}
+                    className={`rounded-md border p-3 text-sm ${
+                      m.mine ? "ml-8 border-info/30 bg-info-soft" : "mr-8 border-line border-l-4 border-l-ok bg-white"
+                    }`}
+                  >
+                    <p className={`mb-1 text-xs font-medium ${m.mine ? "text-info" : "text-ok"}`}>
+                      {m.mine ? "You" : m.from || m.email} <span className="font-normal text-ink-secondary">· {m.at.slice(0, 10)}</span>
                     </p>
                     <p className="line-clamp-6 whitespace-pre-wrap text-ink">{m.text}</p>
                   </div>
