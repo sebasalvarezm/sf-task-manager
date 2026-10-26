@@ -48,6 +48,19 @@ const OUTBOUND_FILTER =
   "Subject_Type__c LIKE '%E1' OR Subject_Type__c LIKE '%E2' OR Subject_Type__c LIKE '%E3' OR Subject_Type__c LIKE '%E4' OR Subject_Type__c LIKE '%E5' " +
   "OR Subject_Type__c LIKE '%RCE%' OR Subject LIKE '%[Out]%' OR Type = 'Email'";
 
+/**
+ * Scheduling assistants and other bots copied on a thread (bot@blockit.com,
+ * Calendly, no-reply senders). Never the person a nudge answers or addresses.
+ */
+const BOT_DOMAINS = ["blockit.com", "calendly.com", "chilipiper.com", "reclaim.ai", "x.ai", "clara.ai", "cal.com", "savvycal.com", "zcal.co", "motion.com", "outreach.io", "salesforce.com", "linkedin.com"];
+export function isBotAddress(email: string | null | undefined): boolean {
+  const e = (email ?? "").toLowerCase().trim();
+  if (!e.includes("@")) return true;
+  const [local, domain] = e.split("@");
+  if (BOT_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return true;
+  return /^(bot|scheduler|scheduling|assistant|calendar|no-?reply|noreply|donotreply|do-not-reply|notifications?|mailer-daemon|postmaster|bounce)([.+-].*)?$/.test(local);
+}
+
 function since(): Date {
   return new Date(Date.now() - NUDGE_WINDOW_DAYS * 86_400_000);
 }
@@ -198,13 +211,13 @@ export async function prepareNudge(params: { accountId: string; accountName: str
     const found = await searchMailboxMessages(d, 25).catch(() => []);
     for (const m of found) {
       if (!m.conversationId) continue;
-      const fromThem = m.fromEmail && !isSelfAddress(m.fromEmail, identities) && (m.fromEmail.endsWith(`@${d}`) || contactEmails.has(m.fromEmail));
-      const toThem = isSelfAddress(m.fromEmail, identities) && m.toEmails.some((t) => t.endsWith(`@${d}`) || contactEmails.has(t));
+      const fromThem = m.fromEmail && !isSelfAddress(m.fromEmail, identities) && !isBotAddress(m.fromEmail) && (m.fromEmail.endsWith(`@${d}`) || contactEmails.has(m.fromEmail));
+      const toThem = isSelfAddress(m.fromEmail, identities) && m.toEmails.some((t) => !isBotAddress(t) && (t.endsWith(`@${d}`) || contactEmails.has(t)));
       if (fromThem && m.sentDateTime >= cutoff && (!theirs || theirs.at < m.sentDateTime)) theirs = { conversationId: m.conversationId, at: m.sentDateTime };
       if ((fromThem || toThem) && (!anyThread || anyThread.at < m.sentDateTime)) anyThread = { conversationId: m.conversationId, at: m.sentDateTime };
       if (toThem && m.sentDateTime > lastSentAt) {
         lastSentAt = m.sentDateTime;
-        lastSentTo = m.toEmails.find((t) => t.endsWith(`@${d}`) || contactEmails.has(t)) ?? null;
+        lastSentTo = m.toEmails.find((t) => !isBotAddress(t) && (t.endsWith(`@${d}`) || contactEmails.has(t))) ?? null;
       }
     }
   }
@@ -214,7 +227,7 @@ export async function prepareNudge(params: { accountId: string; accountName: str
   // with one of his own follow-up lines (fixed text, no model).
   if (params.via === "sent") {
     if (!anyThread) throw new Error(`Couldn't find your last email to ${params.accountName} in Outlook.`);
-    const full = await fetchEmailThread(anyThread.conversationId);
+    const full = (await fetchEmailThread(anyThread.conversationId)).filter((e) => isSelfAddress(e.from.email, identities) || !isBotAddress(e.from.email));
     const mine = [...full].reverse().find((e) => isSelfAddress(e.from.email, identities));
     const last = full[full.length - 1];
     if (!mine || !last) throw new Error("Outlook couldn't return that thread.");
@@ -230,7 +243,9 @@ export async function prepareNudge(params: { accountId: string; accountName: str
   }
 
   if (pick) {
-    const full = await fetchEmailThread(pick.conversationId);
+    // Bot messages (a scheduling assistant's "already booked" note) are dropped:
+    // the nudge answers the last real person, or sits under Seb's own email.
+    const full = (await fetchEmailThread(pick.conversationId)).filter((e) => isSelfAddress(e.from.email, identities) || !isBotAddress(e.from.email));
     if (full.length > 0) {
       const thread: NudgeThreadMessage[] = full.map((e) => ({
         from: e.from.name,
@@ -241,9 +256,10 @@ export async function prepareNudge(params: { accountId: string; accountName: str
       }));
       const last = full[full.length - 1];
       const theirLast = [...full].reverse().find((e) => !isSelfAddress(e.from.email, identities)) ?? null;
+      const toContact = lastSentTo ?? callEmail ?? [...contactEmails][0] ?? "";
       const sender = theirLast
         ? { name: theirLast.from.name || null, email: theirLast.from.email }
-        : { name: call?.Who?.Name ?? null, email: callEmail ?? [...contactEmails][0] ?? "" };
+        : { name: contacts.find((c) => (c.Email ?? "").toLowerCase() === toContact)?.Name ?? call?.Who?.Name ?? null, email: toContact };
       if (!sender.email) throw new Error(`No email address for anyone at ${params.accountName}.`);
       const body = await draftNudge(thread, params.accountName, params.topic, sender.name, callNotes);
       return { replyToMessageId: last.id, sender, subject: last.subject, thread: thread.slice(-4), body, callNotes };
