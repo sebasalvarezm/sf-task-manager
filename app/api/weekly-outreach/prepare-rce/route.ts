@@ -104,7 +104,7 @@ async function classifyCompany(
   };
 }
 
-const SHARED_RULES = `Match Sebastian's actual sent-email voice in the evidence: concise, natural, personable, and specific. Use his vocabulary, sentence length, contractions, and level of formality. Never use an em dash. Never write "circle back", "touch base", "I would welcome a conversation", "I would value a conversation", "I hope this message finds you well", "hope all is well", "at your earliest convenience", "looking forward to hearing from you", "please do not hesitate", generic praise, AI jargon, hype, or anything corny. Write "thank you", never "thanks". Open with the point ("Just checking in", "Wanted to follow up", "Thank you for the quick reply"), not a pleasantry. Do not invent history or claim the recipient said something unless the evidence supports it.`;
+const SHARED_RULES = `Match Sebastian's actual sent-email voice in the evidence: concise, natural, personable, and specific. Use his vocabulary, sentence length, contractions, and level of formality. Never use an em dash. Never write "circle back", "touch base", "I would welcome a conversation", "I would value a conversation", "I hope this message finds you well", "hope all is well", "at your earliest convenience", "looking forward to hearing from you", "please do not hesitate", generic praise, AI jargon, hype, or anything corny. Write "thank you", never "thanks". Open with the point ("Just checking in", "Wanted to follow up", "Thank you for the quick reply"), not a pleasantry. Do not invent history or claim the recipient said something unless the evidence supports it. Never describe Seb as "taking over" a relationship. When there is a recent Valstone deal in the same space in the evidence, it is the best reason to reconnect ("We've been busy in rail since. In July we acquired Nascent Technology..."); use it in one or two sentences, never invent one.`;
 
 function replyPrompt(input: {
   item: WeeklyOutreachItem;
@@ -139,6 +139,22 @@ Return ONLY JSON:
 }`;
 }
 
+/**
+ * Seb's own rewrite of a takeover draft (TekTracking, Oct 2026): a follow-up,
+ * not a "taking over" note, with the group's latest deal as the reason to
+ * write. Used as the model for every takeover email.
+ */
+const TAKEOVER_EXAMPLE = `Hi Greg,
+
+I'm Sebastian at Valstone, following up on your conversation with my colleague Dan Malouf back in April. The timing wasn't right for a meeting then, so I wanted to check back in.
+
+We've been busy in rail since. In July we acquired Nascent Technology, which adds terminal gate automation to PS Technology and GeoMetrix Rail Logistics, our carve-outs from Union Pacific and Amsted Rail. TekTracking keeps coming up as we build that out.
+
+Would you be open to a quick call in the coming weeks? Happy to keep it informal.
+
+Best,
+Seb`;
+
 function takeoverPrompt(input: {
   item: WeeklyOutreachItem;
   history: AccountHistory;
@@ -148,14 +164,21 @@ function takeoverPrompt(input: {
   const takeover = input.history.takeover!;
   const contact = takeover.contactName ?? "the contact";
   const when = formatDateForEmail(takeover.lastExchangeDate);
-  return `Draft a fresh outreach email for an M&A professional named Sebastian who is taking over a relationship from a colleague. ${SHARED_RULES}
+  return `Draft a short email from Sebastian (Seb) at Valstone, following up on a conversation his colleague had with this company. ${SHARED_RULES}
 
-Situation: Sebastian's colleague ${takeover.colleagueName} exchanged emails with ${contact} at ${input.item.account_name} in ${when}. Sebastian has never written to ${contact}. This is a NEW email, not a reply, so it needs a greeting to ${takeover.contactFirstName ?? contact} and no signature (Outlook adds it). Do not include a subject line in the body.
+Situation: ${takeover.colleagueName} exchanged emails with ${contact} at ${input.item.account_name} in ${when}. Seb has never written to ${contact}. This is a NEW email, not a reply. Do not include a subject line in the body.
 
-The email must do three things, in Sebastian's voice and in this order:
-1. Say who Sebastian is in one clause and reference ${takeover.colleagueName}'s exchange with ${contact} by name and month, reflecting accurately where it left off according to the timeline below.
-2. Say plainly why Valstone is interested, using the sub-group context below. Mention the sub-group by its everyday name (for example "our Safety and Compliance group" rather than a file name) and tie it to what ${input.item.account_name} actually does. One or two sentences, no hype.
-3. Ask for a short call, in a specific and low-pressure way.
+Write it the way Seb wrote this one, which he rewrote himself and is the model to follow for structure, length and tone:
+---
+${TAKEOVER_EXAMPLE}
+---
+Rules that come from that example:
+1. Frame it as a follow-up on the colleague's conversation ("following up on your conversation with my colleague ${takeover.colleagueName} back in ${when.split(" ")[0]}"), never as "taking over the relationship" or "I've taken over".
+2. Say where it left off in a few plain words, only as far as the timeline below supports (e.g. "The timing wasn't right for a meeting then, so I wanted to check back in.").
+3. Give one concrete reason to write now: Valstone's own progress in the sub-group. Name one or two real acquisitions from the sub-group paragraph below (the "Key steps" sentence), most recent first, and what they add. Then one short line tying ${input.item.account_name} to it ("${input.item.account_name} keeps coming up as we build that out."). Never invent a deal, a date or a detail that is not in the paragraph or the timeline. Do not list the group's capabilities.
+4. A plain, low-pressure ask for a call in the coming weeks, then "Happy to keep it informal." or similar.
+5. Greeting "Hi ${takeover.contactFirstName ?? contact}," (a natural short form is fine if the timeline uses one). Close with "Best," then "Seb" on its own line.
+6. 70 to 110 words in the body. Short paragraphs.
 
 Company: ${input.item.account_name}${input.item.website ? ` (${input.item.website})` : ""}
 
@@ -165,19 +188,19 @@ ${input.history.lines.join("\n\n") || "No Salesforce activity available"}
 Portfolio sub-group classification: ${
     input.group.groupName
       ? `${input.group.groupName}${input.group.mainGroup ? ` (within ${input.group.mainGroup})` : ""}, confidence ${input.group.confidence ?? "unknown"}/100`
-      : "No confident sub-group match. Describe Valstone's interest in general terms tied to what the company does, without naming a sub-group."
+      : "No confident sub-group match. Describe Valstone's interest in general terms tied to what the company does, without naming a sub-group or a deal."
   }
-Sub-group outreach paragraph (the reasoning behind the fit; paraphrase, do not paste):
+Sub-group outreach paragraph (facts to draw the acquisitions from; do not paste it):
 ${input.group.outreachParagraph || "None available"}
 
-Sebastian's sent-email style examples (other relationships; use for voice only, never for facts):
+Seb's sent-email style examples (other relationships; use for voice only, never for facts):
 ${input.sentStyleExamples || "No sent examples available"}
 
 Return ONLY JSON:
 {
-  "contextSummary": "Maximum 55 words. Start with 'Takeover from ${takeover.colleagueName}.' Then state when the last exchange happened, where it stopped, and the sub-group angle. Readable in under 30 seconds.",
-  "subject": "A short, specific subject line for a new email, 4-9 words, no colon-heavy formatting.",
-  "draft": "A natural email of 80-150 words in Sebastian's voice: greeting line, the three parts above, no signature, no em dash, no invented detail."
+  "contextSummary": "Maximum 55 words. Start with 'Follow-up on ${takeover.colleagueName}'s conversation.' Then state when the last exchange happened, where it stopped, and the angle (which acquisition). Readable in under 30 seconds.",
+  "subject": "Short and specific, like 'Valstone / ${input.item.account_name}' or a 4-7 word line about the group, no colons.",
+  "draft": "The email: greeting, body, 'Best,' and 'Seb'. No em dash, no invented detail."
 }`;
 }
 

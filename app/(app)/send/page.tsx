@@ -555,7 +555,8 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
         </div>
       ) : canCancel ? (
         <div className="mt-2 flex shrink-0 gap-2 md:mt-0">
-          {row.status === "scheduling" && onResume && !jobRunning ? (
+          {/* Only once it has waited a while: during normal hours Outreach opens step 1 within a minute or two. */}
+          {row.status === "scheduling" && onResume && !jobRunning && now - new Date(row.updated_at).getTime() > 10 * 60_000 ? (
             <Button variant="secondary" className="max-md:h-11" loading={busy} title="Waiting too long? Fill step 1 and send now" onClick={onResume}>Resume</Button>
           ) : null}
           <Button variant="ghost" className="-ml-4 max-md:h-11 md:ml-0" loading={busy} disabled={jobRunning} onClick={onCancel}>Cancel</Button>
