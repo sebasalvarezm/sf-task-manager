@@ -16,6 +16,10 @@ describe("inbox drafts", () => {
     expect(issues.some((i) => /touch base/.test(i))).toBe(true);
     expect(issues.some((i) => /end with/.test(i))).toBe(true);
   });
+  it("flags a draft that stops mid-sentence", () => {
+    const issues = validateDraft("Hi Eduardo,\n\nMontreal works well. Which morning suits you best?\n\nIf you tell me where you'll be staying or the conference", 300);
+    expect(issues.some((i) => /cut off/.test(i))).toBe(true);
+  });
   it("accepts a clean draft", () => {
     expect(validateDraft(fallbackDraft("neutral", "Niko", "six months or so"), 300)).toEqual([]);
     expect(validateDraft(fallbackDraft("negative", "Scott", null), 100)).toEqual([]);

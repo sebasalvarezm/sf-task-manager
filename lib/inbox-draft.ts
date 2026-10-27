@@ -81,7 +81,11 @@ export function validateDraft(body: string, theirsLength: number): string[] {
     if (m) issues.push(`Contains "${m[0]}".`);
   }
   if (!/^(hi|hello|dear)\b/i.test(text)) issues.push("Does not start with a greeting.");
-  if (!/\b(best|thank you|regards)\s*,?\s*\n+\s*(sebastian|seb)\s*$/i.test(text)) issues.push("Does not end with Best, / Sebastian or Thank you, / Seb.");
+  const signedOff = /\b(best|thank you|regards)\s*,?\s*\n+\s*(sebastian|seb)\s*$/i.test(text);
+  // A long last line with no closing punctuation is a sentence that stopped halfway.
+  const lastLine = text.split("\n").pop()!.trim();
+  if (!signedOff && lastLine.length >= 20 && !/[.?!:)]$/.test(lastLine)) issues.push("The draft looks cut off mid-sentence. Tap Redraft.");
+  else if (!signedOff) issues.push("Does not end with Best, / Sebastian or Thank you, / Seb.");
   if (theirsLength > 0 && text.length > Math.max(400, theirsLength * 1.6)) issues.push("Longer than their email.");
   return issues;
 }

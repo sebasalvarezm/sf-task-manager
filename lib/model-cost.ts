@@ -67,8 +67,16 @@ export async function trackedCreate(
   feature: string,
   params: Anthropic.Messages.MessageCreateParamsNonStreaming,
 ): Promise<Anthropic.Messages.Message> {
-  const message = await client.messages.create(params);
+  let message = await client.messages.create(params);
   void recordModelCall(feature, params.model, message.usage as unknown as Usage);
+  // A reply that hit the token ceiling stops mid-sentence (or mid-JSON). That
+  // happened to roughly one Inbox draft in eight: the model sometimes uses
+  // part of a tight budget before writing. Retry once with three times the
+  // room rather than hand Seb half an email.
+  if (message.stop_reason === "max_tokens" && params.max_tokens < 4000) {
+    message = await client.messages.create({ ...params, max_tokens: Math.min(4000, params.max_tokens * 3) });
+    void recordModelCall(feature, params.model, message.usage as unknown as Usage);
+  }
   return message;
 }
 

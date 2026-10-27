@@ -326,7 +326,7 @@ async function draftFollowUp(thread: NudgeThreadMessage[], accountName: string, 
   try {
     const res = await trackedCreate(client, "nudges", {
       model: MODELS.drafting,
-      max_tokens: 400,
+      max_tokens: 1200,
       system: `${INBOX_DRAFT_SYSTEM}
 
 This one is a FOLLOW-UP under Seb's own unanswered email. Read the whole thread first.
@@ -373,7 +373,7 @@ async function draftNudge(
   try {
     const res = await trackedCreate(client, "nudges", {
       model: MODELS.drafting,
-      max_tokens: 300,
+      max_tokens: 1200,
       system: `${INBOX_DRAFT_SYSTEM}
 
 This one is a NUDGE: Seb is moving a live relationship to its next step. Topic: ${topic}. One to three short sentences in the body. Calm, not anxious. Pick up the concrete open item: from the call notes when there are any (what they said they would do, e.g. check back after their board meeting), otherwise from the thread (the NDA, the information they said they'd send, the call they agreed to). Refer to the call naturally ("Good speaking earlier this month") without repeating details they already know. For booking a call, ask plainly for a time next week; do not mention a scheduling tool. Address it to ${first ?? "them"}.`,

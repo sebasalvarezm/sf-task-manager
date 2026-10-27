@@ -605,7 +605,7 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
     try {
       const response = await trackedCreate(client, "inbox", {
         model: DRAFT_MODEL,
-        max_tokens: 500,
+        max_tokens: 1200,
         system: INBOX_DRAFT_SYSTEM,
         messages: [{
           role: "user",
