@@ -2,6 +2,8 @@ import { inngest } from "@/lib/inngest/client";
 import { markJobFailedFromInngest } from "@/lib/inngest/on-failure";
 import { markRunning, markSucceeded, markFailed, updateProgress } from "@/lib/jobs";
 import { runScreenBatch, backfillLinkedIn } from "@/lib/outreach-screen";
+import { getCandidateSettings } from "@/lib/outreach-candidates";
+import { spentTodayUsd } from "@/lib/model-cost";
 
 /**
  * Outreach prescreen. Screens the next N eligible, unchecked accounts (site
@@ -27,7 +29,18 @@ export const outreachScreenJob = inngest.createFunction(
       // Every id this job has touched. Passed back as an exclusion so no row
       // is checked twice in one job whatever happens to its verdict write.
       const seen: string[] = [];
+      let stoppedAtCap = false;
+      // The spend line is checked before every slice, not only when the job
+      // starts: one manual batch once ran to $9.24 against a $5 line.
+      const overCap = async () => {
+        const [settings, spent] = await Promise.all([getCandidateSettings(), spentTodayUsd(["outreach_screen", "outreach_linkedin"]).catch(() => 0)]);
+        return spent >= settings.maxCheckSpendPerDay;
+      };
       for (let offset = 0; offset < limit; offset += slice) {
+        if (offset > 0 && (await step.run(`spend-${offset}`, overCap))) {
+          stoppedAtCap = true;
+          break;
+        }
         const take = Math.min(slice, limit - offset);
         const counts = await step.run(`screen-${offset}`, () => runScreenBatch(take, undefined, seen));
         seen.push(...counts.ids);
@@ -42,7 +55,11 @@ export const outreachScreenJob = inngest.createFunction(
       // screens so the daily cap means what it says.
       let linkedin = 0;
       let budget = Math.max(0, limit - done);
-      for (let i = 0; i < 5 && budget > 0; i++) {
+      for (let i = 0; i < 5 && budget > 0 && !stoppedAtCap; i++) {
+        if (await step.run(`linkedin-spend-${i}`, overCap)) {
+          stoppedAtCap = true;
+          break;
+        }
         const take = Math.min(12, budget);
         const n = await step.run(`linkedin-${i}`, () => backfillLinkedIn(take));
         linkedin += n;
@@ -50,7 +67,7 @@ export const outreachScreenJob = inngest.createFunction(
         if (n < take) break;
         await step.run(`linkedin-progress-${i}`, () => updateProgress(jobId, { step: `Finding LinkedIn pages: ${linkedin}`, pct: 100 }));
       }
-      await step.run("mark-succeeded", () => markSucceeded(jobId, { ...totals, done, linkedin }));
+      await step.run("mark-succeeded", () => markSucceeded(jobId, { ...totals, done, linkedin, stoppedAtCap }));
       return { ok: true, jobId, done };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unexpected error";

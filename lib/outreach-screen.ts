@@ -1,3 +1,4 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, MODELS, stripCites } from "./anthropic";
 import { trackedCreate } from "./model-cost";
 import { getSupabaseAdmin } from "./supabase";
@@ -8,8 +9,9 @@ import type { CandidateRow, ScreenStatus } from "./outreach-candidates";
  * Outreach prescreen: the checks Seb used to do by hand on every account in
  * the E1 report before deciding to email again. Is it a software business
  * (a product, not a services shop), and has it been acquired since we last
- * wrote? One site read through Jina, one model call with at most one web
- * search, and the verdict plus a one-line reason lands on the candidate row
+ * wrote? One site read through Jina and one model call on the site text;
+ * then, only for companies that pass, one model call with one web search for
+ * an acquisition or investment. The verdict plus a one-line reason lands on the candidate row
  * so the review screen can show it and Seb can overrule it.
  */
 
@@ -41,8 +43,8 @@ export type ScreenVerdict = {
 const SYSTEM = `You screen companies for Valstone, a permanent-capital acquirer of vertical market software (VMS) businesses serving industrial sectors. Given a company's website text and basic facts, answer three questions only:
 
 1. Is this a software business? "software" means the company's core offering is its own software product (SaaS or on-premise) that customers run or subscribe to. "software_plus_services" means a real product plus implementation or managed services around it (still fine). "services" means consulting, integration of other vendors' software, staffing, agencies, or IT services with no product of their own. "hardware" means the revenue is devices or equipment with software as a feature. "other" is everything else (distributor, media, non-profit, marketplace).
-2. Is the end market one Valstone goes after? Valstone buys software that runs an industrial, agricultural, construction, transportation, manufacturing, or similar B2B operating business. Consumer apps, software for dentists, lawyers, schools, churches, gyms, restaurants, real estate agents, marketing teams, HR, and generic horizontal tools are not the target. Below the facts you may get a list of markets Seb has excluded by hand before, with his own words on why; treat those as the rule, and apply the same judgement to close cousins. Otherwise lean to "software": a wrong_market verdict needs a clear, specific reason, not a hunch.
-3. Has the company been acquired or merged in the last 18 months, taken outside investment (a funding round, PE or VC money) in the last 18 months, or is it now a subsidiary or brand of a larger group? Look for "part of", "a [Group] company", "acquired by", "now [New name]", "joined", "backed by", "raised", press releases, or a redirect to a parent site. If the page does not settle it, you may run ONE web search for "<company name> acquired OR investment" and use only clear, dated results.
+2. Is the end market one Valstone goes after? Valstone buys software that runs an industrial, agricultural, construction, transportation, manufacturing, or similar B2B operating business. Consumer apps, software for dentists, lawyers, schools, churches, gyms, restaurants, real estate agents, marketing teams, HR, and generic horizontal tools are not the target. After these instructions you may get a list of markets Seb has excluded by hand before, with his own words on why; treat those as the rule, and apply the same judgement to close cousins. Otherwise lean to "software": a wrong_market verdict needs a clear, specific reason, not a hunch.
+3. Does the site itself show the company was acquired or merged in the last 18 months, took outside investment (a funding round, PE or VC money) in the last 18 months, or is now a subsidiary or brand of a larger group? Look for "part of", "a [Group] company", "acquired by", "now [New name]", "joined", "backed by", "raised", press releases, or a redirect to a parent site. Use the site text only. A separate web search check runs afterwards on every company you pass as "software", so when the site says nothing, set acquired_by and investment to null and ownership to what the site shows (often "unknown"), and judge questions 1 and 2 on their own.
 
 Verdict rules:
 - "acquired": clear evidence of an acquisition or merger in the last 18 months, or now owned by a PE firm or strategic group since then.
@@ -54,9 +56,105 @@ Verdict rules:
 Also classify ownership: "bootstrapped" (founder or privately owned, no outside capital found), "pe_backed", "vc_backed", "public", "subsidiary", or "unknown".
 
 Output ONLY a JSON object:
-{"verdict":"software|not_software|wrong_market|acquired|unclear","business_model":"software|software_plus_services|services|hardware|other|null","software_type":"<one short phrase, e.g. 'fleet maintenance software for rail'>|null","acquired_by":"<name>|null","acquired_when":"<month year or year>|null","ownership":"bootstrapped|pe_backed|vc_backed|public|subsidiary|unknown","investment":"<e.g. 'Series A, March 2026'>|null","employees_on_site":<number|null>,"confidence":"high|medium|low","summary":"<what they sell in 3 to 6 words, then ownership and deal status, e.g. 'Ag retailer ERP, bootstrapped, no acquisition or investment on record'>","reason":"<one plain sentence, max 160 characters, no dashes>"}`;
+{"verdict":"software|not_software|wrong_market|acquired|unclear","business_model":"software|software_plus_services|services|hardware|other|null","software_type":"<one short phrase, e.g. 'fleet maintenance software for rail'>|null","acquired_by":"<name>|null","acquired_when":"<month year or year>|null","ownership":"bootstrapped|pe_backed|vc_backed|public|subsidiary|unknown","investment":"<e.g. 'Series A, March 2026'>|null","employees_on_site":<number|null>,"confidence":"high|medium|low","what":"<what they sell in 3 to 6 words, e.g. 'Ag retailer ERP'>","summary":"<what they sell in 3 to 6 words, then ownership and deal status, e.g. 'Ag retailer ERP, bootstrapped, no acquisition or investment on record'>","reason":"<one plain sentence, max 160 characters, no dashes>"}`;
 
-function parseVerdict(raw: string): ScreenVerdict | null {
+/**
+ * Second pass, only for companies the site check passed as "software": one
+ * web search for an acquisition, a merger or outside money. Splitting it out
+ * is the cost fix (Oct 2026). A search pastes several result pages into the
+ * model's reading, so a check with a search costs about four times one
+ * without, and it used to run on companies the site text had already ruled
+ * out. It also used to be optional, so roughly half the good candidates never
+ * got searched; now every one does.
+ */
+const OWNERSHIP_SYSTEM = `You check one company for recent ownership changes, for Valstone, a permanent-capital acquirer of vertical market software businesses. Always run exactly ONE web search for the company name with the words acquired, acquisition, investment, funding. Count a result only when it is clearly this company (same name and the same website domain, product or location); a different company with a similar name does not count.
+
+"acquired" is true when there is clear, dated evidence that the company was acquired or merged within the last 18 months, or is now owned by a PE firm or strategic group since then. Otherwise false. Never guess.
+
+Also classify ownership: "bootstrapped" (founder or privately owned, no outside capital found), "pe_backed", "vc_backed", "public", "subsidiary", or "unknown". Report a funding round or investment from the last 18 months in "investment".
+
+After these instructions you may get Seb's own skip rules about ownership (for example skipping a certain kind of backing). If what you found clearly triggers one, name it in "skip_rule"; otherwise null. Do not apply a rule on a loose resemblance.
+
+Output ONLY a JSON object:
+{"acquired":true|false,"acquired_by":"<name>|null","acquired_when":"<month year or year>|null","ownership":"bootstrapped|pe_backed|vc_backed|public|subsidiary|unknown","investment":"<e.g. 'Series A, March 2026'>|null","skip_rule":"<the rule, in a few words>|null","evidence":"<one plain sentence, max 160 characters, no dashes>|null"}`;
+
+type OwnershipCheck = {
+  acquired: boolean;
+  acquiredBy: string | null;
+  acquiredWhen: string | null;
+  ownership: string | null;
+  investment: string | null;
+  skipRule: string | null;
+  evidence: string | null;
+};
+
+const cleanStr = (v: unknown) => (typeof v === "string" && v.trim() && v.trim().toLowerCase() !== "null" ? v.trim().replace(/\s*[–—]\s*/g, ", ") : null);
+
+export function parseOwnershipCheck(raw: string): OwnershipCheck | null {
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let o: Record<string, unknown>;
+  try {
+    o = JSON.parse(m[0]) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  return {
+    acquired: o.acquired === true || o.acquired === "true",
+    acquiredBy: cleanStr(o.acquired_by),
+    acquiredWhen: cleanStr(o.acquired_when),
+    ownership: cleanStr(o.ownership),
+    investment: cleanStr(o.investment),
+    skipRule: cleanStr(o.skip_rule),
+    evidence: cleanStr(o.evidence)?.slice(0, 200) ?? null,
+  };
+}
+
+const OWNERSHIP_WORDS: Record<string, string> = {
+  bootstrapped: "bootstrapped",
+  pe_backed: "PE-backed",
+  vc_backed: "VC-backed",
+  public: "public",
+  subsidiary: "subsidiary",
+};
+
+/** The card line after the search: "Ag retailer ERP, bootstrapped, no acquisition or investment on record". */
+export function ownershipSummary(what: string | null, c: OwnershipCheck | null): string | null {
+  if (!what) return null;
+  if (!c) return `${what}, acquisition check did not run`;
+  const parts = [what];
+  const own = c.ownership ? OWNERSHIP_WORDS[c.ownership] : undefined;
+  if (own) parts.push(own);
+  if (c.acquired) parts.push(`acquired${c.acquiredBy ? ` by ${c.acquiredBy}` : ""}${c.acquiredWhen ? ` (${c.acquiredWhen})` : ""}`);
+  else if (c.investment) parts.push(`raised ${c.investment}`);
+  else parts.push("no acquisition or investment on record");
+  return parts.join(", ").slice(0, 160);
+}
+
+/** Apply the search result to a "software" verdict. Pure, so it is tested. */
+export function applyOwnershipCheck(v: ScreenVerdict, what: string | null, c: OwnershipCheck | null): ScreenVerdict {
+  if (!c) {
+    return { ...v, facts: { ...v.facts, summary: ownershipSummary(what, null) ?? v.facts.summary, confidence: "low" } };
+  }
+  const facts = {
+    ...v.facts,
+    acquiredBy: c.acquiredBy ?? v.facts.acquiredBy,
+    acquiredWhen: c.acquiredWhen ?? v.facts.acquiredWhen,
+    ownership: c.ownership && c.ownership !== "unknown" ? c.ownership : v.facts.ownership,
+    investment: c.investment ?? v.facts.investment,
+    summary: ownershipSummary(what, c) ?? v.facts.summary,
+  };
+  if (c.acquired) {
+    const who = c.acquiredBy ? `Acquired by ${c.acquiredBy}${c.acquiredWhen ? ` in ${c.acquiredWhen}` : ""}.` : null;
+    return { status: "acquired", reason: (c.evidence ?? who ?? "Recent acquisition found in the web search.").slice(0, 200), facts };
+  }
+  if (c.skipRule) {
+    return { status: "acquired", reason: `Your rule: ${c.skipRule}.${c.evidence ? ` ${c.evidence}` : ""}`.slice(0, 200), facts };
+  }
+  return { ...v, facts };
+}
+
+function parseVerdict(raw: string): (ScreenVerdict & { what: string | null }) | null {
   const m = raw.match(/\{[\s\S]*\}/);
   if (!m) return null;
   let o: Record<string, unknown>;
@@ -71,6 +169,7 @@ function parseVerdict(raw: string): ScreenVerdict | null {
   const bm = str(o.business_model);
   const confidence = o.confidence === "high" || o.confidence === "medium" ? o.confidence : "low";
   return {
+    what: str(o.what)?.replace(/\s*[\u2013\u2014]\s*/g, ", ").replace(/\.$/, "").slice(0, 80) ?? null,
     status,
     reason: (str(o.reason) ?? "No reason given.").replace(/\s*[–—]\s*/g, ", ").slice(0, 200),
     facts: {
@@ -146,51 +245,94 @@ export async function screenCompany(input: { name: string; website: string | nul
   }
   const excluded = await excludedMarkets().catch(() => "");
   const lessons = await skipLessons().catch(() => "");
-  const user = [
-    `Company: ${input.name}`,
-    `Website: ${input.website ?? "unknown"}`,
-    `Salesforce industry: ${input.industry ?? "unknown"}`,
-    `Salesforce employees: ${input.employees ?? "unknown"}`,
-    ...(excluded ? ["", "Markets Seb has excluded by hand (company: his note):", excluded] : []),
+  const today = new Date().toISOString().slice(0, 10);
+  // Seb's rules are the same for every company in a batch, so they sit in the
+  // system prompt behind a cache marker: after the first call of a batch the
+  // model re-reads them at a tenth of the price. Only the company changes.
+  const rules = [
+    ...(excluded ? ["Markets Seb has excluded by hand (company: his note):", excluded, ""] : []),
     ...(lessons
       ? [
-          "",
           "Other companies Seb skipped by hand, with his reason and note. Treat each note as a rule: if this company has the same problem (for example most staff outside the target geography, or too small, or mostly services), exclude it with verdict wrong_market (or acquired for ownership) and say which rule in the reason. Do not exclude on a loose resemblance.",
           lessons,
         ]
       : []),
+  ].join("\n").trim();
+  const system: Anthropic.Messages.TextBlockParam[] = [
+    { type: "text", text: SYSTEM },
+    ...(rules ? [{ type: "text" as const, text: rules }] : []),
+  ];
+  system[system.length - 1] = { ...system[system.length - 1], cache_control: { type: "ephemeral" } };
+  const user = [
+    `Today: ${today}`,
+    `Company: ${input.name}`,
+    `Website: ${input.website ?? "unknown"}`,
+    `Salesforce industry: ${input.industry ?? "unknown"}`,
+    `Salesforce employees: ${input.employees ?? "unknown"}`,
     "",
     "Website text:",
     site.text.slice(0, 7000),
   ].join("\n");
-  const ask = async (withSearch: boolean) => {
+  // Step 1: the site alone. No web search here: most companies fail on
+  // business model or end market, which the site settles, and a search would
+  // quadruple the cost of every one of those.
+  const ask = async () => {
     const response = await trackedCreate(client, "outreach_screen", {
       model: MODELS.drafting,
-      max_tokens: 400,
-      system: SYSTEM,
-      ...(withSearch ? { tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 1 }] } : {}),
+      max_tokens: 500,
+      system,
       messages: [{ role: "user", content: user }],
     });
     return stripCites(response.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
   };
-  // Always search: many small VMS companies never put an acquisition or an
-  // investor on their site, so the site text alone would miss them (Seb, Oct 2026).
-  // A search that eats the whole answer now and then leaves no JSON; ask once more without it.
-  let parsed = parseVerdict(await ask(true));
-  if (!parsed) parsed = parseVerdict(await ask(false));
+  let parsed = parseVerdict(await ask());
+  if (!parsed) parsed = parseVerdict(await ask());
   if (!parsed) return { status: "error", reason: "The model did not return a readable verdict.", facts: { ...emptyFacts(), source: site.pages } };
-  parsed.facts.source = site.pages;
-  parsed.facts.linkedin = findLinkedInCompanyUrl(site.text);
-  if (parsed.status === "software") {
-    if (!parsed.facts.linkedin) {
-      parsed.facts.linkedin = await lookupLinkedInUrl(input.name, input.website).catch(() => null);
-      parsed.facts.linkedinChecked = true;
+  const { what, ...rest } = parsed;
+  let verdict: ScreenVerdict = rest;
+  verdict.facts.source = site.pages;
+  verdict.facts.linkedin = findLinkedInCompanyUrl(site.text);
+  // Step 2: only for companies that passed, one web search for an acquisition
+  // or outside money. Many small VMS companies never put either on their site
+  // (Seb, Oct 2026), so every passing company gets it.
+  if (verdict.status === "software") {
+    const check = await checkOwnership(client, input.name, input.website, lessons, today).catch(() => null);
+    verdict = applyOwnershipCheck(verdict, what ?? verdict.facts.softwareType, check);
+  }
+  if (verdict.status === "software") {
+    if (!verdict.facts.linkedin) {
+      verdict.facts.linkedin = await lookupLinkedInUrl(input.name, input.website).catch(() => null);
+      verdict.facts.linkedinChecked = true;
     }
     // Same portfolio-group classifier Sourcing uses, run once here so the push
     // carries the group and Sourcing can skip its own classification step.
-    parsed.facts.group = await matchGroup(client, site.text, loadGroupFiles()).catch(() => null);
+    verdict.facts.group = await matchGroup(client, site.text, loadGroupFiles()).catch(() => null);
   }
-  return parsed;
+  return verdict;
+}
+
+async function checkOwnership(client: Anthropic, name: string, website: string | null, lessons: string, today: string): Promise<OwnershipCheck | null> {
+  const system: Anthropic.Messages.TextBlockParam[] = [
+    { type: "text", text: OWNERSHIP_SYSTEM },
+    ...(lessons ? [{ type: "text" as const, text: `Seb's skip rules (reason, company: note). Only the ones about ownership or backing apply here:\n${lessons}` }] : []),
+  ];
+  system[system.length - 1] = { ...system[system.length - 1], cache_control: { type: "ephemeral" } };
+  const host = (() => {
+    const home = homepageOf(website);
+    try {
+      return home ? new URL(home).hostname.replace(/^www\./, "") : null;
+    } catch {
+      return null;
+    }
+  })();
+  const response = await trackedCreate(client, "outreach_screen", {
+    model: MODELS.drafting,
+    max_tokens: 600,
+    system,
+    tools: [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: 1 }],
+    messages: [{ role: "user", content: `Today: ${today}\nCompany: ${name}\nWebsite: ${host ?? website ?? "unknown"}` }],
+  });
+  return parseOwnershipCheck(stripCites(response.content.map((b) => (b.type === "text" ? b.text : "")).join("")));
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findLinkedInCompanyUrl, formatExcluded } from "../lib/outreach-screen";
+import { findLinkedInCompanyUrl, formatExcluded, parseOwnershipCheck, applyOwnershipCheck, ownershipSummary, type ScreenVerdict } from "../lib/outreach-screen";
 import { stripCites } from "../lib/anthropic";
 import { htmlToText, isUsablePageText, parseGroupMatch } from "../lib/scout";
 
@@ -75,5 +75,40 @@ describe("parseGroupMatch", () => {
     expect(parseGroupMatch('{"file":"Agriculture/","confidence":50}', groups).matched).toBe(false);
     expect(parseGroupMatch('{"file":"NO_MATCH","confidence":10}', groups)).toMatchObject({ matched: false, confidence: 10 });
     expect(parseGroupMatch("NO_MATCH", groups).matched).toBe(false);
+  });
+});
+
+describe("ownership check after the site check", () => {
+  const base: ScreenVerdict = {
+    status: "software",
+    reason: "Fleet maintenance software for rail operators.",
+    facts: { softwareType: "rail fleet maintenance software", businessModel: "software", acquiredBy: null, acquiredWhen: null, employeesOnSite: null, ownership: "unknown", investment: null, summary: "Rail fleet maintenance software, ownership unclear", group: null, linkedin: null, confidence: "high", source: [] },
+  };
+  it("keeps a clean company as software and says nothing was found", () => {
+    const c = parseOwnershipCheck('{"acquired":false,"acquired_by":null,"acquired_when":null,"ownership":"bootstrapped","investment":null,"skip_rule":null,"evidence":null}');
+    const v = applyOwnershipCheck(base, "Rail fleet maintenance", c);
+    expect(v.status).toBe("software");
+    expect(v.facts.ownership).toBe("bootstrapped");
+    expect(v.facts.summary).toBe("Rail fleet maintenance, bootstrapped, no acquisition or investment on record");
+  });
+  it("turns a found acquisition into an acquired verdict", () => {
+    const c = parseOwnershipCheck('Here you go: {"acquired":true,"acquired_by":"Trimble","acquired_when":"March 2026","ownership":"subsidiary","investment":null,"skip_rule":null,"evidence":"Trimble announced the acquisition in March 2026."}');
+    const v = applyOwnershipCheck(base, "Rail fleet maintenance", c);
+    expect(v.status).toBe("acquired");
+    expect(v.reason).toBe("Trimble announced the acquisition in March 2026.");
+    expect(v.facts.acquiredBy).toBe("Trimble");
+  });
+  it("applies Seb's ownership rule", () => {
+    const c = parseOwnershipCheck('{"acquired":false,"ownership":"vc_backed","investment":"Series A, May 2026","skip_rule":"VC-backed, skip","evidence":"Raised a Series A in May 2026."}');
+    const v = applyOwnershipCheck(base, "Rail fleet maintenance", c);
+    expect(v.status).toBe("acquired");
+    expect(v.reason).toBe("Your rule: VC-backed, skip. Raised a Series A in May 2026.");
+    expect(v.facts.summary).toBe("Rail fleet maintenance, VC-backed, raised Series A, May 2026");
+  });
+  it("keeps the verdict but flags a check that did not run", () => {
+    const v = applyOwnershipCheck(base, "Rail fleet maintenance", parseOwnershipCheck("no json here"));
+    expect(v.status).toBe("software");
+    expect(v.facts.confidence).toBe("low");
+    expect(ownershipSummary("Rail fleet maintenance", null)).toBe("Rail fleet maintenance, acquisition check did not run");
   });
 });
