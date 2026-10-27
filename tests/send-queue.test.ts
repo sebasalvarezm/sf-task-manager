@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planSendSlots, recipientTimeZone } from "../lib/send-slots";
 import { interpret } from "../lib/email-verify";
 import { estimateCost } from "../lib/model-cost";
-import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting, groupForSequence } from "../lib/e1-sends";
+import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting, groupForSequence, pruneResolvedFlags, type ReviewFlag } from "../lib/e1-sends";
 
 describe("recipientTimeZone", () => {
   it("maps states, provinces and countries", () => {
@@ -220,5 +220,21 @@ describe("groupForSequence", () => {
     expect(groupForSequence("[E] - Logistics — Industrial Gate & Yard")).toBe("Industrial Gate Yard");
     expect(groupForSequence("[D-E] - Carveout - Construction & Materials")).toBeNull();
     expect(groupForSequence(null)).toBeNull();
+  });
+});
+
+describe("pruneResolvedFlags", () => {
+  const flags: ReviewFlag[] = [
+    { kind: "other", severity: "red", message: 'The opening line names "WILL SA" instead of nVision Global, so the company name is wrong or a merge field failed.' },
+    { kind: "hook", severity: "yellow", message: "The Impact TMS description is not supported by the supplied evidence." },
+    { kind: "contact", severity: "red", message: "The chosen contact has no email address." },
+  ];
+  it("drops a model flag whose quoted text is gone and keeps the rest", () => {
+    const out = pruneResolvedFlags(flags, "Que-Riosity Nov 18: Valstone", "I have studied nVision Global going back to the acquisition of Traconi.");
+    expect(out.map((f) => f.kind)).toEqual(["hook", "contact"]);
+  });
+  it("keeps a model flag whose quoted text is still in the email", () => {
+    const out = pruneResolvedFlags(flags, "Hello", "I have studied WILL SA for years.");
+    expect(out).toHaveLength(3);
   });
 });

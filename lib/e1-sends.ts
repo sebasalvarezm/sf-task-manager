@@ -747,6 +747,25 @@ function systemFlags(send: Pick<E1Send, "contact_email" | "verify_result" | "seq
   return out;
 }
 
+/** The checks the code runs itself. Only these block Approve; the model review's flags are advice. */
+export const SYSTEM_FLAG_KINDS: ReadonlyArray<ReviewFlag["kind"]> = ["contact", "email", "sequence", "placeholder"];
+
+/**
+ * After Seb edits the subject or body, drop the model's flags he has visibly
+ * fixed: a flag that quotes text ("WILL SA") which is no longer in the email.
+ * A flag that quotes nothing, or whose quote is still there, stays, because
+ * we cannot tell from here whether it was dealt with.
+ */
+export function pruneResolvedFlags(flags: ReviewFlag[], subject: string | null, body: string | null): ReviewFlag[] {
+  const text = `${subject ?? ""}\n${body ?? ""}`.toLowerCase();
+  return flags.filter((f) => {
+    if (SYSTEM_FLAG_KINDS.includes(f.kind)) return true;
+    const quotes = Array.from(f.message.matchAll(/["\u201C\u201D]([^"\u201C\u201D]{2,120})["\u201C\u201D]/g)).map((m) => m[1].trim().toLowerCase()).filter(Boolean);
+    if (quotes.length === 0) return true;
+    return quotes.some((q) => text.includes(q));
+  });
+}
+
 function statusFromFlags(flags: ReviewFlag[]): E1Status {
   return flags.length > 0 ? "review" : "ready";
 }

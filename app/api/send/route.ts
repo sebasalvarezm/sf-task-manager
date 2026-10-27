@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { pruneResolvedFlags, addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences, type OutreachSequence } from "@/lib/outreach";
 import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
 
@@ -142,6 +142,11 @@ export async function PATCH(request: NextRequest) {
     }
     // An approved row that gets edited goes back to review so the change is looked at again.
     if (send.status === "approved") patch.status = "ready";
+    // Text edits: the model's flags about wording Seb has since removed go
+    // away, so a fixed email does not keep its old warnings.
+    if (patch.subject !== undefined || patch.body !== undefined) {
+      patch.review_flags = pruneResolvedFlags(send.review_flags, patch.subject ?? send.subject, patch.body ?? send.body);
+    }
     await updateSend(id, patch);
     // A sequence from another group (or none before) rewrites the email from that group's template.
     if (patch.sequence_id) {

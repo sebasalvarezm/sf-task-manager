@@ -585,6 +585,10 @@ function ReviewCard({ row, sequences, busy, open, sfUrl, onToggle, onApprove, on
   onEdit: (patch: Record<string, unknown>) => void;
 }) {
   const red = row.review_flags.filter((f) => f.severity === "red");
+  // Only the code's own checks (no contact, bad email, no sequence, a
+  // placeholder) block Approve, same as the server. A red flag from the model
+  // review is a strong warning, but Seb makes the call.
+  const blocking = red.filter((f) => ["contact", "email", "sequence", "placeholder"].includes(f.kind));
   const yellow = row.review_flags.filter((f) => f.severity === "yellow");
   const verify = row.verify_result ? VERIFY_LABEL[row.verify_result] : null;
   const editable = ["pending", "review", "ready"].includes(row.status);
@@ -632,7 +636,7 @@ function ReviewCard({ row, sequences, busy, open, sfUrl, onToggle, onApprove, on
           )}
         </div>
         <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 md:mt-0 md:flex md:items-center">
-          <Button className={APPROVE} loading={busy} disabled={red.length > 0 || row.status === "pending"} title={red.length ? red[0].message : undefined} onClick={onApprove}>Approve</Button>
+          <Button className={APPROVE} loading={busy} disabled={blocking.length > 0 || row.status === "pending"} title={blocking.length ? blocking[0].message : undefined} onClick={onApprove}>Approve</Button>
           <Button variant="danger" className="max-md:h-11 md:h-8" disabled={busy} onClick={onReject}>Reject</Button>
         </div>
       </div>
