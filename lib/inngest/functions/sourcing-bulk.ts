@@ -22,6 +22,8 @@ import {
   type BulkSourcingItem,
 } from "@/lib/jobs/sourcing-bulk-runner";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { anchorToSalesforce, needsAnchor, type SfLocation } from "@/lib/location-anchor";
+import { sfQuery } from "@/lib/sf-query";
 import { findGroupFileName, loadGroupFiles } from "@/lib/scout";
 import { createJob } from "@/lib/jobs";
 
@@ -311,6 +313,21 @@ export const sourcingBulkJob = inngest.createFunction(
         }
       }
 
+      // Town and restaurant follow the Salesforce location, not whichever
+      // office the website lists first (MCS Rental Software, UK account, got
+      // Fribourg). Runs on cached results too, so an old wrong town is fixed.
+      if (Array.isArray(input.weeklyOutreachIds) && input.weeklyOutreachIds.length > 0) {
+        const weeklyIds = input.weeklyOutreachIds;
+        const locations = await step.run("salesforce-locations", () => loadSalesforceLocations(weeklyIds));
+        for (let i = 0; i < Math.min(weeklyIds.length, processed.length); i++) {
+          const item = processed[i];
+          const sf = locations[weeklyIds[i]];
+          if (!item.result || item.error || !sf || !needsAnchor(item.result, sf)) continue;
+          const anchored = await step.run(`anchor-location-${i}`, () => anchorToSalesforce(item.result!, sf).catch(() => item.result!));
+          processed[i] = { ...item, result: anchored as SourcingResult };
+        }
+      }
+
       if (Array.isArray(input.weeklyOutreachIds)) {
         // Inside a step so a retry or replay doesn't redo these writes, and
         // a Supabase error fails the step instead of being ignored.
@@ -413,3 +430,29 @@ export const sourcingBulkJob = inngest.createFunction(
     }
   },
 );
+
+/**
+ * The location Seb sees on the send card: the Weekly Outreach row's city and
+ * country, else the Salesforce billing address. Keyed by weekly row id.
+ */
+async function loadSalesforceLocations(weeklyIds: string[]): Promise<Record<string, SfLocation>> {
+  const { data, error } = await getSupabaseAdmin().from("weekly_outreach").select("id, sf_account_id, city, country").in("id", weeklyIds);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<{ id: string; sf_account_id: string; city: string | null; country: string | null }>;
+  const billing = new Map<string, { BillingCity: string | null; BillingState: string | null; BillingCountry: string | null }>();
+  const ids = Array.from(new Set(rows.map((r) => r.sf_account_id).filter((x) => /^[a-zA-Z0-9]{15,18}$/.test(x))));
+  for (let i = 0; i < ids.length; i += 200) {
+    const recs = await sfQuery<{ Id: string; BillingCity: string | null; BillingState: string | null; BillingCountry: string | null }>(
+      `SELECT Id, BillingCity, BillingState, BillingCountry FROM Account WHERE Id IN (${ids.slice(i, i + 200).map((x) => `'${x}'`).join(",")})`,
+    ).catch(() => []);
+    for (const r of recs) billing.set(r.Id, r);
+  }
+  const out: Record<string, SfLocation> = {};
+  for (const r of rows) {
+    const b = billing.get(r.sf_account_id);
+    const city = r.city?.trim() || b?.BillingCity?.trim() || null;
+    if (!city) continue;
+    out[r.id] = { city, state: b?.BillingState ?? null, country: r.country?.trim() || b?.BillingCountry?.trim() || null };
+  }
+  return out;
+}
