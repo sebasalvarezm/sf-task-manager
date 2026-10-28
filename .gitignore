@@ -39,3 +39,4 @@ Claude outputs/
 # scratch
 _src_snapshot.tgz
 *.tgz
+.*-check.*

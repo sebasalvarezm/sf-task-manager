@@ -182,25 +182,32 @@ function TasksPageContent() {
     (t.AccountEmployees != null && t.AccountEmployees < BS_MIN_EMPLOYEES);
   // ── Nudges: accounts that wrote in within 45 days ─────────────────────────
   const [nudges, setNudges] = useState<Record<string, { lastInAt: string; topic: string; via?: "email" | "call" | "sent" }> | undefined>(undefined);
+  // Accounts already classified this visit. Sending a nudge removes one task,
+  // which changes the account list; that used to blank every chip and
+  // re-classify the whole week, and the panel waited on it before opening the
+  // next one. Now only accounts not seen yet are classified, and results merge.
+  const classifiedRef = useRef<Set<string>>(new Set());
   const weekAccountKey = Array.from(new Set(weekTasks.map((t) => t.AccountId).filter(Boolean))).sort().join(",");
   useEffect(() => {
-    if (!weekAccountKey) {
-      setNudges({});
+    const missing = weekAccountKey ? weekAccountKey.split(",").filter((id) => !classifiedRef.current.has(id)) : [];
+    if (missing.length === 0) {
+      setNudges((prev) => prev ?? {});
       return;
     }
     let cancelled = false;
-    setNudges(undefined);
     fetch("/api/nudges", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "classify", accountIds: weekAccountKey.split(",") }),
+      body: JSON.stringify({ action: "classify", accountIds: missing }),
     })
       .then((res) => res.json())
       .then((data) => {
-        if (!cancelled) setNudges(data.nudges ?? {});
+        if (cancelled) return;
+        for (const id of missing) classifiedRef.current.add(id);
+        setNudges((prev) => ({ ...(prev ?? {}), ...(data.nudges ?? {}) }));
       })
       .catch(() => {
-        if (!cancelled) setNudges({});
+        if (!cancelled) setNudges((prev) => prev ?? {});
       });
     return () => {
       cancelled = true;
@@ -208,11 +215,15 @@ function TasksPageContent() {
   }, [weekAccountKey]);
   const [nudgeTask, setNudgeTask] = useState<SalesforceTask | null>(null);
   const nudgeQueue = weekTasks.filter((t) => t.AccountId && nudges?.[t.AccountId] && !actions.has(t.Id));
-  function openNextNudge(after: SalesforceTask) {
+  function nextNudgeAfter(after: SalesforceTask): SalesforceTask | null {
     const rest = nudgeQueue.filter((t) => t.Id !== after.Id);
     const idx = nudgeQueue.findIndex((t) => t.Id === after.Id);
-    setNudgeTask(rest[idx] ?? rest[0] ?? null);
+    return rest[idx] ?? rest[0] ?? null;
   }
+  function openNextNudge(after: SalesforceTask) {
+    setNudgeTask(nextNudgeAfter(after));
+  }
+  const upcomingNudge = nudgeTask ? nextNudgeAfter(nudgeTask) : null;
 
   const bsCandidates = weekTasks.filter((t) => looksBs(t) && !actions.has(t.Id));
 
@@ -472,6 +483,7 @@ function TasksPageContent() {
           topic={nudges[nudgeTask.AccountId].topic}
           via={nudges[nudgeTask.AccountId].via}
           remaining={nudgeQueue.length}
+          next={upcomingNudge && upcomingNudge.AccountId && nudges[upcomingNudge.AccountId] ? { task: upcomingNudge, topic: nudges[upcomingNudge.AccountId].topic, via: nudges[upcomingNudge.AccountId].via } : null}
           onClose={() => setNudgeTask(null)}
           onSent={(sent, note) => {
             setAllTasks((prev) => prev.filter((t) => t.Id !== sent.Id));
@@ -527,11 +539,36 @@ type PreparedNudge = {
   body: string;
 };
 
+/**
+ * Drafts prepared this visit, by task id. While Seb reads one nudge the next
+ * one is prepared in the background, so Send (or Skip) opens it ready instead
+ * of waiting on the thread read and the draft. A failure is dropped from the
+ * cache so opening it again retries.
+ */
+const preparedCache = new Map<string, Promise<PreparedNudge>>();
+function prepareNudgeFor(task: SalesforceTask, topic: string, via?: "email" | "call" | "sent"): Promise<PreparedNudge> {
+  const hit = preparedCache.get(task.Id);
+  if (hit) return hit;
+  const p = fetch("/api/nudges", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "prepare", accountId: task.AccountId, accountName: task.AccountName, website: task.AccountWebsite, topic, via }),
+  }).then(async (res) => {
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? "Could not prepare the nudge");
+    return data as PreparedNudge;
+  });
+  preparedCache.set(task.Id, p);
+  p.catch(() => preparedCache.delete(task.Id));
+  return p;
+}
+
 function NudgePanel(props: {
   task: SalesforceTask;
   topic: string;
   via?: "email" | "call" | "sent";
   remaining: number;
+  next: { task: SalesforceTask; topic: string; via?: "email" | "call" | "sent" } | null;
   onClose: () => void;
   onSent: (task: SalesforceTask, note: string | null) => void;
   onSkip: (task: SalesforceTask) => void;
@@ -548,14 +585,8 @@ function NudgePanel(props: {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/nudges", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "prepare", accountId: task.AccountId, accountName: task.AccountName, website: task.AccountWebsite, topic: props.topic, via: props.via }),
-    })
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error ?? "Could not prepare the nudge");
+    prepareNudgeFor(task, props.topic, props.via)
+      .then((data) => {
         if (!cancelled) {
           setPrepared(data);
           setBody(data.body ?? "");
@@ -567,6 +598,15 @@ function NudgePanel(props: {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.Id]);
+  // Get the next one ready while this one is being read.
+  const nextId = props.next?.task.Id ?? null;
+  useEffect(() => {
+    if (!props.next) return;
+    const n = props.next;
+    const t = window.setTimeout(() => void prepareNudgeFor(n.task, n.topic, n.via).catch(() => undefined), 1500);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextId]);
 
   const daysValue = days.trim() === "" ? null : Number(days.replace(/[^0-9]/g, ""));
   const daysValid = days.trim() === "" || (Number.isFinite(daysValue) && (daysValue ?? 0) > 0);
