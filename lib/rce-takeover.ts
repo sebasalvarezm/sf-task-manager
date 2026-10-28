@@ -6,6 +6,9 @@
  *   1. account (and the emailed contact) owned by Seb,
  *   2. a completed RCE1 task dated today,
  *   3. an open RCE1 task seven days out, so it shows in his open tasks.
+ * Steps 2 and 3 are skipped when the row came from an open task (the Tasks
+ * page already rolled it), and step 3 when Seb already has an open task on
+ * the account.
  * Never throws: the email has already gone, so problems come back as notes.
  */
 import { addDays, format } from "date-fns";
@@ -40,12 +43,18 @@ export async function runTakeoverSalesforce(params: {
   email: string | null;
   subject: string;
   body: string;
-}): Promise<{ notes: string[]; contactId: string | null }> {
+  /**
+   * The row came from an open task on the Tasks page, which already
+   * completed that task and opened the next one. Logging here too doubled
+   * both (FunnelCloud, Oct 2026), so only the ownership moves run.
+   */
+  fromOpenTask?: boolean;
+}): Promise<{ notes: string[]; contactId: string | null; tasksLogged: boolean }> {
   const notes: string[] = [];
   let contactId = params.contactId;
   try {
     const credentials = await getValidCredentials();
-    if (!credentials) return { notes: ["Salesforce not connected: owner and tasks not updated."], contactId };
+    if (!credentials) return { notes: ["Salesforce not connected: owner and tasks not updated."], contactId, tasksLogged: false };
     const me = credentials.salesforce_user_id;
     const accountId = assertSalesforceId(params.accountId, "account id");
     const write = async (path: string, method: string, payload: object, what: string) => {
@@ -74,6 +83,13 @@ export async function runTakeoverSalesforce(params: {
     await write(`sobjects/Account/${accountId}`, "PATCH", { OwnerId: me }, "Moving the account to you");
     if (contactId) await write(`sobjects/Contact/${contactId}`, "PATCH", { OwnerId: me }, "Moving the contact to you");
 
+    if (params.fromOpenTask) return { notes, contactId, tasksLogged: false };
+    // Belt and braces for any other path: an open task of Seb's already on
+    // the account is his follow-up, so a second one is not opened.
+    const openTasks = await sfQuery<{ Id: string }>(
+      `SELECT Id FROM Task WHERE WhatId = '${accountId}' AND OwnerId = '${me}' AND IsClosed = false LIMIT 1`,
+    ).catch(() => [] as Array<{ Id: string }>);
+
     const today = format(new Date(), "yyyy-MM-dd");
     await write("sobjects/Task", "POST", {
       Subject: params.subject,
@@ -86,7 +102,7 @@ export async function runTakeoverSalesforce(params: {
       OwnerId: me,
       Description: params.body.slice(0, 30000),
     }, "Logging the completed RCE");
-    await write("sobjects/Task", "POST", {
+    if (openTasks.length === 0) await write("sobjects/Task", "POST", {
       Subject: params.subject,
       Subject_Type__c: "RCE1",
       Status: "Open",
@@ -99,5 +115,5 @@ export async function runTakeoverSalesforce(params: {
   } catch (error) {
     notes.push(`Salesforce update failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-  return { notes, contactId };
+  return { notes, contactId, tasksLogged: true };
 }

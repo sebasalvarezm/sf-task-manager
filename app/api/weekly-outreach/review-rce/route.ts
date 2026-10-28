@@ -65,6 +65,7 @@ export async function POST(request: Request) {
       email,
       subject: metadata.replySubject ?? `Valstone / ${item.account_name}`,
       body: sentDraft,
+      fromOpenTask: item.source === "tasks",
     });
     t.contactId = result.contactId;
     if (result.notes.length === 0) t.salesforceDoneAt = new Date().toISOString();
