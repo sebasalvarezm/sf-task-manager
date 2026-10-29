@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planSendSlots, recipientTimeZone } from "../lib/send-slots";
 import { interpret } from "../lib/email-verify";
 import { estimateCost } from "../lib/model-cost";
-import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting, groupForSequence, pruneResolvedFlags, withHeadOfOps, type ReviewFlag } from "../lib/e1-sends";
+import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting, groupForSequence, pruneResolvedFlags, withHeadOfOps, namedAddress, type ReviewFlag } from "../lib/e1-sends";
 
 describe("recipientTimeZone", () => {
   it("maps states, provinces and countries", () => {
@@ -250,5 +250,13 @@ describe("Ralph's accounts", () => {
     expect(withHeadOfOps(body, null)).toBe(body);
     const once = withHeadOfOps(body, "Ralph");
     expect(withHeadOfOps(once, "Ralph")).toBe(once);
+  });
+});
+
+describe("namedAddress", () => {
+  it("adds the display name so the inbox shows a name, not the address twice", () => {
+    expect(namedAddress("Richard van der Knaap", "richv@mcs.co.uk")).toBe('"Richard van der Knaap" <richv@mcs.co.uk>');
+    expect(namedAddress(null, "a@b.com")).toBe("a@b.com");
+    expect(namedAddress('Bad "Name" <x>', "a@b.com")).toBe('"Bad Name x" <a@b.com>');
   });
 });
