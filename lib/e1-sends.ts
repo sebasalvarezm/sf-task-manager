@@ -1187,12 +1187,46 @@ export async function stepSignature(draftHtml: string, settings: SendSettings): 
  * a mailing already scheduled or sent is recorded, never rewritten or sent
  * twice. Throws when Outreach does not keep exactly our subject and body.
  */
+/** Ralph, Valstone's Head of Operations, cc'd on the accounts he sends over. */
+export const RALPH_CC = "r.aziz@valstonecorp.com";
+
+async function ralphRowFor(send: E1Send): Promise<boolean> {
+  if (!send.weekly_outreach_id) return false;
+  const { data } = await getSupabaseAdmin().from("weekly_outreach").select("notes").eq("id", send.weekly_outreach_id).maybeSingle();
+  return isRalphRow((data as { notes: string | null } | null)?.notes);
+}
+
+/**
+ * Put "to: the prospect, cc: someone" on a drafted Outreach mailing and check
+ * Outreach kept both. Throws (so nothing is scheduled) if it did not.
+ */
+async function setMailingCc(mailingId: string, prospectId: string, toEmail: string, ccEmail: string): Promise<void> {
+  const make = async (body: object, what: string) => {
+    const res = await outreachRequest("/recipients", { method: "POST", body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`Outreach would not add the ${what}: ${(await res.text()).slice(0, 200)}. Nothing scheduled.`);
+    return String(((await res.json()) as { data: { id: string | number } }).data.id);
+  };
+  const to = await make({ data: { type: "recipient", attributes: { recipientType: "to", value: toEmail }, relationships: { prospect: { data: { type: "prospect", id: Number(prospectId) } } } } }, "main recipient");
+  const cc = await make({ data: { type: "recipient", attributes: { recipientType: "cc", value: ccEmail } } }, "cc");
+  const patch = await outreachRequest(`/mailings/${mailingId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ data: { type: "mailing", id: Number(mailingId), relationships: { recipients: { data: [{ type: "recipient", id: Number(to) }, { type: "recipient", id: Number(cc) }] } } } }),
+  });
+  if (!patch.ok) throw new Error(`Outreach would not attach the cc: ${(await patch.text()).slice(0, 200)}. Nothing scheduled.`);
+  const check = await outreachRequest(`/mailings/${mailingId}?include=recipients`);
+  const got = (await check.json().catch(() => null)) as { included?: Array<{ type: string; attributes?: { recipientType?: string; value?: string } }> } | null;
+  const recs = (got?.included ?? []).filter((x) => x.type === "recipient").map((x) => `${x.attributes?.recipientType}:${(x.attributes?.value ?? "").toLowerCase()}`);
+  if (!recs.some((r) => r.startsWith("to:") && r.includes(toEmail.toLowerCase())) || !recs.some((r) => r.startsWith("cc:") && r.includes(ccEmail.toLowerCase()))) {
+    throw new Error("Outreach did not keep the to and cc on step 1. Nothing scheduled.");
+  }
+}
+
 export async function fillStepMailing(id: string, mailingId: string, sendAt: Date, settings: SendSettings): Promise<E1Send> {
   const send = await getSend(id);
   if (!send || !send.body) throw new Error("Send row has no body.");
   if (send.status !== "scheduling") return send; // cancelled or reset while waiting
 
-  const current = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=state,subject,scheduledAt,bodyHtml`);
+  const current = await outreachRequest(`/mailings/${mailingId}?fields[mailing]=state,subject,scheduledAt,bodyHtml,prospect`);
   const cur = (await current.json().catch(() => null)) as { data?: { attributes?: { state?: string; subject?: string; scheduledAt?: string; bodyHtml?: string } } } | null;
   const state = cur?.data?.attributes?.state ?? "";
   if (state && state !== "drafted") {
@@ -1218,6 +1252,15 @@ export async function fillStepMailing(id: string, mailingId: string, sendAt: Dat
   const squash = (v: string) => v.replace(/\s+/g, " ").trim();
   if ((got?.data?.attributes?.subject ?? "").trim() !== subject || squash(got?.data?.attributes?.bodyHtml ?? "") !== squash(bodyHtml)) {
     throw new Error(`Outreach did not keep the reviewed subject and email on step 1 (mailing ${mailingId}). Nothing scheduled.`);
+  }
+
+  // Ralph's accounts: cc him on step 1. Tested Oct 2026: a cc alone made
+  // Outreach drop the prospect ("No recipient set"), so the prospect goes in
+  // as "to" alongside it, and both must read back before anything is scheduled.
+  if (await ralphRowFor(send)) {
+    const prospectId = (cur as { data?: { relationships?: { prospect?: { data?: { id?: string | number } } } } } | null)?.data?.relationships?.prospect?.data?.id ?? send.outreach_prospect_id;
+    if (!prospectId || !send.contact_email) throw new Error("Ralph cc: no prospect or email on this row. Nothing scheduled.");
+    await setMailingCc(mailingId, String(prospectId), send.contact_email, RALPH_CC);
   }
 
   const base = { outreach_mailing_id: mailingId } as Partial<E1Send>;
