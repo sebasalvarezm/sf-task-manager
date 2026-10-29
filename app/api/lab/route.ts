@@ -85,6 +85,22 @@ async function outreachWriteAllowed(method: string, path: string, body: unknown)
     const t = await outreachGet(`/tasks/${id}`);
     return await prospects.has(relId(t?.data, "prospect") ?? "") ? "test prospect's task" : null;
   }
+  if (kind === "recipients") {
+    // cc tests (Ralph, Oct 2026): only Seb's own test addresses, and only on a test prospect's mailing.
+    const emailOf = (v: unknown) => (typeof v === "string" ? (v.match(/<([^>]+)>/)?.[1] ?? v).trim() : "");
+    if (!id) {
+      const attrs = (data?.attributes as Json | undefined) ?? {};
+      if (!isTestEmail(emailOf(attrs.value ?? attrs.emailAddress))) return null;
+      const mailing = relId(data, "mailing");
+      if (mailing) {
+        const ml = await outreachGet(`/mailings/${mailing}`);
+        return await prospects.has(relId(ml?.data, "prospect") ?? "") ? "test cc on test prospect's mailing" : null;
+      }
+      return "test recipient";
+    }
+    const rc = await outreachGet(`/recipients/${id}`);
+    return isTestEmail(emailOf(((rc?.data as Json | undefined)?.attributes as Json | undefined)?.value)) ? "test recipient" : null;
+  }
   if (kind === "sequences") {
     if (!id) return String((data?.attributes as Json | undefined)?.name ?? "").startsWith("[TEST]") ? "new [TEST] sequence" : null;
     return (await sequenceIsTest(id)) ? "[TEST] sequence" : null;
