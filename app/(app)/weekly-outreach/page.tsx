@@ -117,12 +117,10 @@ function isE1ReadyForSourcing(
 ): boolean {
   if (item.outreach_type !== "E1" || item.status === "sent") return false;
   if (item.sourcing_job_id) return retryableJobIds.has(item.sourcing_job_id);
-  return (
-    !item.draft &&
-    item.status !== "researching" &&
-    item.status !== "draft_ready" &&
-    item.status !== "approved"
-  );
+  // No draft means not sourced, whatever the status says. A row set to
+  // "Draft ready" by hand with no draft (Connixt, Oct 2026) was skipped by
+  // both this button and the send queue.
+  return !item.draft && item.status !== "researching";
 }
 
 /** Row colour code, kept by request: green once an email is out, amber when an RCE still owes its second email. */

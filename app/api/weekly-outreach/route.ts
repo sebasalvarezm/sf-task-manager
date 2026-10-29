@@ -17,6 +17,7 @@ import {
   type WeeklyOutreachStatus,
   type WeeklyOutreachType,
 } from "@/lib/weekly-outreach";
+import { reuseRecentSourcing } from "@/lib/weekly-sourcing-link";
 
 export async function GET(request: NextRequest) {
   if (!(await isAuthenticated())) {
@@ -63,11 +64,12 @@ export async function POST(request: NextRequest) {
         weekStart: body.weekStart,
         source: "manual",
       });
+      const linked = new Map((await reuseRecentSourcing(results.flatMap((r) => (r.item ? [r.item] : [])))).map((i) => [i.id, i]));
       return NextResponse.json({
-        results: results.map((result) => ({
-          ...result,
-          item: result.item ? withWeeklyOutreachClientMetadata(result.item) : undefined,
-        })),
+        results: results.map((result) => {
+          const item = result.item ? linked.get(result.item.id) ?? result.item : undefined;
+          return { ...result, item: item ? withWeeklyOutreachClientMetadata(item) : undefined };
+        }),
       });
     }
 
@@ -98,7 +100,8 @@ export async function POST(request: NextRequest) {
         account: resolved.account,
         source: "manual",
       });
-      return NextResponse.json({ item: withWeeklyOutreachClientMetadata(item) });
+      const [linked] = await reuseRecentSourcing([item]);
+      return NextResponse.json({ item: withWeeklyOutreachClientMetadata(linked ?? item) });
     }
 
     if (!body.accountId || !body.outreachType) {
@@ -112,7 +115,8 @@ export async function POST(request: NextRequest) {
       sourceReference: body.sourceReference,
       rceDays: body.rceDays,
     });
-    return NextResponse.json({ item: withWeeklyOutreachClientMetadata(item) });
+    const [linked] = await reuseRecentSourcing([item]);
+    return NextResponse.json({ item: withWeeklyOutreachClientMetadata(linked ?? item) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";
     return NextResponse.json(
