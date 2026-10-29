@@ -168,6 +168,23 @@ export async function updateSend(id: string, patch: Partial<E1Send>): Promise<E1
 
 // ── Creating rows from this week's sourced E1s ──────────────────────────────
 
+/** "Ralph" in the Weekly Outreach notes: an account Ralph sent over, and he is joining the trip. */
+export function isRalphRow(notes: string | null | undefined): boolean {
+  return /\bralph\b/i.test(notes ?? "");
+}
+
+/**
+ * Ralph's accounts: the travel line says the Head of Operations is coming.
+ * "I will be near Cerritos in the third week of November and would love..."
+ * becomes "...in the third week of November alongside our Head of Operations
+ * and would love...". Any other row, or a body without that line, comes back
+ * unchanged; running it twice changes nothing.
+ */
+export function withHeadOfOps(body: string | null, notes: string | null | undefined): string | null {
+  if (!body || !isRalphRow(notes) || /head of operations/i.test(body)) return body;
+  return body.replace(/(I will be near [^.\n]*? in the \w+ week of [A-Z][a-z]+)/, "$1 alongside our Head of Operations");
+}
+
 /** Split the Weekly Outreach draft ("subject\n\nbody") back into its parts. */
 export function splitDraft(draft: string | null): { subject: string | null; body: string | null } {
   if (!draft) return { subject: null, body: null };
@@ -207,7 +224,8 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
   for (const r of rows) {
     const prev = byWeekly.get(r.id);
     if (!prev || !r.draft || !["pending", "review", "ready"].includes(prev.status)) continue;
-    const { subject, body } = splitDraft(r.draft);
+    const { subject, body: rawBody } = splitDraft(r.draft);
+    const body = withHeadOfOps(rawBody, r.notes);
     const groupChanged = (r.group_name ?? null) !== (prev.group_name ?? null);
     if (subject === prev.subject && body === prev.body && !groupChanged) continue;
     const { error: updErr } = await db
@@ -252,7 +270,8 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
 
   const created: string[] = [];
   for (const r of fresh) {
-    const { subject, body } = splitDraft(r.draft);
+    const { subject, body: rawBody } = splitDraft(r.draft);
+    const body = withHeadOfOps(rawBody, r.notes);
     const loc = states.get(r.sf_account_id);
     const { data, error: insErr } = await db
       .from("e1_sends")
@@ -868,6 +887,13 @@ export async function recheckSend(id: string): Promise<E1Send> {
   }
   if (send.body && send.body.includes("[INSERT TOWN]") && send.city?.trim()) {
     patch.body = send.body.split("[INSERT TOWN]").join(send.city.trim());
+  }
+  // "Ralph" typed into the notes after the row reached the queue.
+  if (send.weekly_outreach_id) {
+    const { data: wk } = await getSupabaseAdmin().from("weekly_outreach").select("notes").eq("id", send.weekly_outreach_id).maybeSingle();
+    const current = patch.body ?? send.body;
+    const next = withHeadOfOps(current, (wk as { notes: string | null } | null)?.notes);
+    if (next !== current) patch.body = next;
   }
   // Hook line and restaurant list come from the sourcing run; refresh both
   // every time, so a row prepared before these existed catches up.

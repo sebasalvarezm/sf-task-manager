@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planSendSlots, recipientTimeZone } from "../lib/send-slots";
 import { interpret } from "../lib/email-verify";
 import { estimateCost } from "../lib/model-cost";
-import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting, groupForSequence, pruneResolvedFlags, type ReviewFlag } from "../lib/e1-sends";
+import { findPlaceholders, hookInfoFrom, matchSequence, normalizeSequenceName, rankContacts, splitDraft, titleRank, withGreeting, groupForSequence, pruneResolvedFlags, withHeadOfOps, type ReviewFlag } from "../lib/e1-sends";
 
 describe("recipientTimeZone", () => {
   it("maps states, provinces and countries", () => {
@@ -236,5 +236,19 @@ describe("pruneResolvedFlags", () => {
   it("keeps a model flag whose quoted text is still in the email", () => {
     const out = pruneResolvedFlags(flags, "Hello", "I have studied WILL SA for years.");
     expect(out).toHaveLength(3);
+  });
+});
+
+describe("Ralph's accounts", () => {
+  const body = "I have studied Connixt.\n\nI will be near Cerritos in the third week of November and would love to discuss at your office or a good restaurant nearby. Please let me know if available.";
+  it("adds the Head of Operations to the travel line when the notes say Ralph", () => {
+    expect(withHeadOfOps(body, "Ralph")).toContain("I will be near Cerritos in the third week of November alongside our Head of Operations and would love to discuss");
+    expect(withHeadOfOps(body, "from ralph, call first")).toContain("alongside our Head of Operations");
+  });
+  it("leaves every other row alone and never doubles up", () => {
+    expect(withHeadOfOps(body, "Ralphie's list")).toBe(body);
+    expect(withHeadOfOps(body, null)).toBe(body);
+    const once = withHeadOfOps(body, "Ralph");
+    expect(withHeadOfOps(once, "Ralph")).toBe(once);
   });
 });
