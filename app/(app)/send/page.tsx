@@ -185,7 +185,7 @@ export default function SendQueuePage() {
       return n;
     });
   }
-  async function act(id: string, action: "approve" | "reject" | "unapprove" | "cancel" | "recheck" | "rehook" | "add_contact" | "confirm" | "resume", extra: Record<string, unknown> = {}): Promise<boolean> {
+  async function act(id: string, action: "approve" | "reject" | "unapprove" | "cancel" | "recheck" | "rehook" | "add_contact" | "confirm" | "resume" | "restore", extra: Record<string, unknown> = {}): Promise<boolean> {
     setRowBusy(id, true);
     setError(null);
     try {
@@ -374,6 +374,7 @@ export default function SendQueuePage() {
                     onCancel={() => void act(row.id, "cancel")}
                     onResume={() => void act(row.id, "resume")}
                     onConfirm={() => void act(row.id, "confirm")}
+                    onRestore={() => void (async () => { if (await act(row.id, "restore")) { setTab("review"); setOpen(row.id); } })()}
                   />
                 ),
               )}
@@ -475,7 +476,7 @@ function useCopy() {
 }
 
 /** Ready, Scheduled, Sent and Rejected: a simple card, the status in words, and at most two actions. */
-function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onSendNow, onRetry, onPullBack, onCancel, onConfirm, onResume }: {
+function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onSendNow, onRetry, onPullBack, onCancel, onConfirm, onResume, onRestore }: {
   row: Row;
   now: number;
   sending: boolean;
@@ -489,6 +490,7 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
   onCancel: () => void;
   onConfirm?: () => void;
   onResume?: () => void;
+  onRestore?: () => void;
 }) {
   const line = statusLine(row, { now, sending, manualSend });
   const stage = stageOf(row, now, sending);
@@ -560,6 +562,10 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
             <Button variant="secondary" className="max-md:h-11" loading={busy} title="Waiting too long? Fill step 1 and send now" onClick={onResume}>Resume</Button>
           ) : null}
           <Button variant="ghost" className="-ml-4 max-md:h-11 md:ml-0" loading={busy} disabled={jobRunning} onClick={onCancel}>Cancel</Button>
+        </div>
+      ) : row.status === "rejected" && onRestore ? (
+        <div className="mt-2 flex shrink-0 gap-2 md:mt-0">
+          <Button variant="secondary" className="max-md:h-11" loading={busy} disabled={jobRunning} title="Back to To review, contacts re-read from Salesforce" onClick={onRestore}>Restore</Button>
         </div>
       ) : null}
     </div>

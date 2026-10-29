@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { pruneResolvedFlags, addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { pruneResolvedFlags, restoreSend, addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences, type OutreachSequence } from "@/lib/outreach";
 import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
 
@@ -62,7 +62,8 @@ export async function POST(request: NextRequest) {
         await start(job.id, "job/e1_prepare", job.input);
         return NextResponse.json({ jobId: job.id });
       }
-      case "recheck": return NextResponse.json({ item: await recheckSend(need(body.id)) });
+      case "recheck": return NextResponse.json({ item: await recheckSend(need(body.id), { refreshContacts: true }) });
+      case "restore": return NextResponse.json({ item: await restoreSend(need(body.id)) });
       case "rehook": return NextResponse.json({ item: await rehookSend(need(body.id)) });
       case "add_contact": {
         const c = (body as { contact?: { firstName?: string; lastName?: string; email?: string; title?: string } }).contact ?? {};

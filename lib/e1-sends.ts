@@ -861,10 +861,31 @@ export async function prepareSend(id: string, options: { sequences?: OutreachSeq
 }
 
 /** After Seb changes the contact, sequence, subject or body: re-run the cheap checks and keep the model flags that still apply. */
-export async function recheckSend(id: string): Promise<E1Send> {
-  const send = await getSend(id);
-  if (!send) throw new Error("Send row not found.");
+export async function recheckSend(id: string, options: { refreshContacts?: boolean } = {}): Promise<E1Send> {
+  const loaded = await getSend(id);
+  if (!loaded) throw new Error("Send row not found.");
+  let send = loaded;
   const patch: Partial<E1Send> = {};
+  // "Re-check email and sequence": read the account's contacts from
+  // Salesforce again, so a fixed email, a new title or a newly added contact
+  // shows up. The picked contact is kept and its details refreshed.
+  if (options.refreshContacts) {
+    const contacts = (await fetchContactsForAccounts([send.sf_account_id]).catch(() => null))?.get(send.sf_account_id);
+    if (contacts) {
+      const fresh = rankContacts(contacts);
+      const chosen = (send.contact_id && fresh.find((c) => c.id === send.contact_id)) || (!send.contact_id ? fresh.find((c) => c.email) : null) || null;
+      patch.contact_options = fresh;
+      if (chosen) {
+        patch.contact_id = chosen.id;
+        patch.contact_name = chosen.name;
+        patch.contact_first_name = chosen.firstName;
+        patch.contact_last_name = chosen.lastName;
+        patch.contact_title = chosen.title;
+        patch.contact_email = chosen.email;
+      }
+      send = { ...send, ...patch };
+    }
+  }
   if (send.contact_email && send.contact_email !== send.verified_email) {
     const v = await verifyEmail(send.contact_email);
     patch.verify_result = v.result;
@@ -933,6 +954,18 @@ export async function unapproveSend(id: string): Promise<E1Send> {
 
 export async function rejectSend(id: string, reason: string | null): Promise<E1Send> {
   return updateSend(id, { status: "rejected", status_reason: reason });
+}
+
+/**
+ * Undo a reject: the row goes back to review and is prepared again from
+ * scratch, contacts re-read from Salesforce. Its text and any hand edits stay.
+ */
+export async function restoreSend(id: string): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (send.status !== "rejected") throw new Error("Only a rejected email can be restored.");
+  await updateSend(id, { status: "pending", status_reason: null });
+  return prepareSend(id);
 }
 
 // ── Scheduling: the Outreach work ───────────────────────────────────────────
