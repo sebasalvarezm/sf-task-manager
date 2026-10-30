@@ -3,7 +3,10 @@
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { SalesforceTask } from "@/lib/salesforce";
-import WeekSelector, { WeekRange, generateWeeks, currentWeekIndex } from "@/app/components/WeekSelector";
+import { WeekRange, generateWeeks, currentWeekIndex } from "@/app/components/WeekSelector";
+import WeekPicker from "@/app/components/WeekPicker";
+import { addDays, format } from "date-fns";
+
 import TaskTable, { TaskAction } from "@/app/components/TaskTable";
 import ConnectSalesforce from "@/app/components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
@@ -12,6 +15,12 @@ import { Button } from "@/app/components/ui/Button";
 import { Spinner } from "@/app/components/ui/Spinner";
 import { Alert } from "@/app/components/ui/Alert";
 import { RefreshCw } from "lucide-react";
+
+/** The Monday-to-Sunday range the task filter uses, from the picker's Monday. */
+function weekFromStart(start: string): WeekRange {
+  const end = format(addDays(new Date(`${start}T12:00:00`), 6), "yyyy-MM-dd");
+  return { label: `${start} – ${end}`, start, end };
+}
 
 // ── Pending-actions auto-save ────────────────────────────────────────────────
 // As you fill in delete/reschedule/delay choices we mirror the actions map to
@@ -343,11 +352,13 @@ function TasksPageContent() {
         actions={
           connected === true ? (
             <>
-              <WeekSelector
-                selected={selectedWeek}
-                onChange={(week) => {
+              {/* Same week picker as Weekly Outreach. */}
+              <WeekPicker
+                value={selectedWeek?.start ?? generateWeeks()[currentWeekIndex()].start}
+                onChange={(start) => {
+                  if (start === selectedWeek?.start) return;
                   if (actions.size > 0 && !window.confirm("You have unsaved queued actions. Switch weeks and discard them?")) return;
-                  setSelectedWeek(week);
+                  setSelectedWeek(weekFromStart(start));
                   setActions(new Map());
                   setApplyResult(null);
                 }}
