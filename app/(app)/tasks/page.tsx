@@ -8,6 +8,7 @@ import WeekPicker from "@/app/components/WeekPicker";
 import { addDays, format } from "date-fns";
 
 import TaskTable, { TaskAction } from "@/app/components/TaskTable";
+import { keepAfterFailure } from "@/lib/task-apply";
 import ConnectSalesforce from "@/app/components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
@@ -55,6 +56,44 @@ function saveDraftActions(actions: Map<string, TaskAction>) {
   }
 }
 
+// The last submitted batch, kept until Salesforce confirms it. If the page
+// loses the queue for any reason, it is restored from here on the next load.
+const SUBMITTED_BATCH_KEY = "submitted_task_actions_v1";
+const APPLY_BATCH = 25;
+const SIGNED_OUT = "SIGNED_OUT";
+const SIGNED_OUT_TEXT = "Your login expired.";
+
+function saveSubmittedBatch(list: TaskAction[]) {
+  try {
+    localStorage.setItem(SUBMITTED_BATCH_KEY, JSON.stringify(list));
+  } catch {
+    // non-critical
+  }
+}
+function clearSubmittedBatch() {
+  try {
+    localStorage.removeItem(SUBMITTED_BATCH_KEY);
+  } catch {
+    // non-critical
+  }
+}
+function loadSubmittedBatch(): TaskAction[] {
+  try {
+    const raw = localStorage.getItem(SUBMITTED_BATCH_KEY);
+    const list = raw ? (JSON.parse(raw) as TaskAction[]) : [];
+    return Array.isArray(list) ? list.filter((a) => a && typeof a.taskId === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** JSON body of a response, or null when the server sent something else (a login or error page). */
+type ApiJson = { error?: string; tasks?: SalesforceTask[] } & Record<string, unknown>;
+async function readJson(res: Response): Promise<ApiJson | null> {
+  if (res.redirected && /\/login/.test(res.url)) return { error: SIGNED_OUT };
+  return (await res.json().catch(() => null)) as ApiJson | null;
+}
+
 type ApplyResult = {
   successCount: number;
   failCount: number;
@@ -98,8 +137,14 @@ function TasksPageContent() {
   // initial empty Map before restore has happened.
   const [draftRestored, setDraftRestored] = useState(false);
 
+  // Actions from a submit that never got confirmed. They are checked against
+  // Salesforce once tasks load, so one that did run is never queued twice.
+  const unconfirmedRef = useRef<TaskAction[]>([]);
   useEffect(() => {
     const restored = loadDraftActions();
+    const unconfirmed = loadSubmittedBatch().filter((a) => !restored.has(a.taskId));
+    for (const a of unconfirmed) restored.set(a.taskId, a);
+    unconfirmedRef.current = unconfirmed;
     if (restored.size > 0) setActions(restored);
     setDraftRestored(true);
   }, []);
@@ -150,29 +195,45 @@ function TasksPageContent() {
     }
   }
 
-  const loadTasks = useCallback(async () => {
+  /** Loads open tasks from Salesforce. Returns the fresh list, or null when it failed. */
+  const loadTasks = useCallback(async (): Promise<SalesforceTask[] | null> => {
     setTasksLoading(true);
     setTasksError(null);
     try {
       const res = await fetch("/api/salesforce/tasks");
-      if (!res.ok) {
-        const err = await res.json();
-        if (err.error === "NOT_CONNECTED") {
+      const data = await readJson(res);
+      if (!res.ok || !data) {
+        if (data?.error === "NOT_CONNECTED") {
           setConnected(false);
-          return;
+          return null;
         }
-        throw new Error(err.error ?? "Failed to load tasks");
+        throw new Error(data?.error === SIGNED_OUT ? SIGNED_OUT_TEXT : data?.error ?? `The server answered ${res.status}`);
       }
-      const data = await res.json();
       const tasks: SalesforceTask[] = data.tasks ?? [];
       setAllTasks(tasks);
       setSelectedWeek((prev) => prev ?? generateWeeks()[currentWeekIndex()]);
+      return tasks;
     } catch (err) {
       setTasksError(err instanceof Error ? err.message : "Unexpected error");
+      return null;
     } finally {
       setTasksLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (allTasks.length === 0 || unconfirmedRef.current.length === 0) return;
+    const notRun = new Set(keepAfterFailure(unconfirmedRef.current, allTasks, false).map((a) => a.taskId));
+    const ran = unconfirmedRef.current.filter((a) => !notRun.has(a.taskId));
+    unconfirmedRef.current = [];
+    clearSubmittedBatch();
+    if (ran.length === 0) return;
+    setActions((prev) => {
+      const next = new Map(prev);
+      for (const a of ran) next.delete(a.taskId);
+      return next;
+    });
+  }, [allTasks]);
 
   const weekTasks = selectedWeek
     ? allTasks.filter((t) => {
@@ -291,39 +352,72 @@ function TasksPageContent() {
     setConfirmDeleteCount(null);
     setApplying(true);
     setApplyResult(null);
+    // A copy of the batch survives until Salesforce confirms it, so nothing
+    // typed in is ever lost to a failed submit.
+    saveSubmittedBatch(actionsToExecute);
 
-    try {
-      const res = await fetch("/api/salesforce/actions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actions: actionsToExecute }),
-      });
+    const done: ApplyResult = { successCount: 0, failCount: 0, results: [], queueWarnings: [] };
+    let unsent: TaskAction[] = [];
+    let problem: string | null = null;
+    let signedOut = false;
 
-      const data = (await res.json().catch(() => null)) as
-        | (ApplyResult & { error?: string })
-        | null;
-      if (res.ok && data && Array.isArray(data.results)) {
-        setApplyResult(data);
-      } else {
-        throw new Error(data?.error ?? `The server answered ${res.status}`);
+    // Small batches: one request per 25 actions keeps each well under the
+    // server's 5 minute limit, and a failure only leaves one batch unclear.
+    for (let i = 0; i < actionsToExecute.length; i += APPLY_BATCH) {
+      const batch = actionsToExecute.slice(i, i + APPLY_BATCH);
+      try {
+        const res = await fetch("/api/salesforce/actions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ actions: batch }),
+        });
+        const data = (await readJson(res)) as unknown as (ApplyResult & { error?: string }) | null;
+        if (res.ok && data && Array.isArray(data.results)) {
+          done.successCount += data.successCount;
+          done.failCount += data.failCount;
+          done.results.push(...data.results);
+          done.queueWarnings!.push(...(data.queueWarnings ?? []));
+          continue;
+        }
+        // Signed out: the request never reached Salesforce, so nothing ran.
+        if (res.status === 401 || data?.error === SIGNED_OUT) signedOut = true;
+        problem = data?.error && data.error !== SIGNED_OUT ? data.error : `The server answered ${res.status}`;
+      } catch (err) {
+        problem = err instanceof Error ? err.message : "Network error";
       }
-    } catch (err) {
-      // A timeout or server error does NOT mean nothing happened: the route
-      // runs actions one by one, so some may already be done in Salesforce.
-      // Reload from Salesforce instead of marking every row failed, so
-      // pressing Apply again can't create duplicate follow-up tasks.
-      const reason = err instanceof Error ? err.message : "Network error";
-      setApplyResult({
-        successCount: 0,
-        failCount: 0,
-        results: [],
-        message: `The batch didn't finish cleanly (${reason}). Some actions may already have run in Salesforce, so the list below was reloaded from Salesforce. Check it before applying again.`,
-      });
-    } finally {
-      setActions(new Map());
-      await loadTasks();
-      setApplying(false);
+      unsent = actionsToExecute.slice(i);
+      break;
     }
+
+    const fresh = await loadTasks();
+
+    if (!problem) {
+      clearSubmittedBatch();
+      setActions(new Map());
+      setApplyResult(done);
+      setApplying(false);
+      return;
+    }
+
+    // Something did not come back cleanly. Keep every action that has not
+    // run: signed out means none of the unsent ones ran; otherwise an action
+    // counts as not run while its task is still open on the same due date.
+    // Ones that clearly ran are dropped so Apply can't repeat them.
+    const keep = keepAfterFailure(unsent, fresh, signedOut);
+    const next = new Map<string, TaskAction>();
+    for (const a of keep) next.set(a.taskId, a);
+    setActions(next);
+    if (next.size === 0) clearSubmittedBatch();
+    else saveSubmittedBatch(keep);
+
+    const ranUnclear = unsent.length - keep.length;
+    done.message = signedOut
+      ? `${SIGNED_OUT_TEXT} Your ${keep.length} queued action${keep.length !== 1 ? "s are" : " is"} still here and nothing was sent for ${keep.length !== 1 ? "them" : "it"}. Log in again in a new tab, come back, and press Apply.`
+      : !fresh
+        ? `The batch didn't finish cleanly (${problem}) and the task list could not be reloaded, so all ${keep.length} unsent action${keep.length !== 1 ? "s were" : " was"} kept in the queue. Some may already have run in Salesforce: refresh and check before applying again.`
+        : `The batch didn't finish cleanly (${problem}). ${keep.length} action${keep.length !== 1 ? "s that had not run are" : " that had not run is"} still queued${ranUnclear > 0 ? `, and ${ranUnclear} that already went through in Salesforce ${ranUnclear !== 1 ? "were" : "was"} taken off the queue` : ""}. Press Apply again when ready.`;
+    setApplyResult(done);
+    setApplying(false);
   }
 
   async function handleDisconnect() {
