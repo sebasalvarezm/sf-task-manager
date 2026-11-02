@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { assertSalesforceId, sfErrorText, sfFetch, sfQuery } from "@/lib/sf-query";
 import { getValidCredentials } from "@/lib/token-manager";
-import { cleanupItems, cleanupPatch, type CompletedRow, type LaterRow } from "@/lib/nudge-cleanup";
+import { cleanupItems, cleanupChange, type CompletedRow, type LaterRow } from "@/lib/nudge-cleanup";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 /**
- * One-off: undo the RCEs that nudges and follow-ups logged by mistake.
+ * One-off: delete the RCEs that nudges and follow-ups logged by mistake.
  * GET lists what would change (read only). POST { apply: true } makes the
  * change, recomputing the list on the server first. Admin only.
  */
@@ -39,7 +39,7 @@ async function findItems() {
 export async function GET() {
   if (!(await isAdmin())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { items } = await findItems();
-  return NextResponse.json({ count: items.length, items });
+  return NextResponse.json({ count: items.length, delete: items.filter((i) => i.hasNextTask).length, reopen: items.filter((i) => !i.hasNextTask).length, items });
 }
 
 export async function POST(request: NextRequest) {
@@ -49,7 +49,12 @@ export async function POST(request: NextRequest) {
   const { items, credentials } = await findItems();
   const results: Array<{ id: string; account: string; ok: boolean; error?: string }> = [];
   for (const item of items) {
-    const res = await sfFetch(`/services/data/v62.0/sobjects/Task/${item.id}`, { method: "PATCH", body: JSON.stringify(cleanupPatch(item)) }, credentials);
+    const change = cleanupChange(item);
+    const res = await sfFetch(
+      `/services/data/v62.0/sobjects/Task/${assertSalesforceId(item.id, "task id")}`,
+      change.method === "DELETE" ? { method: "DELETE" } : { method: "PATCH", body: JSON.stringify(change.body) },
+      credentials,
+    );
     results.push({ id: item.id, account: item.account, ok: res.ok, error: res.ok ? undefined : await sfErrorText(res) });
   }
   return NextResponse.json({ fixed: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok), results });
