@@ -424,30 +424,18 @@ export async function sendNudge(params: {
     const credentials = await getValidCredentials();
     if (!credentials) throw new Error("Salesforce not connected");
     const taskId = assertSalesforceId(params.taskId, "task id");
-    const accountId = assertSalesforceId(params.accountId, "account id");
-    const done = await sfFetch(`/services/data/v62.0/sobjects/Task/${taskId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ Status: "Completed", ActivityDate: format(new Date(), "yyyy-MM-dd"), Subject_Type__c: "RCE1", Description: body.slice(0, 30000) }),
-    }, credentials);
-    if (!done.ok) notes.push(`Completing the task failed: ${await sfErrorText(done)}`);
+    assertSalesforceId(params.accountId, "account id");
+    // A nudge or follow-up only moves the existing open task to a later date.
+    // It never completes it and never creates a new task: only an RCE code
+    // from the task list (RCE7, RCE14...) logs an RCE.
     if (params.days && params.days > 0) {
-      newTaskDate = format(addDays(new Date(), params.days), "yyyy-MM-dd");
-      const created = await sfFetch(`/services/data/v62.0/sobjects/Task`, {
-        method: "POST",
-        body: JSON.stringify({
-          Subject: params.subject,
-          Status: "Open",
-          Priority: "Normal",
-          ActivityDate: newTaskDate,
-          WhatId: accountId,
-          OwnerId: credentials.salesforce_user_id,
-          Subject_Type__c: "RCE1",
-        }),
+      const date = format(addDays(new Date(), params.days), "yyyy-MM-dd");
+      const moved = await sfFetch(`/services/data/v62.0/sobjects/Task/${taskId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ActivityDate: date }),
       }, credentials);
-      if (!created.ok) {
-        notes.push(`Opening the next task failed: ${await sfErrorText(created)}`);
-        newTaskDate = null;
-      }
+      if (moved.ok) newTaskDate = date;
+      else notes.push(`Moving the task failed: ${await sfErrorText(moved)}`);
     }
   } catch (err) {
     notes.push(`Salesforce: ${err instanceof Error ? err.message : String(err)}`);

@@ -590,8 +590,9 @@ function TasksPageContent() {
           remaining={nudgeQueue.length}
           next={upcomingNudge && upcomingNudge.AccountId && nudges[upcomingNudge.AccountId] ? { task: upcomingNudge, topic: nudges[upcomingNudge.AccountId].topic, via: nudges[upcomingNudge.AccountId].via } : null}
           onClose={() => setNudgeTask(null)}
-          onSent={(sent, note) => {
-            setAllTasks((prev) => prev.filter((t) => t.Id !== sent.Id));
+          onSent={(sent, note, newDate) => {
+            // The task was pushed to its new date, or left where it was.
+            if (newDate) setAllTasks((prev) => prev.map((t) => (t.Id === sent.Id ? { ...t, ActivityDate: newDate } : t)));
             if (note) setTasksError(note);
             openNextNudge(sent);
           }}
@@ -675,7 +676,7 @@ function NudgePanel(props: {
   remaining: number;
   next: { task: SalesforceTask; topic: string; via?: "email" | "call" | "sent" } | null;
   onClose: () => void;
-  onSent: (task: SalesforceTask, note: string | null) => void;
+  onSent: (task: SalesforceTask, note: string | null, newDate: string | null) => void;
   onSkip: (task: SalesforceTask) => void;
 }) {
   const { task } = props;
@@ -747,7 +748,7 @@ function NudgePanel(props: {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Not sent");
-      props.onSent(task, data.notes?.length ? `${task.AccountName}: email sent, but ${data.notes.join(" ")}` : null);
+      props.onSent(task, data.notes?.length ? `${task.AccountName}: email sent, but ${data.notes.join(" ")}` : null, typeof data.newTaskDate === "string" ? data.newTaskDate : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Not sent");
     } finally {
@@ -847,7 +848,7 @@ function NudgePanel(props: {
               />
               <div className="mt-3 flex items-center gap-3 text-sm">
                 <label htmlFor="nudge-days" className="text-ink">
-                  Next task in
+                  Push this task
                 </label>
                 <input
                   id="nudge-days"
@@ -856,9 +857,9 @@ function NudgePanel(props: {
                   placeholder="none"
                   className={`h-9 w-20 rounded-sm border px-2 ${daysValid ? "border-line-strong" : "border-danger"}`}
                 />
-                <span className="text-ink-secondary">{days.trim() === "" ? "days (empty: no new task)" : nextDate ? `days · ${nextDate}` : "days"}</span>
+                <span className="text-ink-secondary">{days.trim() === "" ? "days (empty: task stays where it is)" : nextDate ? `days · ${nextDate}` : "days"}</span>
               </div>
-              <p className="mt-1 text-xs text-ink-secondary">{prepared.replyToMessageId ? "Replies in the same thread (reply all)." : "Sends as a new email."} On send, this open task is completed.</p>
+              <p className="mt-1 text-xs text-ink-secondary">{prepared.replyToMessageId ? "Replies in the same thread (reply all)." : "Sends as a new email."} On send, this task moves to that date. Nothing is logged as an RCE.</p>
             </>
           ) : null}
         </div>
