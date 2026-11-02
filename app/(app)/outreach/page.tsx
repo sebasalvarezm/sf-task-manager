@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { ChevronDown, MoreHorizontal } from "lucide-react";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
+import DiscoveryPanel from "@/app/components/DiscoveryPanel";
 
 /**
  * Outreach: the next companies to email, prequalified.
@@ -77,10 +78,11 @@ type CheckRow = {
   lastSend: Send | null;
 };
 
-type View = "next" | "waiting" | "filtered" | "done" | "check" | "rules";
+type View = "next" | "discovery" | "waiting" | "filtered" | "done" | "check" | "rules";
 
 const VIEW_LABEL: Record<View, string> = {
   next: "Next to contact",
+  discovery: "Discovery",
   waiting: "Waiting on the window",
   filtered: "Filtered out by the check",
   done: "Pushed and skipped",
@@ -152,7 +154,7 @@ export default function OutreachPage() {
 
 function OutreachInner() {
   const params = useSearchParams();
-  const [view, setView] = useState<View>(params.get("tab") === "check" ? "check" : "next");
+  const [view, setView] = useState<View>(params.get("tab") === "check" ? "check" : params.get("tab") === "discovery" ? "discovery" : "next");
   const [items, setItems] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -383,7 +385,7 @@ function OutreachInner() {
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} aria-hidden />
               <div className="absolute right-0 z-20 mt-1 w-64 overflow-hidden rounded-md border border-line bg-white shadow-xl">
-                {(["next", "waiting", "filtered", "done", "check", "rules"] as View[]).map((key) => (
+                {(["next", "discovery", "waiting", "filtered", "done", "check", "rules"] as View[]).map((key) => (
                   <button
                     key={key}
                     type="button"
@@ -422,6 +424,8 @@ function OutreachInner() {
         <RulesPanel settings={settings} onSaved={(s) => { setSettings(s); settingsRef.current = s; setShown(s.batchSize); setNotice("Rules saved. Rebuild the pool to apply them."); setView("next"); }} />
       ) : view === "check" ? (
         <CheckList onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
+      ) : view === "discovery" ? (
+        <DiscoveryPanel onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
       ) : loading ? (
         <p className="text-sm text-ink-secondary">Loading…</p>
       ) : items.length === 0 ? (

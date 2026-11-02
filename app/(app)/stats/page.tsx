@@ -2500,6 +2500,8 @@ const FEATURE_LABEL: Record<string, string> = {
   accounts_enrich: "Accounts",
   trip: "Trip planner",
   send_review: "Send queue review",
+  discovery_parallel: "Discovery (Parallel)",
+  discovery_pdl: "Discovery staff check (PDL credits)",
 };
 
 /** AI spend by feature, logged by the app itself, so the console is not the only place that knows. */
