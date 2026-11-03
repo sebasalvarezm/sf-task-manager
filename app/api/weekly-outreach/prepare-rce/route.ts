@@ -17,7 +17,7 @@ import {
   OUTLOOK_NOT_CONNECTED_MESSAGE,
 } from "@/lib/microsoft";
 import { fetchAccountHistory, type AccountHistory } from "@/lib/salesforce-account-history";
-import { matchRceReplyThread } from "@/lib/rce-thread-match";
+import { isInternalAddress, matchRceReplyThread } from "@/lib/rce-thread-match";
 import { greetingName } from "@/lib/rce-followup";
 import {
   extractOutreachParagraph,
@@ -224,11 +224,13 @@ type FreshRecipient = { email: string; name: string | null; firstName: string | 
 
 async function pickFreshRecipient(accountId: string | null, history: AccountHistory): Promise<FreshRecipient | null> {
   const first = (name: string | null) => (name ? name.trim().split(/\s+/)[0] || null : null);
-  const answered = history.entries.find((e) => e.isEmail && e.direction === "in" && e.contactEmail);
+  // Never a Valstone colleague: a reconnect goes to someone at the company.
+  const external = (email: string | null | undefined) => Boolean(email) && !isInternalAddress(email);
+  const answered = history.entries.find((e) => e.isEmail && e.direction === "in" && external(e.contactEmail));
   if (answered?.contactEmail) {
     return { email: answered.contactEmail, name: answered.contactName, firstName: first(answered.contactName), why: `answered Valstone on ${answered.date}` };
   }
-  const written = history.entries.find((e) => e.isEmail && e.contactEmail);
+  const written = history.entries.find((e) => e.isEmail && external(e.contactEmail));
   if (written?.contactEmail) {
     return { email: written.contactEmail, name: written.contactName, firstName: first(written.contactName), why: `last written to on ${written.date}` };
   }
@@ -242,7 +244,7 @@ async function pickFreshRecipient(accountId: string | null, history: AccountHist
     if (/\bcto\b|\bcoo\b|\bcfo\b|chief/.test(t)) return 4;
     return 9;
   };
-  const best = contacts.filter((c) => c.Email).sort((a, b) => rank(a.Title) - rank(b.Title))[0];
+  const best = contacts.filter((c) => c.Email && external(c.Email)).sort((a, b) => rank(a.Title) - rank(b.Title))[0];
   if (!best?.Email) return null;
   return { email: best.Email.toLowerCase(), name: best.Name ?? null, firstName: best.FirstName ?? first(best.Name ?? null), why: `most senior Salesforce contact${best.Title ? `, ${best.Title}` : ""}` };
 }

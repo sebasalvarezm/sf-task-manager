@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAutomaticReply, matchRceReplyThread } from "../lib/rce-thread-match";
+import { isAutomaticReply, isInternalAddress, matchRceReplyThread } from "../lib/rce-thread-match";
 import type { OutlookRelationshipEmail } from "../lib/microsoft";
 
 const me = "sebastian@valstonecorp.com";
@@ -83,5 +83,29 @@ describe("generic lead words", () => {
       me,
     );
     expect(r.replyTarget).toBeNull();
+  });
+});
+
+describe("never replies to a Valstone colleague", () => {
+  it("skips a chain where the only received message is a colleague's forward", () => {
+    const emails = [
+      msg({ id: "t-1", subject: "FW: Intro | Valstone <> AssessTech", fromEmail: "alexis@valstonecorp.com", toEmails: [me], bodyText: "Gabriel cancelled, see below.", sentDateTime: daysAgo(90) }),
+    ];
+    const match = matchRceReplyThread(emails, "AssessTech", "assesstech.com", me);
+    expect(match.replyTarget).toBeNull();
+  });
+  it("replies to the company's message, not the colleague who wrote after it", () => {
+    const emails = [
+      msg({ id: "u-1", subject: "RE: Valstone / AssessTech", fromEmail: "gabriel@assesstech.com", toEmails: [me, "alexis@valstonecorp.com"], sentDateTime: daysAgo(95) }),
+      msg({ id: "u-2", subject: "RE: Valstone / AssessTech", fromEmail: "alexis@valstonecorp.com", toEmails: [me], sentDateTime: daysAgo(90) }),
+    ];
+    const match = matchRceReplyThread(emails, "AssessTech", "assesstech.com", me);
+    expect(match.replyTarget?.id).toBe("u-1");
+  });
+  it("knows which addresses are internal", () => {
+    expect(isInternalAddress("alexis@valstonecorp.com")).toBe(true);
+    expect(isInternalAddress("dan@valstonecorporation.onmicrosoft.com")).toBe(true);
+    expect(isInternalAddress("gabriel@assesstech.com", me)).toBe(false);
+    expect(isInternalAddress("someone@gmail.com", "x@gmail.com")).toBe(false);
   });
 });

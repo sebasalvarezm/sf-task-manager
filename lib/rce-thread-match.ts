@@ -64,6 +64,19 @@ function domainOf(email: string): string {
   return email.toLowerCase().split("@")[1] ?? "";
 }
 
+/** Valstone's own domain. A reconnect is never addressed to a colleague. */
+const INTERNAL_DOMAINS = ["valstonecorp.com"];
+
+/** True for a Valstone address (or any address on the user's own mailbox domain). */
+export function isInternalAddress(email: string | null | undefined, mailboxAddress = ""): boolean {
+  const d = domainOf(email ?? "");
+  if (!d) return false;
+  const own = domainOf(mailboxAddress);
+  // The Microsoft tenant address (dan@valstonecorporation.onmicrosoft.com) is a colleague too.
+  if (/^valstone[a-z0-9-]*\.onmicrosoft\.com$/.test(d)) return true;
+  return INTERNAL_DOMAINS.some((x) => d === x || d.endsWith(`.${x}`)) || (Boolean(own) && !PUBLIC_EMAIL_DOMAINS.has(own) && d === own);
+}
+
 /**
  * The distinctive words in a company name, with legal boilerplate removed.
  * "Sentry Water Tech Inc." -> ["sentry", "water"]
@@ -138,14 +151,18 @@ export function matchRceReplyThread(
   let best: { score: number; confidence: RceThreadConfidence; reason: string; target: OutlookRelationshipEmail } | null = null;
 
   for (const messages of threads.values()) {
-    // Only a real message the user received can be replied to in the original chain.
+    // Only a real message the user received from outside Valstone can be
+    // replied to. A colleague forwarding the chain (Alexis passing on
+    // AssessTech's cancellation) is not someone to send a reconnect to.
     const received = messages
-      .filter((message) => message.fromEmail && message.fromEmail !== mailbox && !isAutomaticReply(message))
+      .filter((message) => message.fromEmail && message.fromEmail !== mailbox && !isInternalAddress(message.fromEmail, mailbox) && !isAutomaticReply(message))
       .sort((a, b) => new Date(a.sentDateTime).getTime() - new Date(b.sentDateTime).getTime());
     const target = received[received.length - 1];
     if (!target) continue;
 
-    const participants = messages.flatMap((message) => [message.fromEmail, ...message.toEmails]);
+    const participants = messages
+      .flatMap((message) => [message.fromEmail, ...message.toEmails])
+      .filter((address) => address && !isInternalAddress(address, mailbox));
     const contactParticipant = participants.find((address) => address && contactEmails.has(address.toLowerCase()));
     const domainParticipant = useDomain
       ? participants.find((address) => address && domainOf(address).endsWith(domain))
