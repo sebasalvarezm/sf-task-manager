@@ -19,9 +19,17 @@ type Fix = [RegExp, string | ((...m: string[]) => string)];
 const cap = (word: string, like: string) => (/^[A-Z]/.test(like) ? word[0].toUpperCase() + word.slice(1) : word);
 
 const FIXES: Fix[] = [
-  // "note" meaning an email. Not "of note", "to note", "note that".
-  [/\b(a|A) note\b(?!\s+(that|how)\b)/g, (_m, a) => `${a === "A" ? "An" : "an"} email`],
-  [/(?<!\b(?:of|to|I'd|I would|worth) )\b(N|n)ote(s?)\b(?!\s+(that|how)\b)/g, (_m, n, s) => `${n === "N" ? "E" : "e"}mail${s}`],
+  // "note" meaning an email, only where it can only mean one: "my last note",
+  // "sent you a note", "exchanged notes". Never "field notes", "release notes",
+  // "comparing notes", "call notes".
+  // Singular is always the email ("my note from June"). Plural only after a
+  // preposition ("follow up on my notes"): "My notes from April have TRU
+  // moving..." means call notes and stays.
+  [/\b(my|your|our|his|her|their)( (?:last|previous|earlier|recent|quick|short|first|second|final))? note\b/gi, (_m, p, adj) => `${p}${adj ?? ""} email`],
+  [/\b(on|to|after|since|about|in) (my|your|our)( (?:last|previous|earlier|recent))? notes\b/gi, (_m, prep, p, adj) => `${prep} ${p}${adj ?? ""} emails`],
+  [/\b(last|previous|earlier) note(s?)\b/gi, (_m, w, s) => `${w} email${s}`],
+  [/\b(sent|send|sending|wrote|write|drop|dropped|shoot|shot)( you| him| her| them)? (a|the) (quick |short |brief )?note\b/gi, (_m, v, who, art, adj) => `${v}${who ?? ""} ${art.toLowerCase() === "the" ? art : adj ? art : art === "A" ? "An" : "an"} ${adj ?? ""}email`],
+  [/\bexchanged notes\b/gi, "exchanged emails"],
   // Dashes and "thanks".
   [/\s*[–—]\s*/g, ", "],
   [/\b(M|m)any thanks\b/g, (_m, m) => cap("thank you", m)],
@@ -51,21 +59,60 @@ const FIXES: Fix[] = [
   [/\b(will|might|may|could|would|to) shift\b(?! (scheduling|planning|patterns?|work|workers|management)\b)/g, "$1 change"],
   // top of mind: "TimberTec stays top of mind for me" -> "I keep coming back to TimberTec"
   [/\b([A-Z][\w&.'-]*(?: [A-Z][\w&.'-]*){0,3}) (?:stays|remains|has stayed|has remained|is still|is) top of mind(?: for (?:me|us))?/g, "I keep coming back to $1"],
+  [/\b(stays|remains|has stayed|has remained|is still|is) top of mind(?: for (me|us))?/g, (_m, _v, who) => `keeps coming up${who ? ` for ${who}` : ""}`],
   [/\btop of mind\b/g, "on my mind"],
   // radar: "X has been on my radar" -> "I've been following X"
   [/\b([A-Z][\w&.'-]*(?: [A-Z][\w&.'-]*){0,3}) has been on (?:my|our) radar\b/g, "I've been following $1"],
-  [/\bon (?:my|our) radar\b/g, "on my mind"],
+  [/\bon my radar\b/g, "on my mind"],
+  [/\bon our radar\b/g, "on our minds"],
   [/\bon your radar\b/g, "in front of you"],
 ];
 
 export function fixEmailWords(text: string): string {
   let out = text;
   for (const [re, to] of FIXES) out = out.replace(re, to as never);
-  return out.replace(/ {2,}/g, " ").replace(/ +([.,!?])/g, "$1");
+  // Tidy only the gaps a removal left ("fits  in", "in .") and never ".NET".
+  return out.replace(/ {2,}/g, " ").replace(/ +([.,!?])(?=\s|$)/g, "$1");
 }
 
-/** Phrases still present after the fixes. Used by tests; empty means clean. */
+/** Wording Seb never uses, with the label shown when a draft still contains it. */
+const BANNED: Array<[RegExp, string]> = [
+  [/\b(my|your|our|last|previous|earlier) (last |previous |earlier |recent |quick )?note\b|\b(on|to|after|since|about|in) (my|your|our) (last |previous |earlier |recent )?notes\b|\b(sent|wrote|drop|dropped) (you )?(a|the) (quick |short )?note\b|exchanged notes/i, '"note" for an email'],
+  [/[\u2013\u2014]/, "a dash"],
+  [/\bthanks\b(?! to\b)/i, '"thanks"'],
+  [/squarely/i, '"squarely"'],
+  [/\bshifted\b/i, '"shifted"'],
+  [/\bhow (things|the business|business|everything|it) (is|are) tracking\b/i, '"how things are tracking"'],
+  [/\bon the [a-z&]+ (side|front)\b/i, '"on the ... side"'],
+  [/remains (strong|high)/i, '"remains strong"'],
+  [/shaping up/i, '"shaping up"'],
+  [/from scratch/i, '"from scratch"'],
+  [/top of mind/i, '"top of mind"'],
+  [/\bradar\b/i, '"on my radar"'],
+  [/got buried/i, '"got buried"'],
+  [/circle back|circling back/i, '"circle back"'],
+  [/touch base/i, '"touch base"'],
+  [/synerg/i, '"synergies"'],
+  [/strategic alignment/i, '"strategic alignment"'],
+  [/unlock value/i, '"unlock value"'],
+  [/explore potential/i, '"explore potential opportunities"'],
+  [/leverage our/i, '"leverage our platform"'],
+  [/earliest convenience/i, '"at your earliest convenience"'],
+  [/hope (this|my) (email|message) finds you/i, '"hope this email finds you well"'],
+  [/hope all is well/i, '"hope all is well"'],
+  [/reach out to introduce/i, '"reach out to introduce myself"'],
+  [/would be delighted/i, '"we would be delighted"'],
+  [/do not hesitate|don't hesitate/i, '"do not hesitate"'],
+  [/\bkindly\b/i, '"kindly"'],
+  [/bump this/i, '"bump this"'],
+  [/extremely busy/i, '"extremely busy"'],
+  [/make sure you saw/i, '"make sure you saw this"'],
+  [/looking forward to hearing/i, '"looking forward to hearing from you"'],
+  [/thank you in advance/i, '"thank you in advance"'],
+  [/feel free to reach out/i, '"feel free to reach out"'],
+];
+
+/** Banned wording still present in a draft, as short labels. Empty means clean. */
 export function bannedLeft(text: string): string[] {
-  const checks = [/\bnotes?\b(?! that)/i, /squarely/i, /\bshifted\b/i, /\btracking\b(?! software| system| platform)/i, /remains strong/i, /shaping up/i, /from scratch/i, /top of mind/i, /radar/i, /got buried/i, /[–—]/, /\bthanks\b(?! to)/i];
-  return checks.filter((re) => re.test(text)).map((re) => re.source);
+  return BANNED.filter(([re]) => re.test(text)).map(([, label]) => label);
 }

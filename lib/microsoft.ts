@@ -867,6 +867,22 @@ export async function deleteOutlookDraftIfUnsent(draftId: string): Promise<void>
   if (data.isDraft === true) await deleteOutlookDraft(draftId);
 }
 
+/**
+ * Read-only: is this Outlook message still an unsent draft? "gone" when it was
+ * deleted or cannot be read. Used by the weekly check, never to change mail.
+ */
+export async function outlookMessageState(messageId: string): Promise<"draft" | "sent" | "gone"> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const response = await fetch(
+    `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}?$select=isDraft`,
+    { headers: { Authorization: `Bearer ${credentials.access_token}` } },
+  );
+  if (!response.ok) return "gone";
+  const data = (await response.json()) as { isDraft?: boolean };
+  return data.isDraft === true ? "draft" : "sent";
+}
+
 // ── Send Email API ───────────────────────────────────────────────────────────
 
 export async function sendEmail(params: {

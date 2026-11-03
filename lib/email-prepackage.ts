@@ -108,6 +108,25 @@ function loadEmailSequences(): string {
   return fs.readFileSync(filePath, "utf-8").replace(/\r\n?/g, "\n");
 }
 
+let templateTextCache: string | null = null;
+/**
+ * True when a phrase is Seb's own fixed template wording (content/email-sequences.md),
+ * e.g. "Please let me know if available". The send-queue reviewer must not flag it.
+ */
+export function isTemplateWording(phrase: string, templateText?: string): boolean {
+  const clean = (x: string) => x.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const q = clean(phrase);
+  if (q.length < 12) return false;
+  if (templateText === undefined) {
+    try {
+      templateTextCache ??= clean(loadEmailSequences());
+    } catch {
+      return false;
+    }
+  }
+  return (templateText !== undefined ? clean(templateText) : templateTextCache!).includes(q);
+}
+
 function norm(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }

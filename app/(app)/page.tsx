@@ -55,6 +55,7 @@ export default function HomePage() {
     overdueTasks: number | null;
     dueOutreach: number | null;
   } | null>(null);
+  const [checkIssues, setCheckIssues] = useState<number | null>(null);
 
   const visibleTools = useMemo(
     () =>
@@ -87,6 +88,12 @@ export default function HomePage() {
     try {
       const sumRes = await fetch("/api/dashboard/summary");
       if (sumRes.ok) setDashSummary(await sumRes.json());
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      const auditRes = await fetch("/api/audit");
+      if (auditRes.ok) setCheckIssues((await auditRes.json()).report?.issues ?? null);
     } catch {
       /* non-fatal */
     }
@@ -171,6 +178,13 @@ export default function HomePage() {
               <Badge variant="brand" size="md" dot>
                 {dashSummary.dueOutreach} account
                 {dashSummary.dueOutreach !== 1 ? "s" : ""} due for outreach
+              </Badge>
+            </Link>
+          )}
+          {checkIssues != null && checkIssues > 0 && (
+            <Link href="/audit" className="no-underline">
+              <Badge variant="warn" size="md" dot>
+                Weekly check: {checkIssues} to look at
               </Badge>
             </Link>
           )}

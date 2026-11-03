@@ -16,6 +16,7 @@ import {
   Workflow,
   PhoneCall,
   ChartLine,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -77,6 +78,7 @@ export const NAV_GROUPS: NavGroup[] = [
     tools: [
       { href: "/stats", label: "Weekly stats", icon: BarChart3, description: "Outreach, calls, meetings, pipeline and AI spend.", needs: ["sf"] },
       { href: "/replies", label: "What gets replies", icon: FlaskConical, description: "Which senders, sequences and markets get answered.", needs: ["sf", "outreach"] },
+      { href: "/audit", label: "Weekly check", icon: ShieldCheck, description: "Read-only sweep for mistakes: wrong recipients, banned wording, stuck drafts, failed or slow jobs.", needs: ["sf", "ms"] },
     ],
   },
 ];

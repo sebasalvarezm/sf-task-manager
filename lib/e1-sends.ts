@@ -11,7 +11,7 @@ import { importSignatureFromSentItems } from "./microsoft";
 import { trackedCreate } from "./model-cost";
 import { recipientTimeZone, planSendSlots } from "./send-slots";
 import { currentWeekStart, type WeeklyOutreachItem } from "./weekly-outreach";
-import { shortenRestaurantName } from "./email-prepackage";
+import { isTemplateWording, shortenRestaurantName } from "./email-prepackage";
 import { getJob, markSucceeded } from "./jobs";
 import { rerunHookResearch, reclassifySourcingResult, type SourcingResult } from "./jobs/sourcing-runner";
 import { findGroupFileName, loadGroupFiles } from "./scout";
@@ -132,18 +132,45 @@ export async function saveSendSettings(patch: Partial<SendSettings>): Promise<Se
 
 // ── Listing and updating ────────────────────────────────────────────────────
 
+/**
+ * Model flags about things the app itself adds or leaves out on purpose: the
+ * greeting and signature (added when the email goes out) and the restaurant
+ * named only in the subject (the template body never names it). The reviewer
+ * is told this, but older rows still carry such flags, so they are dropped
+ * here as well.
+ */
+export function isSelfInflictedFlag(flag: Pick<ReviewFlag, "kind" | "message">, templateText?: string): boolean {
+  const m = flag.message.toLowerCase();
+  if (/\b(no|missing|without|lacks?)\b[^.]*\b(greeting|salutation|recipient('s)? name|sign-?off|signature|closing)\b/.test(m)) return true;
+  if (/\bopens? (straight|directly|abruptly) (into|with)\b/.test(m)) return true;
+  if (/restaurant|subject names/.test(m) && /\bbody\b/.test(m) && /(only says|doesn't name|does not name|not named|never names|unexplained|generic)/.test(m)) return true;
+  // Style or grammar complaints about Seb's own template lines ("Please let me know if available").
+  if (flag.kind === "spelling" || flag.kind === "other") {
+    const quotes = flag.message.match(/['"\u2018\u201c]([^'"\u2019\u201d]{12,})['"\u2019\u201d]/g) ?? [];
+    if (quotes.some((q) => isTemplateWording(q.slice(1, -1), templateText))) return true;
+  }
+  return false;
+}
+
+/** Drops self-inflicted model flags from a stored row; a row left with none reads as clean. */
+export function withoutSelfFlags(send: E1Send): E1Send {
+  const flags = (send.review_flags ?? []).filter((f) => !isSelfInflictedFlag(f));
+  if (flags.length === (send.review_flags ?? []).length) return send;
+  return { ...send, review_flags: flags, status: send.status === "review" && flags.length === 0 ? "ready" : send.status };
+}
+
 export async function listSends(weekStart?: string): Promise<E1Send[]> {
   let q = getSupabaseAdmin().from("e1_sends").select("*").order("created_at", { ascending: true });
   if (weekStart) q = q.eq("week_start", weekStart);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  return (data ?? []) as E1Send[];
+  return ((data ?? []) as E1Send[]).map(withoutSelfFlags);
 }
 
 export async function getSend(id: string): Promise<E1Send | null> {
   const { data, error } = await getSupabaseAdmin().from("e1_sends").select("*").eq("id", id).maybeSingle();
   if (error) throw new Error(error.message);
-  return (data as E1Send | null) ?? null;
+  return data ? withoutSelfFlags(data as E1Send) : null;
 }
 
 export async function updateSend(id: string, patch: Partial<E1Send>): Promise<E1Send> {
@@ -678,12 +705,14 @@ export async function rehookSend(id: string): Promise<E1Send> {
 
 const REVIEW_SYSTEM = `You check a cold outreach email before a human reviews it. You never rewrite it. You return only problems, each as one short plain sentence a reader can act on. Be strict about facts and spelling, relaxed about style.
 
+How the email is built, so you never flag it: the greeting ("Hi <first name>,") and the signature are added automatically when it is sent, and are shown to you as they will go out. The restaurant is named only in the subject; the body deliberately says "a good restaurant nearby" or similar without naming it. Only the opening sentence about the company, the town and week, the subject's restaurant and the company name change per email; every other sentence is Seb's fixed template wording ("Please let me know if available" included), so never flag its style or grammar.
+
 Check:
 1. spelling: misspellings, doubled words, broken merge fields like {{first_name}} left in, a stray placeholder such as (INSERT ...) or [INSERT ...], a missing word.
 2. town: the town named in the email must be the company's town (or very near it) per the address supplied. A town in the wrong state or country is a red flag.
-3. restaurant: the restaurant named in the subject or body must be one of the supplied candidates and must be in that same town.
+3. restaurant: the restaurant named in the subject must be one of the supplied candidates and must be in that same town.
 4. hook: the sentence about the company's history or product must be supported by the evidence supplied (website text, hook anchor). Flag a product or year the evidence does not contain, or a claim that reads as generic filler.
-5. other: anything that would embarrass the sender (wrong company name, wrong person, two greetings, missing sign-off).
+5. other: anything that would embarrass the sender (wrong company name, wrong person, two greetings).
 
 Output ONLY a JSON array, possibly empty: [{"kind":"spelling|town|restaurant|hook|other","severity":"red|yellow","message":"<one sentence>"}]. Red means do not send as is; yellow means worth a look.`;
 
@@ -702,8 +731,8 @@ export async function reviewDraft(send: E1Send): Promise<ReviewFlag[]> {
     "",
     `Subject: ${send.subject ?? ""}`,
     "",
-    "Email:",
-    send.body,
+    "Email, exactly as it will be sent (greeting and sign-off added automatically):",
+    `${withGreeting(send.body, send.contact_first_name)}\n\nBest,\nSeb`,
   ].join("\n");
   const res = await trackedCreate(client, "send_review", {
     model: MODELS.drafting,
@@ -715,7 +744,7 @@ export async function reviewDraft(send: E1Send): Promise<ReviewFlag[]> {
   try {
     const arr = JSON.parse(text.match(/\[[\s\S]*\]/)?.[0] ?? "[]") as Array<Partial<ReviewFlag>>;
     return arr
-      .filter((f) => f && typeof f.message === "string")
+      .filter((f) => f && typeof f.message === "string" && !isSelfInflictedFlag({ kind: (f.kind ?? "other") as ReviewFlag["kind"], message: String(f.message) }))
       .map((f) => ({
         kind: (["spelling", "town", "restaurant", "hook", "other"] as const).includes(f.kind as never) ? (f.kind as ReviewFlag["kind"]) : "other",
         severity: (f.severity === "red" ? "red" : "yellow") as ReviewFlag["severity"],

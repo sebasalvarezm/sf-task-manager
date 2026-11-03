@@ -14,6 +14,7 @@ import { e1PrepareJob } from "@/lib/inngest/functions/e1-prepare";
 import { e1ScheduleJob } from "@/lib/inngest/functions/e1-schedule";
 import { e1FillStepJob } from "@/lib/inngest/functions/e1-fill-step";
 import { discoveryWeeklyJob, discoveryPreviewJob } from "@/lib/inngest/functions/discovery-weekly";
+import { auditWeeklyJob } from "@/lib/inngest/functions/audit-weekly";
 
 export const maxDuration = 300;
 
@@ -35,5 +36,6 @@ export const { GET, POST, PUT } = serve({
     e1FillStepJob,
     discoveryWeeklyJob,
     discoveryPreviewJob,
+    auditWeeklyJob,
   ],
 });
