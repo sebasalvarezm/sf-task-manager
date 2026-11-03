@@ -1,3 +1,4 @@
+import { EMAIL_WORD_RULE, fixEmailWords } from "@/lib/email-words";
 import { NextResponse } from "next/server";
 import { trackedCreate } from "@/lib/model-cost";
 import { fetchContactsForAccounts } from "@/lib/salesforce-contacts";
@@ -104,7 +105,7 @@ async function classifyCompany(
   };
 }
 
-const SHARED_RULES = `Match Sebastian's actual sent-email voice in the evidence: concise, natural, personable, and specific. Use his vocabulary, sentence length, contractions, and level of formality. Never use an em dash. Never write "circle back", "touch base", "I would welcome a conversation", "I would value a conversation", "I hope this message finds you well", "hope all is well", "at your earliest convenience", "looking forward to hearing from you", "please do not hesitate", generic praise, AI jargon, hype, or anything corny. Write "thank you", never "thanks". Open with the point ("Just checking in", "Wanted to follow up", "Thank you for the quick reply"), not a pleasantry. Do not invent history or claim the recipient said something unless the evidence supports it. Never describe Seb as "taking over" a relationship. When there is a recent Valstone deal in the same space in the evidence, it is the best reason to reconnect ("We've been busy in rail since. In July we acquired Nascent Technology..."); use it in one or two sentences, never invent one.`;
+const SHARED_RULES = `Match Sebastian's actual sent-email voice in the evidence: concise, natural, personable, and specific. Use his vocabulary, sentence length, contractions, and level of formality. Never use an em dash. Never write "circle back", "touch base", "I would welcome a conversation", "I would value a conversation", "I hope this message finds you well", "hope all is well", "at your earliest convenience", "looking forward to hearing from you", "please do not hesitate", generic praise, AI jargon, hype, or anything corny. Write "thank you", never "thanks". ${EMAIL_WORD_RULE} Open with the point ("Just checking in", "Wanted to follow up", "Thank you for the quick reply"), not a pleasantry. Do not invent history or claim the recipient said something unless the evidence supports it. Never describe Seb as "taking over" a relationship. When there is a recent Valstone deal in the same space in the evidence, it is the best reason to reconnect ("We've been busy in rail since. In July we acquired Nascent Technology..."); use it in one or two sentences, never invent one.`;
 
 function replyPrompt(input: {
   item: WeeklyOutreachItem;
@@ -372,6 +373,8 @@ export async function POST(request: Request) {
       const first = replyTarget ? greetingName(replyTarget.fromName, replyTarget.fromEmail) : null;
       if (first) parsed.draft = `Hi ${first},\n\n${parsed.draft}`;
     }
+    if (typeof parsed.draft === "string") parsed.draft = fixEmailWords(parsed.draft);
+    if (typeof parsed.subject === "string") parsed.subject = fixEmailWords(parsed.subject);
 
     const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
     // Preparing again replaces the Outlook draft. The previous one is removed

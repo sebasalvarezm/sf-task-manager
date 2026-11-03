@@ -1,3 +1,4 @@
+import { fixEmailWords } from "./email-words";
 import type { Sentiment, ThreadMessage } from "./inbox-classify";
 
 /**
@@ -97,7 +98,7 @@ export function normalizeDraft(raw: string): string {
   t = t.replace(/^(subject\s*:.*\n+)/i, "");
   t = t.replace(/^"([\s\S]*)"$/, "$1");
   t = t.replace(/\s*[–—]\s*/g, ", ");
-  t = t.replace(/\bThanks\b/g, "Thank you").replace(/\bthanks\b/g, "thank you");
+  t = fixEmailWords(t);
   t = t.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n");
   return t.trim();
 }

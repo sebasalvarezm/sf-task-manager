@@ -19,7 +19,7 @@ export const RCE_FOLLOW_UP_TEMPLATES: FollowUpTemplate[] = [
     body: "Hi {first},\n\nFollowing up a final time. Are you available to catch-up and resume acquisition discussions in the next week or two?",
   },
   {
-    body: "{first}, quickly following up on my last email.\n\nWould love to have a brief discussion in the next week or two. Our interest remains strong.",
+    body: "{first}, quickly following up on my last email.\n\nWould love to have a brief discussion in the next week or two. We're still interested.",
   },
 ];
 

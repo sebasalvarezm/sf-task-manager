@@ -4,6 +4,7 @@
  * trusted to follow on its own. Anything that fails a check is flagged so
  * the queue shows "needs a look" instead of a copy button.
  */
+import { fixEmailWords } from "./email-words";
 
 export const INMAIL_SYSTEM_PROMPT = `You convert cold outreach emails into LinkedIn InMail messages. You receive the full E1 (original cold email) and output two messages: an initial InMail and a follow-up.
 
@@ -79,7 +80,7 @@ export function parseInMailJson(raw: string): { initial: string; followup: strin
 
 /** Mechanical fixes that are always safe to apply. */
 export function normalizeInMail(text: string): string {
-  return text
+  return fixEmailWords(text)
     .replace(/\s*—\s*/g, ", ")
     .replace(/\s*–\s*/g, ", ")
     .replace(/mission critical/gi, "mission-critical")
