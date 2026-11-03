@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSections, thinSections } from "../lib/jobs/prep-runner";
+import { parseSections, pickHistory, thinSections } from "../lib/jobs/prep-runner";
 
 const FULL = `COMPANY NAME: MachineMetrics
 WHAT THEY DO:
@@ -66,5 +66,26 @@ RECENT NEWS
     const c = parseSections("WHAT THEY DO:\nThey sell to customers who need it. Customers are mostly dealers.\nCUSTOMERS:\nDealers.");
     expect(c.whatTheyDo).toContain("Customers are mostly dealers.");
     expect(c.customers).toBe("Dealers.");
+  });
+});
+
+describe("company history from web search", () => {
+  const researched = `COMPANY HISTORY:
+Acme Controls was founded in 2009 in Minneapolis, Minnesota, by two engineers from the embedded systems world. It launched Relay, its industrial IoT platform, in 2016 and later added Watch as a white-label monitoring app built on it. The company is privately held and led by its founders. It sells to equipment makers who want to offer connected products without building the cloud side themselves, and has partnered with chip and gateway vendors to make devices ready out of the box.
+RECENT NEWS:
+- March 2026: released a new Watch version with predictive alerts.`;
+
+  it("reads the researched history and news", () => {
+    const p = parseSections(researched);
+    expect(p.companyHistory.startsWith("Acme Controls was founded in 2009")).toBe(true);
+    expect(p.recentNews).toHaveLength(1);
+  });
+  it("prefers the researched history over the website-only one", () => {
+    const website = "The founding year, founders, and ownership are not available in the supplied evidence.";
+    expect(pickHistory(website, parseSections(researched).companyHistory)).toContain("founded in 2009");
+  });
+  it("falls back to the website history when the search came back empty", () => {
+    expect(pickHistory("Founded in 2014 in Northampton.", "")).toBe("Founded in 2014 in Northampton.");
+    expect(pickHistory("Founded in 2014 in Northampton.", "Not available")).toBe("Founded in 2014 in Northampton.");
   });
 });

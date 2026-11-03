@@ -293,25 +293,37 @@ ${sfContext}${scrapedContext}
 ${sectionFormat("first_call")}
 
 Section guidance: WHAT THEY DO is one plain-language paragraph, 70 to 120 words. CUSTOMERS is one paragraph on who buys and why (60 to 100 words) followed by the worked "For example, ..." scene (60 to 100 words) from the style rules. COMPANY HISTORY is one paragraph on founding, headquarters, leadership, milestones, ownership, and M&A where supported, 90 to 150 words. Leave RECENT NEWS as "None"; it is researched separately.`;
-    const newsPrompt = `${commonGuard}
+    // Company history and recent news come from live web search. A website
+    // rarely states its founding year, founders or owner, so the website-only
+    // history came back "Not available" (Oct 21 to Nov 3, 2026). One search
+    // call covers both sections.
+    const researchPrompt = `${commonGuard}
+${sfContext}
 
-Use web search to find 2-3 genuinely relevant recent news items about this exact company: product releases, material announcements, partnerships, funding, leadership, or acquisitions. Prefer the last 18 months, attach an approximate month/year, and do not substitute news about a similarly named company.
+Use web search to research this exact company. Check its own About and Team pages, LinkedIn, Crunchbase, press releases and trade press.
 
-Answer with the heading "RECENT NEWS:" on its own line, then one item per line starting with "- " (one sentence each, month and year included), or the single word "None" if nothing reliable was found. Nothing else.`;
-    const [stable, newsMessage] = await Promise.all([
+1. COMPANY HISTORY: founding year, founders, headquarters city, who runs it today (CEO or managing director), ownership (founder-owned, private equity-backed with the firm's name, venture-backed, or owned by a named group and since when), funding, acquisitions it made, and key milestones such as product launches.
+2. RECENT NEWS: 2 to 3 genuinely relevant items from the last 18 months about this exact company (product releases, material announcements, partnerships, funding, leadership, acquisitions), each with a month and year. Never substitute news about a similarly named company.
+
+The Salesforce data above may give a founding year or ownership; use it, and prefer a dated public source when they disagree.
+
+Answer with exactly these two headings, each on its own line:
+COMPANY HISTORY:
+one paragraph, 90 to 150 words, plain facts in date order. State only what a source supports. Leave out an item you could not find instead of writing that it is unavailable, and never mention "evidence", "sources" or "search results". If the founding year or the owner could not be confirmed, say so in one short closing sentence.
+RECENT NEWS:
+one item per line starting with "- ", or the single word "None".`;
+    const [stable, researchText] = await Promise.all([
       generateSections(anthropic, staticPrompt, prepMode, false),
-      trackedCreate(anthropic, "call_prep", {
-        model: MODELS.drafting,
-        max_tokens: 1536,
-        system: PREP_STYLE,
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
-        messages: [{ role: "user", content: newsPrompt }],
-      }),
+      searchText(anthropic, researchPrompt, 6),
     ]);
-    const newsText = newsMessage.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("\n");
-    const recentNews = parseSections(newsText.includes("RECENT NEWS") ? newsText : `RECENT NEWS:\n${newsText}`).recentNews;
+    const researched = parseSections(researchText.includes("RECENT NEWS") || researchText.includes("COMPANY HISTORY") ? researchText : `RECENT NEWS:\n${researchText}`);
     return applyPrepMode(
-      await tightenSections(anthropic, { ...stable, generatedOn: new Date().toISOString(), recentNews }),
+      await tightenSections(anthropic, {
+        ...stable,
+        companyHistory: pickHistory(stable.companyHistory, researched.companyHistory),
+        generatedOn: new Date().toISOString(),
+        recentNews: researched.recentNews,
+      }),
       prepMode,
     );
   }
@@ -348,6 +360,37 @@ Section guidance: ${prepMode === "reconnect" ? "QUICK BRIEF is a 60-second refre
   // Step 4: one model call with web search, parsed by heading and checked for completeness.
   const parsed = await generateSections(anthropic, prompt, prepMode, true);
   return applyPrepMode(await tightenSections(anthropic, parsed), prepMode);
+}
+
+/**
+ * The researched history wins when it has real content; the website-only
+ * paragraph is the fallback if the search call came back empty.
+ */
+export function pickHistory(fromWebsite: string, fromSearch: string): string {
+  const searched = (fromSearch ?? "").trim();
+  if (searched.split(/\s+/).length >= 25 && !/^(none|not available)\b/i.test(searched)) return searched;
+  return fromWebsite;
+}
+
+/** One model call with web search, handing paused turns back until it finishes. */
+async function searchText(
+  anthropic: NonNullable<ReturnType<typeof getAnthropicClient>>,
+  prompt: string,
+  maxUses: number,
+): Promise<string> {
+  const tools = [{ type: "web_search_20250305" as const, name: "web_search" as const, max_uses: maxUses }];
+  const messages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: prompt }];
+  try {
+    let res = await trackedCreate(anthropic, "call_prep", { model: MODELS.drafting, max_tokens: 2048, system: PREP_STYLE, tools, messages });
+    for (let i = 0; i < 3 && res.stop_reason === "pause_turn"; i++) {
+      messages.push({ role: "assistant", content: res.content });
+      res = await trackedCreate(anthropic, "call_prep", { model: MODELS.drafting, max_tokens: 2048, system: PREP_STYLE, tools, messages });
+    }
+    return res.content.map((b) => (b.type === "text" ? b.text : "")).join("\n");
+  } catch (err) {
+    console.error("[prep] history and news search failed", err);
+    return "";
+  }
 }
 
 /**
