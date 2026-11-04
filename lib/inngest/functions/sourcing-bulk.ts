@@ -24,7 +24,7 @@ import {
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { anchorToSalesforce, needsAnchor, type SfLocation } from "@/lib/location-anchor";
 import { sfQuery } from "@/lib/sf-query";
-import { findGroupFileName, loadGroupFiles } from "@/lib/scout";
+import { canonicalSubgroup, findGroupFileName, loadGroupFiles } from "@/lib/scout";
 import { createJob } from "@/lib/jobs";
 
 // Bulk sourcing. Each company is processed as its OWN `step.run`, so every
@@ -45,6 +45,8 @@ function classificationTrusted(result: SourcingResult): boolean {
   // fits; a plain NO_MATCH is also redone, since a stored one is what Seb is
   // trying to get past when he runs the row again.
   if (!m.matched) return false;
+  // A stored group that is not one of the 20 subgroups ("Ag") is redone too.
+  if (!canonicalSubgroup(m.group)) return false;
   return typeof m.confidence === "number";
 }
 
@@ -129,10 +131,12 @@ export const sourcingBulkJob = inngest.createFunction(
                   // the Outreach pool can carry a Salesforce industry label
                   // ("Transport & Logistics") that is not a group; those go to
                   // the classifier like any other row.
+                  // Exact names only: a Salesforce label such as "Ag" or "CDM" is not a subgroup.
                   const presetKey = preset?.group_name ? findGroupFileName(preset.group_name, loadGroupFiles()) : null;
-                  if (presetKey) {
+                  const presetGroup = preset?.group_name ? canonicalSubgroup(preset.group_name) : null;
+                  if (presetKey && presetGroup) {
                     const mainGroup = presetKey.includes("/") ? presetKey.split("/")[0] : preset?.industry ?? null;
-                    return { matched: true, group: preset!.group_name, mainGroup, confidence: 100 } as SourcingResult["portfolioMatch"];
+                    return { matched: true, group: presetGroup, mainGroup, confidence: 100 } as SourcingResult["portfolioMatch"];
                   }
                 }
                 const cached = await findRecentSourcingByUrl(

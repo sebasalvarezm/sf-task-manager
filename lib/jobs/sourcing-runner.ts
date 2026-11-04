@@ -25,6 +25,7 @@ import {
   generateEmailHook,
   researchCompanyAnchors,
   findGroupFileName,
+  canonicalSubgroup,
   waybackPlaybackCooldownRemainingMs,
   type WaybackStatus,
   type WaybackLookupResult,
@@ -541,11 +542,17 @@ export async function runFullSourcing(input: {
   // Portfolio match
   logs.push(`Loaded ${Object.keys(groups).length} portfolio group file(s).`);
   logs.push("Matching to portfolio group...");
-  const portfolioMatch: GroupMatch = portfolioMatchOverride
+  // An override is used only when it names one of the 20 subgroups; anything
+  // else (a Salesforce label like "Ag") goes to the classifier.
+  const usableOverride = portfolioMatchOverride && (!portfolioMatchOverride.matched || canonicalSubgroup(portfolioMatchOverride.group))
+    ? portfolioMatchOverride
+    : undefined;
+  const portfolioMatch: GroupMatch = usableOverride
     ? {
-        ...portfolioMatchOverride,
-        mainGroup: portfolioMatchOverride.mainGroup ?? null,
-        confidence: portfolioMatchOverride.confidence ?? null,
+        ...usableOverride,
+        group: usableOverride.matched ? canonicalSubgroup(usableOverride.group) : usableOverride.group,
+        mainGroup: usableOverride.mainGroup ?? null,
+        confidence: usableOverride.confidence ?? null,
       }
     : await matchGroup(anthropic, currentText, groups);
   if (portfolioMatch.matched) {

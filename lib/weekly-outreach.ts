@@ -1,3 +1,4 @@
+import { canonicalSubgroup } from "./scout";
 import { addDays, startOfWeek, format } from "date-fns";
 import { sfErrorText, sfFetch } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
@@ -368,7 +369,8 @@ export async function upsertWeeklyOutreachItem(input: {
     country: input.account.country,
     city: input.account.city,
     tier: input.account.tier,
-    group_name: input.account.groupName,
+    // Only one of the 20 subgroups; a Salesforce label ("Ag", "CDM") stays empty until Sourcing classifies the row.
+    group_name: canonicalSubgroup(input.account.groupName),
     source: input.source,
     source_reference: input.sourceReference ?? null,
     rce_days: input.rceDays ?? null,
@@ -498,7 +500,7 @@ export async function addWeeklyOutreachBatch(input: {
       country: row.account.country,
       city: row.account.city,
       tier: row.account.tier,
-      group_name: row.account.groupName,
+      group_name: canonicalSubgroup(row.account.groupName),
       source: input.source,
       source_reference: null,
       rce_days: null,

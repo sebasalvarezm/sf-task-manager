@@ -3504,26 +3504,27 @@ export function findGroupFileName(
   displayGroupName: string,
   groups: Record<string, string>
 ): string | null {
-  const normalized = displayGroupName
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .trim();
-
-  // Direct match (legacy root-level file)
-  const direct = normalized + ".md";
-  if (direct in groups) return direct;
-
-  // Match against the filename part of each key (ignoring the folder)
+  // Exact only. This used to fall back to substring matches, so the
+  // Salesforce group label "Ag" resolved to "Agriculture/fresh-produce.md"
+  // (the folder contains "ag") and a row was sourced as subgroup "Ag", which
+  // has no template and no sequence (Oakland, Nov 2026). A name that is not
+  // one of the 20 subgroups now resolves to nothing and gets classified.
+  const slug = (x: string) =>
+    x.toLowerCase().replace(/&/g, " ").replace(/\.md$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const name = displayGroupName.trim();
+  // A full key ("Agriculture/grain-crop.md") or a display name ("Grain Crop",
+  // "Structure Design/Analysis").
+  const wanted = new Set([slug(name), slug(splitGroupKey(name).fileName)].filter(Boolean));
+  if (wanted.size === 0) return null;
   for (const key of Object.keys(groups)) {
-    const base = splitGroupKey(key).fileName.toLowerCase();
-    if (base.replace(".md", "") === normalized || base.includes(normalized)) {
-      return key;
-    }
-  }
-
-  // Last resort: substring match against the whole key (folder included)
-  for (const key of Object.keys(groups)) {
-    if (key.toLowerCase().includes(normalized)) return key;
+    if (wanted.has(slug(splitGroupKey(key).fileName))) return key;
   }
   return null;
+}
+
+/** The subgroup's display name ("Grain Crop") when the name is exactly one of the group files, else null. */
+export function canonicalSubgroup(name: string | null | undefined, groups: Record<string, string> = loadGroupFiles()): string | null {
+  if (!name) return null;
+  const key = findGroupFileName(name, groups);
+  return key ? displayName(key) : null;
 }
