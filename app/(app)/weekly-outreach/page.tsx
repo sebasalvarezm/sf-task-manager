@@ -1003,6 +1003,17 @@ export default function WeeklyOutreachPage() {
     (document.activeElement as HTMLElement | null)?.blur?.();
   }
 
+  /** Rows still waiting on their follow-up, in the order shown, so Send can move on to the next one. */
+  function nextFollowUpAfter(currentId: string, list: WeeklyOutreachItem[] = orderedItems): WeeklyOutreachItem | null {
+    const waiting = (row: WeeklyOutreachItem) =>
+      row.outreach_type === "RCE" && row.status === "sent" && !row.rce_second_sent && row.rce_follow_up_trackable && row.id !== currentId;
+    const at = list.findIndex((row) => row.id === currentId);
+    return list.slice(at + 1).find(waiting) ?? list.slice(0, Math.max(0, at)).find(waiting) ?? null;
+  }
+  const followUpsLeft = followUpItemId
+    ? orderedItems.filter((row) => row.outreach_type === "RCE" && row.status === "sent" && !row.rce_second_sent && row.rce_follow_up_trackable && row.id !== followUpItemId).length
+    : 0;
+
   function closeFollowUp() {
     setFollowUpItemId(null);
     setFollowUpBody("");
@@ -1081,8 +1092,11 @@ export default function WeeklyOutreachPage() {
       setItems((previous) =>
         sortItems(previous.map((row) => (row.id === data.item.id ? data.item : row))),
       );
-      setMessage(`Follow-up sent to ${followUpItem.account_name}. Row complete.`);
+      const next = nextFollowUpAfter(followUpItem.id);
+      setMessage(`Follow-up sent to ${followUpItem.account_name}.${next ? ` Next: ${next.account_name}.` : " That was the last one."}`);
       closeFollowUp();
+      // Straight on to the next row still waiting, like the RCE review.
+      if (next) void openFollowUp(next);
     } catch (sendError) {
       setFollowUpError(sendError instanceof Error ? sendError.message : "Could not send the follow-up");
     } finally {
@@ -2389,6 +2403,7 @@ export default function WeeklyOutreachPage() {
                 <div className="min-w-0">
                   <h2 id="rce-followup-title" className="truncate text-lg font-normal text-ink">
                     Follow-up · {followUpItem.account_name}
+                    {followUpsLeft > 0 ? <span className="ml-2 text-sm text-ink-muted">{followUpsLeft} more after this</span> : null}
                   </h2>
                   <p className="mt-1 text-sm text-ink-secondary">
                     {followUpNotTracked
@@ -2523,8 +2538,10 @@ export default function WeeklyOutreachPage() {
                     disabled={followUpSending}
                     onClick={() => {
                       const item = followUpItem;
+                      const next = nextFollowUpAfter(item.id);
                       closeFollowUp();
                       void confirmSecondRceSent(item);
+                      if (next) void openFollowUp(next);
                     }}
                   >
                     Mark sent manually
@@ -2543,7 +2560,7 @@ export default function WeeklyOutreachPage() {
                       }
                       onClick={() => armOrRun(`fu-send:${followUpItem.id}`, () => void sendFollowUp())}
                     >
-                      {armedKey === `fu-send:${followUpItem.id}` ? "Tap again to send" : "Send follow-up"}
+                      {armedKey === `fu-send:${followUpItem.id}` ? "Tap again to send" : followUpsLeft > 0 ? "Send and next" : "Send follow-up"}
                     </Button>
                   ) : (
                     <Button

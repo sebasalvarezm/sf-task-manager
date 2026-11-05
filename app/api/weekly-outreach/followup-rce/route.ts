@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sfQuery } from "@/lib/sf-query";
 import { isAdmin } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import {
@@ -34,6 +35,14 @@ import {
  */
 
 type FollowUpAction = "preview" | "send";
+
+/** First name of the Salesforce contact with this email, read-only. */
+async function salesforceFirstName(email: string | null | undefined): Promise<string | null> {
+  const clean = (email ?? "").trim().toLowerCase();
+  if (!/^[^\s@'\\]+@[^\s@'\\]+\.[a-z]{2,}$/.test(clean)) return null;
+  const rows = await sfQuery<{ FirstName: string | null }>(`SELECT FirstName FROM Contact WHERE Email = '${clean}' AND FirstName != null LIMIT 1`);
+  return firstNameFrom(rows[0]?.FirstName ?? null);
+}
 
 export async function POST(request: Request) {
   if (!(await isAdmin())) {
@@ -110,8 +119,13 @@ export async function POST(request: Request) {
     const threadKnown = thread.length > 0;
 
     const recipient = metadata.recipients[0] ?? null;
+    // Outlook often has no display name for the address (mark@dataforma.com),
+    // so the Salesforce contact with that email is asked next.
     const firstName =
-      firstNameFrom(recipient?.name) ?? firstNameFromGreeting(item.draft) ?? null;
+      firstNameFrom(recipient?.name) ??
+      firstNameFromGreeting(item.draft) ??
+      (await salesforceFirstName(recipient?.email).catch(() => null)) ??
+      null;
 
     if (body.action === "preview") {
       // A Weekly Outreach follow-up is the second email of a fresh reconnect.
