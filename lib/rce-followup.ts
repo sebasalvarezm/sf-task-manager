@@ -25,11 +25,24 @@ export const RCE_FOLLOW_UP_TEMPLATES: FollowUpTemplate[] = [
 
 export const FOLLOW_UP_SIGNATURE = "Seb";
 
-/** "Have a great weekend" on Thursday and Friday, "Best" otherwise. */
+/**
+ * "Have a great weekend" on a Friday only (Seb's day in Montreal, not the
+ * server's), "Best" otherwise. Thursday used to count too; Seb asked for
+ * Friday only (Nov 2026).
+ */
 export function followUpCloser(now: Date): string {
-  const day = now.getDay(); // 0 = Sunday
-  return day === 4 || day === 5 ? "Have a great weekend," : "Best,";
+  const day = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "America/Toronto" }).format(now);
+  return day === "Fri" ? "Have a great weekend," : "Best,";
 }
+
+/**
+ * The second email after a Weekly Outreach reconnect. It is the first
+ * follow-up, so never "a final time" or "once more"; those stay for nudges on
+ * Open Tasks, where the thread is often on its third or fourth email.
+ */
+export const SECOND_EMAIL_TEMPLATE: FollowUpTemplate = {
+  body: "Hi {first},\n\nFollowing up on my last email. Are you available to catch-up and resume acquisition discussions in the next week or two?",
+};
 
 /** "Charles Smith" -> "Charles"; "smith, charles" -> "Charles"; junk -> null. */
 export function firstNameFrom(fullName: string | null | undefined): string | null {
@@ -93,9 +106,11 @@ export function buildRceFollowUp(args: {
   firstName: string | null;
   now: Date;
   templateIndex?: number;
+  /** "second": the follow-up to a Weekly Outreach reconnect (one fixed wording). Default: an Open Tasks nudge. */
+  kind?: "second" | "nudge";
 }): { body: string; usedPlaceholder: boolean } {
   const index = args.templateIndex ?? pickTemplateIndex(args.seed);
-  const template = RCE_FOLLOW_UP_TEMPLATES[index] ?? RCE_FOLLOW_UP_TEMPLATES[0];
+  const template = args.kind === "second" ? SECOND_EMAIL_TEMPLATE : RCE_FOLLOW_UP_TEMPLATES[index] ?? RCE_FOLLOW_UP_TEMPLATES[0];
   const first = args.firstName ?? FIRST_NAME_PLACEHOLDER;
   const body = `${template.body.split("{first}").join(first)}\n\n${followUpCloser(args.now)}\n${FOLLOW_UP_SIGNATURE}`;
   return { body, usedPlaceholder: args.firstName === null };

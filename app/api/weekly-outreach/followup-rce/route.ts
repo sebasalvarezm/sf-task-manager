@@ -114,7 +114,8 @@ export async function POST(request: Request) {
       firstNameFrom(recipient?.name) ?? firstNameFromGreeting(item.draft) ?? null;
 
     if (body.action === "preview") {
-      const built = buildRceFollowUp({ seed: item.id, firstName, now: new Date() });
+      // A Weekly Outreach follow-up is the second email of a fresh reconnect.
+      const built = buildRceFollowUp({ seed: item.id, firstName, now: new Date(), kind: "second" });
       return NextResponse.json({
         body: built.body,
         firstNamePlaceholder: built.usedPlaceholder,

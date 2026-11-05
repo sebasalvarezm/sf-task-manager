@@ -22,11 +22,18 @@ describe("rce follow-up", () => {
     );
     expect(usedPlaceholder).toBe(false);
   });
-  it("uses the weekend closer on Thursday and Friday only", () => {
-    expect(followUpCloser(new Date("2026-09-24T10:00:00"))).toBe("Have a great weekend,"); // Thu
-    expect(followUpCloser(new Date("2026-09-25T10:00:00"))).toBe("Have a great weekend,"); // Fri
-    expect(followUpCloser(new Date("2026-09-21T10:00:00"))).toBe("Best,"); // Mon
-    expect(followUpCloser(new Date("2026-09-26T10:00:00"))).toBe("Best,"); // Sat
+  it("uses the weekend closer on Friday only, Montreal time", () => {
+    expect(followUpCloser(new Date("2026-09-24T14:00:00Z"))).toBe("Best,"); // Thu
+    expect(followUpCloser(new Date("2026-09-25T14:00:00Z"))).toBe("Have a great weekend,"); // Fri
+    expect(followUpCloser(new Date("2026-09-21T14:00:00Z"))).toBe("Best,"); // Mon
+    expect(followUpCloser(new Date("2026-09-26T14:00:00Z"))).toBe("Best,"); // Sat
+    // Thursday 9pm in Montreal is already Friday on the server (UTC): still Thursday for Seb.
+    expect(followUpCloser(new Date("2026-11-06T02:00:00Z"))).toBe("Best,");
+  });
+  it("the Weekly Outreach follow-up is a plain second email", () => {
+    const { body } = buildRceFollowUp({ seed: "anything", firstName: "Kristen", now: new Date("2026-11-05T15:00:00Z"), kind: "second" }); // Thursday
+    expect(body).toBe("Hi Kristen,\n\nFollowing up on my last email. Are you available to catch-up and resume acquisition discussions in the next week or two?\n\nBest,\nSeb");
+    expect(body).not.toMatch(/final time|once more/i);
   });
   it("falls back to a visible placeholder when the first name is unknown", () => {
     const { body, usedPlaceholder } = buildRceFollowUp({
