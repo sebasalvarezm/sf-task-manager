@@ -2,6 +2,7 @@
 
 import { useRef, useState, useCallback, type ReactNode } from "react";
 import { SalesforceTask } from "@/lib/salesforce";
+import { shortDay, type ScheduledItem } from "@/lib/scheduled-actions-core";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,28 @@ type Props = {
   /** accountId → nudge info; accounts not in it are reconnects. Undefined while loading. */
   nudges?: Record<string, { lastInAt: string; topic: string; via?: "email" | "call" | "sent" }>;
   onOpenNudge?: (task: SalesforceTask) => void;
+  /** Tasks submitted for their Monday (taskId → entry): shown locked, with Cancel. */
+  waiting?: Map<string, ScheduledItem>;
+  onCancelWaiting?: (item: ScheduledItem) => void;
+  cancelBusy?: boolean;
 };
+
+/** A task whose RCE waits for its Monday: no code box, just what will happen and Cancel. */
+function WaitingNote({ item, onCancel, busy, large }: { item: ScheduledItem; onCancel?: (item: ScheduledItem) => void; busy?: boolean; large?: boolean }) {
+  return (
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-line bg-surface-3 px-2 ${large ? "min-h-[44px] py-2 text-sm" : "py-1.5 text-xs"}`}>
+      <span className="text-ink">
+        RCE{item.days} · recorded {shortDay(item.runOn)}, 7am
+      </span>
+      <span className="text-ink-secondary">In that week&apos;s Weekly Outreach</span>
+      {onCancel ? (
+        <button type="button" disabled={busy} onClick={() => onCancel(item)} className="ml-auto text-danger underline underline-offset-2 disabled:opacity-50">
+          Cancel
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 function KindChip({ task, nudges, onOpenNudge }: { task: SalesforceTask; nudges?: Record<string, { lastInAt: string; topic: string; via?: "email" | "call" | "sent" }>; onOpenNudge?: (task: SalesforceTask) => void }) {
   if (!nudges) return <span className="text-xs text-ink-muted">…</span>;
@@ -88,6 +110,9 @@ export default function TaskTable({
   onActionChange,
   nudges,
   onOpenNudge,
+  waiting,
+  onCancelWaiting,
+  cancelBusy,
 }: Props) {
   const [activeCell, setActiveCell] = useState<{ row: number; col: number } | null>(null);
   const [inputValues, setInputValues] = useState<Map<string, string>>(new Map());
@@ -442,6 +467,9 @@ export default function TaskTable({
                 onClick={() => focusCell(rowIdx, INTERACTIVE_COL)}
                 className={`p-1.5 ${cellBase} ${isCellActive(rowIdx, INTERACTIVE_COL) ? cellActive : ""}`}
               >
+                {waiting?.get(task.Id) ? (
+                  <WaitingNote item={waiting.get(task.Id)!} onCancel={onCancelWaiting} busy={cancelBusy} />
+                ) : (
                 <div className="flex flex-col gap-1.5">
                   <input
                     ref={(el) => {
@@ -468,6 +496,7 @@ export default function TaskTable({
                   {renderBadge(task.Id)}
                   {quickActions(task)}
                 </div>
+                )}
               </td>
             </tr>
           ))}
@@ -532,6 +561,12 @@ export default function TaskTable({
               )}
             </div>
 
+            {waiting?.get(task.Id) ? (
+              <div className="mt-3">
+                <WaitingNote item={waiting.get(task.Id)!} onCancel={onCancelWaiting} busy={cancelBusy} large />
+              </div>
+            ) : (
+            <>
             {/* Quick-action buttons — taps accumulate into the box below */}
             <div className="flex items-center gap-2 mt-3">
               <button
@@ -601,6 +636,8 @@ export default function TaskTable({
             />
             {isInvalidCode(task.Id) && <div className="mt-1 text-xs font-normal text-danger" role="alert">Invalid code. Use D, P7, P30, RCE7, RCE12, etc.</div>}
             {renderBadge(task.Id)}
+            </>
+            )}
           </div>
         );
       })}

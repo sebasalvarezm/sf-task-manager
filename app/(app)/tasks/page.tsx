@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { SalesforceTask } from "@/lib/salesforce";
 import { WeekRange, generateWeeks, currentWeekIndex } from "@/app/components/WeekSelector";
@@ -9,6 +9,7 @@ import { addDays, format } from "date-fns";
 
 import TaskTable, { TaskAction } from "@/app/components/TaskTable";
 import { keepAfterFailure } from "@/lib/task-apply";
+import { shortDay, splitForSchedule, type ScheduledItem } from "@/lib/scheduled-actions-core";
 import ConnectSalesforce from "@/app/components/ConnectSalesforce";
 import { PageHeader } from "@/app/components/ui/PageHeader";
 import { PageContent } from "@/app/components/ui/PageContent";
@@ -166,6 +167,38 @@ function TasksPageContent() {
   const [confirmDeleteCount, setConfirmDeleteCount] = useState<number | null>(null);
   const [pendingActions, setPendingActions] = useState<TaskAction[]>([]);
 
+  // ── Submit Monday: RCEs on a future week's tasks wait for that Monday ───────
+  const [scheduled, setScheduled] = useState<ScheduledItem[]>([]);
+  const [scheduledPaused, setScheduledPaused] = useState(false);
+  const [scheduleNote, setScheduleNote] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const [scheduleBusy, setScheduleBusy] = useState<string | null>(null);
+  const waitingByTask = useMemo(() => new Map(scheduled.filter((i) => i.status === "scheduled").map((i) => [i.taskId, i])), [scheduled]);
+
+  const loadScheduled = useCallback(async () => {
+    try {
+      const res = await fetch("/api/salesforce/scheduled");
+      const data = await readJson(res);
+      if (res.ok && data && Array.isArray(data.items)) {
+        setScheduled(data.items as unknown as ScheduledItem[]);
+        setScheduledPaused(Boolean((data.settings as { paused?: boolean } | undefined)?.paused));
+      }
+    } catch {
+      // The page still works; the waiting list just does not show.
+    }
+  }, []);
+
+  // A task already waiting for its Monday cannot be queued again.
+  useEffect(() => {
+    if (waitingByTask.size === 0) return;
+    setActions((prev) => {
+      const clash = [...prev.keys()].filter((id) => waitingByTask.has(id));
+      if (clash.length === 0) return prev;
+      const next = new Map(prev);
+      for (const id of clash) next.delete(id);
+      return next;
+    });
+  }, [waitingByTask]);
+
   useEffect(() => {
     const sfConnected = searchParams.get("sf_connected");
     const sfError = searchParams.get("sf_error");
@@ -184,7 +217,10 @@ function TasksPageContent() {
       if (res.ok) {
         const data = await res.json();
         setConnected(data.connected);
-        if (data.connected) loadTasks();
+        if (data.connected) {
+          loadTasks();
+          void loadScheduled();
+        }
       } else {
         // A failed status check means "can't tell": show the connect
         // prompt rather than "Checking connection…" forever.
@@ -295,7 +331,7 @@ function TasksPageContent() {
   }
   const upcomingNudge = nudgeTask ? nextNudgeAfter(nudgeTask) : null;
 
-  const bsCandidates = weekTasks.filter((t) => looksBs(t) && !actions.has(t.Id));
+  const bsCandidates = weekTasks.filter((t) => looksBs(t) && !actions.has(t.Id) && !waitingByTask.has(t.Id));
 
   function preMarkBs() {
     if (bsCandidates.length === 0) return;
@@ -317,6 +353,7 @@ function TasksPageContent() {
   }
 
   function handleActionChange(taskId: string, action: TaskAction) {
+    if (waitingByTask.has(taskId)) return;
     setActions((prev) => {
       const next = new Map(prev);
       if (action.actionType === "none") {
@@ -344,7 +381,136 @@ function TasksPageContent() {
     if (deleteCount > 0) {
       setConfirmDeleteCount(deleteCount);
     } else {
-      executeActions(actionsToExecute);
+      void submitQueue(actionsToExecute);
+    }
+  }
+
+  /**
+   * Submit: RCEs on a future week's tasks are scheduled for that week's Monday
+   * (Weekly Outreach rows added now, Salesforce at 7am that Monday); everything
+   * else applies now. If scheduling fails, nothing at all is submitted and the
+   * queue stays as it is.
+   */
+  async function submitQueue(list: TaskAction[]) {
+    setConfirmDeleteCount(null);
+    const { now, later } = splitForSchedule(list);
+    if (later.length > 0) {
+      setApplying(true);
+      setApplyResult(null);
+      setScheduleNote(null);
+      try {
+        const res = await fetch("/api/salesforce/scheduled", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "schedule", actions: later }),
+        });
+        const data = await readJson(res);
+        if (!res.ok || !data || !Array.isArray(data.items)) {
+          const why = data?.error === SIGNED_OUT ? SIGNED_OUT_TEXT : data?.error ?? `The server answered ${res.status}`;
+          setApplyResult({ successCount: 0, failCount: 0, results: [], message: `Nothing was submitted (${why}). Your queue is untouched; press Submit again.` });
+          setApplying(false);
+          return;
+        }
+        setScheduled(data.items as unknown as ScheduledItem[]);
+        const done = (data.scheduled as Array<{ taskId: string; runOn: string }>) ?? [];
+        const rejected = (data.rejected as Array<{ taskId: string; accountName: string | null; reason: string; code?: string }>) ?? [];
+        const warnings = (data.weeklyWarnings as string[]) ?? [];
+        // Scheduled ones leave the queue, and so do stale ones (the task changed
+        // in Salesforce). One whose week started meanwhile stays queued.
+        const leaving = new Set([...done.map((d) => d.taskId), ...rejected.filter((r) => r.code === "changed").map((r) => r.taskId)]);
+        setActions((prev) => {
+          const next = new Map(prev);
+          for (const id of leaving) next.delete(id);
+          return next;
+        });
+        const mondays = [...new Set(done.map((d) => d.runOn))].sort().map(shortDay);
+        const parts: string[] = [];
+        if (done.length) parts.push(`${done.length} RCE${done.length !== 1 ? "s" : ""} scheduled for ${mondays.join(" and ")} at 7am. Their rows are in that week's Weekly Outreach now; Salesforce is updated that morning.`);
+        if (rejected.length) parts.push(`Not scheduled: ${rejected.map((r) => `${r.accountName ?? "Task"} (${r.reason})`).join("; ")}`);
+        if (warnings.length) parts.push(`Weekly Outreach needs a look: ${warnings.join("; ")}. Salesforce will still be updated on Monday.`);
+        setScheduleNote({ tone: rejected.length || warnings.length ? "warn" : "ok", text: parts.join(" ") });
+      } catch (err) {
+        setApplyResult({ successCount: 0, failCount: 0, results: [], message: `Nothing was submitted (${err instanceof Error ? err.message : "network error"}). Your queue is untouched; press Submit again.` });
+        setApplying(false);
+        return;
+      }
+      if (now.length === 0) {
+        setApplying(false);
+        return;
+      }
+    }
+    await executeActions(now);
+  }
+
+  async function cancelWaiting(ids: string[]) {
+    setScheduleBusy("cancel");
+    try {
+      const res = await fetch("/api/salesforce/scheduled", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", ids }),
+      });
+      const data = await readJson(res);
+      if (!res.ok || !data) throw new Error(data?.error ?? `The server answered ${res.status}`);
+      setScheduled((data.items as unknown as ScheduledItem[]) ?? []);
+      const kept = (data.rowsKept as string[]) ?? [];
+      setScheduleNote({
+        tone: kept.length ? "warn" : "ok",
+        text: `${ids.length === 1 ? "Taken off the schedule" : `${ids.length} taken off the schedule`}. Nothing was written to Salesforce.${kept.length ? ` The Weekly Outreach row stays for ${kept.join(", ")} because you had started on it.` : ""}`,
+      });
+    } catch (err) {
+      setScheduleNote({ tone: "warn", text: `Could not cancel: ${err instanceof Error ? err.message : "network error"}.` });
+    } finally {
+      setScheduleBusy(null);
+    }
+  }
+
+  async function recordWaitingNow(ids: string[]) {
+    setScheduleBusy("run");
+    try {
+      // 40 per request keeps each one well inside the server's time limit.
+      const sum = { recorded: 0, skipped: 0, failed: 0 };
+      for (let i = 0; i < ids.length; i += 40) {
+        const res = await fetch("/api/salesforce/scheduled", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "run_now", ids: ids.slice(i, i + 40) }),
+        });
+        const data = await readJson(res);
+        if (!res.ok || !data) throw new Error(data?.error ?? `The server answered ${res.status}`);
+        setScheduled((data.items as unknown as ScheduledItem[]) ?? []);
+        const part = data.summary as { recorded: number; skipped: number; failed: number };
+        sum.recorded += part.recorded;
+        sum.skipped += part.skipped;
+        sum.failed += part.failed;
+      }
+      setScheduleNote({
+        tone: sum.skipped || sum.failed ? "warn" : "ok",
+        text: `Recorded in Salesforce now: ${sum.recorded}.${sum.skipped ? ` Skipped: ${sum.skipped} (see below).` : ""}${sum.failed ? ` Failed: ${sum.failed} (see below).` : ""}`,
+      });
+      await loadTasks();
+    } catch (err) {
+      setScheduleNote({ tone: "warn", text: `Could not record: ${err instanceof Error ? err.message : "network error"}.` });
+    } finally {
+      setScheduleBusy(null);
+    }
+  }
+
+  async function togglePause() {
+    setScheduleBusy("pause");
+    try {
+      const res = await fetch("/api/salesforce/scheduled", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "settings", paused: !scheduledPaused }),
+      });
+      const data = await readJson(res);
+      if (!res.ok || !data) throw new Error(data?.error ?? `The server answered ${res.status}`);
+      setScheduledPaused(Boolean((data.settings as { paused?: boolean } | undefined)?.paused));
+    } catch (err) {
+      setScheduleNote({ tone: "warn", text: `Could not change the pause switch: ${err instanceof Error ? err.message : "network error"}.` });
+    } finally {
+      setScheduleBusy(null);
     }
   }
 
@@ -393,7 +559,10 @@ function TasksPageContent() {
 
     if (!problem) {
       clearSubmittedBatch();
-      setActions(new Map());
+      // Only what was applied leaves the queue (an RCE whose week started while
+      // it was being scheduled stays queued).
+      const applied = new Set(actionsToExecute.map((a) => a.taskId));
+      setActions((prev) => new Map([...prev].filter(([id]) => !applied.has(id))));
       setApplyResult(done);
       setApplying(false);
       return;
@@ -406,7 +575,13 @@ function TasksPageContent() {
     const keep = keepAfterFailure(unsent, fresh, signedOut);
     const next = new Map<string, TaskAction>();
     for (const a of keep) next.set(a.taskId, a);
-    setActions(next);
+    // Anything that was not part of this batch stays queued too.
+    const inBatch = new Set(actionsToExecute.map((a) => a.taskId));
+    setActions((prev) => {
+      const merged = new Map([...prev].filter(([id]) => !inBatch.has(id)));
+      for (const [id, a] of next) merged.set(id, a);
+      return merged;
+    });
     if (next.size === 0) clearSubmittedBatch();
     else saveSubmittedBatch(keep);
 
@@ -430,6 +605,25 @@ function TasksPageContent() {
   const activeActionCount = Array.from(actions.values()).filter(
     (a) => a.actionType !== "none"
   ).length;
+
+  // What the Submit button will do with the queue.
+  const queueSplit = splitForSchedule(Array.from(actions.values()).filter((a) => a.actionType !== "none"));
+  const laterMondays = [...new Set(queueSplit.later.map((a) => a.runOn))].sort();
+  const laterWhen = laterMondays.length === 1 ? shortDay(laterMondays[0]) : "their Mondays";
+  const submitLabel =
+    queueSplit.later.length === 0
+      ? `Apply ${activeActionCount} action${activeActionCount !== 1 ? "s" : ""}`
+      : queueSplit.now.length === 0
+        ? `Submit ${queueSplit.later.length} RCE${queueSplit.later.length !== 1 ? "s" : ""} for ${laterWhen}`
+        : `Apply ${queueSplit.now.length} now, ${queueSplit.later.length} RCE${queueSplit.later.length !== 1 ? "s" : ""} for ${laterWhen}`;
+
+  // The waiting list and what happened to recent ones, for the panel above the table.
+  const waiting = scheduled.filter((i) => i.status === "scheduled");
+  const waitingByMonday = [...new Set(waiting.map((i) => i.runOn))].sort().map((runOn) => ({ runOn, count: waiting.filter((i) => i.runOn === runOn).length }));
+  const recentCutoff = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const recentDone = scheduled.filter((i) => i.status !== "scheduled" && i.status !== "cancelled" && (i.finishedAt ?? "") >= recentCutoff);
+  const recentProblems = recentDone.filter((i) => i.status !== "done");
+  const retrying = waiting.filter((i) => (i.attempts ?? 0) > 0);
 
   const subtitle =
     connected === true
@@ -510,6 +704,56 @@ function TasksPageContent() {
               </Alert>
             )}
 
+            {waiting.length > 0 || recentDone.length > 0 || scheduleNote ? (
+              <div className="rounded-md border border-line bg-white px-4 py-3 text-sm">
+                {waiting.length > 0 ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-ink">
+                      {waitingByMonday.map((m) => `${m.count} RCE${m.count !== 1 ? "s" : ""} for ${shortDay(m.runOn)}`).join(" · ")}
+                      <span className="text-ink-secondary">
+                        {scheduledPaused
+                          ? " · paused: nothing is recorded until you resume"
+                          : " · recorded in Salesforce at 7am that day; their rows are already in that week's Weekly Outreach"}
+                      </span>
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="ghost" disabled={scheduleBusy !== null} onClick={() => void togglePause()}>
+                        {scheduledPaused ? "Resume" : "Pause"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        loading={scheduleBusy === "run"}
+                        disabled={scheduleBusy !== null}
+                        onClick={() => {
+                          if (window.confirm(`Record all ${waiting.length} in Salesforce now instead of on their Monday? Each task is completed today and its next task is dated from today.`)) {
+                            void recordWaitingNow(waiting.map((i) => i.id));
+                          }
+                        }}
+                      >
+                        Record now
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+                {retrying.length > 0 ? (
+                  <p className="mt-1 text-warn">Will retry tomorrow at 7am: {retrying.map((i) => `${i.accountName ?? "Task"} (${i.note ?? "Salesforce error"})`).join("; ")}</p>
+                ) : null}
+                {recentDone.length > 0 ? (
+                  <p className={`mt-1 ${recentProblems.length ? "text-warn" : "text-ink-secondary"}`}>
+                    Last 7 days: {recentDone.filter((i) => i.status === "done").length} recorded
+                    {recentProblems.length ? `, ${recentProblems.length} not recorded: ${recentProblems.map((i) => `${i.accountName ?? "Task"} (${i.note ?? i.status})`).join("; ")}` : "."}
+                  </p>
+                ) : null}
+                {scheduleNote ? (
+                  <p className={`mt-1 ${scheduleNote.tone === "warn" ? "text-warn" : "text-ok"}`}>
+                    {scheduleNote.text}{" "}
+                    <button type="button" className="text-ink-muted underline" onClick={() => setScheduleNote(null)}>Dismiss</button>
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             {tasksLoading ? (
               <Spinner center label="Loading tasks…" />
             ) : (
@@ -519,6 +763,9 @@ function TasksPageContent() {
                 onActionChange={handleActionChange}
                 nudges={nudges}
                 onOpenNudge={setNudgeTask}
+                waiting={waitingByTask}
+                onCancelWaiting={(item) => void cancelWaiting([item.id])}
+                cancelBusy={scheduleBusy === "cancel"}
               />
             )}
 
@@ -560,6 +807,11 @@ function TasksPageContent() {
           <span className="text-ink text-sm">
             <strong>{activeActionCount}</strong> action
             {activeActionCount !== 1 ? "s" : ""} queued
+            {queueSplit.later.length > 0 ? (
+              <span className="block text-xs text-ink-secondary">
+                RCEs on next week&apos;s tasks go to that week&apos;s Weekly Outreach now and into Salesforce at 7am on {laterWhen}.
+              </span>
+            ) : null}
           </span>
           <div className="flex gap-3">
             <Button
@@ -573,9 +825,7 @@ function TasksPageContent() {
               disabled={applying}
               loading={applying}
             >
-              {applying
-                ? "Applying…"
-                : `Apply ${activeActionCount} action${activeActionCount !== 1 ? "s" : ""}`}
+              {applying ? "Submitting…" : submitLabel}
             </Button>
           </div>
         </div>
@@ -621,7 +871,7 @@ function TasksPageContent() {
               </Button>
               <Button
                 variant="danger"
-                onClick={() => executeActions(pendingActions)}
+                onClick={() => void submitQueue(pendingActions)}
                 className="flex-1"
               >
                 Yes, delete permanently

@@ -337,6 +337,22 @@ export async function resolveWeeklyAccountById(
   return rows[0] ?? null;
 }
 
+/** Several accounts in one Salesforce query per 100 ids (Open Tasks scheduling). */
+export async function resolveWeeklyAccountsByIds(
+  accountIds: string[],
+): Promise<Map<string, SalesforceAccountDetails>> {
+  const credentials = await getValidCredentials();
+  if (!credentials) throw new Error("NOT_CONNECTED");
+  const unique = [...new Set(accountIds.filter(Boolean))];
+  const found = new Map<string, SalesforceAccountDetails>();
+  for (let i = 0; i < unique.length; i += 100) {
+    const ids = unique.slice(i, i + 100);
+    const rows = await queryAccounts(credentials, `Id IN (${ids.map((id) => `'${escapeSoql(id)}'`).join(", ")})`, ids.length);
+    for (const row of rows) found.set(row.accountId, row);
+  }
+  return found;
+}
+
 export function parseManualWeeklyEntry(raw: string): {
   outreachType: WeeklyOutreachType;
   accountName: string;
