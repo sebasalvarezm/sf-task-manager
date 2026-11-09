@@ -1,3 +1,4 @@
+import { requestContactNotesRun } from "@/lib/contact-notes";
 import { NextRequest, NextResponse } from "next/server";
 import { friendlyConnectionError, isConnectionError } from "@/lib/connection-errors";
 import { isAuthenticated } from "@/lib/auth";
@@ -247,5 +248,7 @@ export async function DELETE(request: NextRequest) {
   if (!id) return NextResponse.json({ error: "Missing row id" }, { status: 400 });
   const { error } = await getSupabaseAdmin().from("weekly_outreach").delete().eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  // Takes "Will contact this week" off the Salesforce description if it was an E1.
+  await requestContactNotesRun();
   return NextResponse.json({ success: true });
 }

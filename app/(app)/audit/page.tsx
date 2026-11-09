@@ -121,6 +121,41 @@ export default function AuditPage() {
           ))}
         </div>
       ) : null}
+
+      <ContactNotesSwitch />
     </PageContent>
+  );
+}
+
+/** The pause switch for "Will contact this week" lines in Salesforce descriptions (lib/contact-notes.ts). */
+function ContactNotesSwitch() {
+  const [state, setState] = useState<{ paused: boolean; active: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    fetch("/api/weekly-outreach/contact-notes")
+      .then((r) => r.json())
+      .then((d) => setState({ paused: Boolean(d.settings?.paused), active: (d.items ?? []).filter((n: { status: string }) => n.status === "active").length }))
+      .catch(() => setState(null));
+  }, []);
+  if (!state) return null;
+  async function toggle() {
+    if (!state) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/weekly-outreach/contact-notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "settings", paused: !state.paused }) });
+      const d = await res.json();
+      if (res.ok) setState({ ...state, paused: Boolean(d.settings?.paused) });
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-white px-4 py-3 text-sm">
+      <p className="text-ink-secondary">
+        <span className="text-ink">&quot;Will contact this week&quot; in Salesforce descriptions:</span>{" "}
+        {state.paused ? "paused" : `on, ${state.active} account${state.active !== 1 ? "s" : ""} marked`}
+      </p>
+      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void toggle()}>{state.paused ? "Resume" : "Pause"}</Button>
+    </div>
   );
 }

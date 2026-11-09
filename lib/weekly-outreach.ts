@@ -1,4 +1,5 @@
 import { canonicalSubgroup } from "./scout";
+import { requestContactNotesRun } from "./contact-notes";
 import { addDays, startOfWeek, format } from "date-fns";
 import { sfErrorText, sfFetch } from "./sf-query";
 import { getSupabaseAdmin } from "./supabase";
@@ -397,6 +398,8 @@ export async function upsertWeeklyOutreachItem(input: {
     .select("*")
     .single();
   if (error) throw new Error(`Could not add to Weekly Outreach: ${error.message}`);
+  // An E1 gets "Will contact this week" in its Salesforce description.
+  if (input.outreachType === "E1") await requestContactNotesRun();
   return data as WeeklyOutreachItem;
 }
 
@@ -529,6 +532,7 @@ export async function addWeeklyOutreachBatch(input: {
     })
     .select("*");
   if (error) throw new Error(`Could not paste Weekly Outreach rows: ${error.message}`);
+  if (pending.some((row) => row.entry.outreachType === "E1")) await requestContactNotesRun();
 
   const savedByKey = new Map<string, WeeklyOutreachItem>();
   for (const item of (data ?? []) as WeeklyOutreachItem[]) {
