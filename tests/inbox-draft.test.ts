@@ -30,7 +30,7 @@ describe("positive replies", () => {
   it("follows Seb's structure with no detail", async () => {
     const { positiveDraft } = await import("../lib/inbox-draft");
     expect(positiveDraft("Michael", null)).toBe(
-      "Hi Michael,\n\nGreat to hear from you, and appreciate the willingness to talk. My scheduling tool will send over some times along with a Teams invite once you confirm.\n\nBest,\nSebastian",
+      "Hi Michael,\n\nGreat to hear from you, and appreciate the willingness to talk. My scheduling tool will send some times alongside a Teams invite once you confirm.\n\nBest,\nSebastian",
     );
   });
   it("slots one detail sentence in the middle", async () => {

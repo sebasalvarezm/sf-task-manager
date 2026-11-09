@@ -8,6 +8,9 @@ import type { Sentiment, ThreadMessage } from "./inbox-classify";
 
 export const BLOCKIT_CC = "bot@blockit.com";
 
+/** Seb's wording for the scheduling line in every positive reply (Nov 2026). Enforced in normalizeDraft. */
+export const SCHEDULING_SENTENCE = "My scheduling tool will send some times alongside a Teams invite once you confirm.";
+
 export const INBOX_DRAFT_SYSTEM = `You write email replies as Sebastian (Seb) Alvarez, Director of M&A at Valstone, a permanent-capital acquirer of vertical market software companies. The reply goes into an existing thread, so never restate what they said and never repeat what they already know.
 
 Voice: a smart operator typing quickly. Direct, natural, warm without being soft, confident without being salesy. Principal speaking to a principal. Simple sentences, one idea each. Short paragraphs. Natural contractions (I'll, we'd, don't). Plain words: acquisition, owner, call, next steps.
@@ -24,7 +27,7 @@ Hard rules:
 How to write: read what they actually said and answer that, the way Seb would if he typed it in two minutes. No formula, no filler, no restating their email. If they asked something, answer it. If they mentioned something specific (a trip, a product, a timing, a colleague), pick it up in one natural line. Match their register: casual if they are casual.
 
 By reply type:
-- POSITIVE (they will speak): say you'd be glad to talk, in your own words for this thread. Mention, naturally and once, that your scheduling tool will send over some times along with a Teams invite once they confirm. Never propose specific times yourself. Answer anything they asked.
+- POSITIVE (they will speak): say you'd be glad to talk, in your own words for this thread. Then use this exact sentence, word for word, once: "${SCHEDULING_SENTENCE}" Never start with "Once you confirm". Never propose specific times yourself. Answer anything they asked.
 - NEUTRAL (deferral or not now): acknowledge without arguing, close the loop, and name the next touch plainly using any timing they gave ("I'll check back in the spring"). If they gave none, say you'll check back in a few months. A short genuine note about something they said is welcome when it fits. Never longer than their email.
 - NEGATIVE (stop, remove, hostile): one or two sentences. "Understood" and a clean close. No door left open, no pitch, no apology beyond a brief one if we clearly overstepped.
 - UNCLEAR or BROKER INTRO: answer what they actually asked or acknowledged, in the same voice, and ask one plain question if needed.
@@ -99,8 +102,25 @@ export function normalizeDraft(raw: string): string {
   t = t.replace(/^"([\s\S]*)"$/, "$1");
   t = t.replace(/\s*[–—]\s*/g, ", ");
   t = fixEmailWords(t);
+  t = withSchedulingSentence(t);
   t = t.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n");
   return t.trim();
+}
+
+/**
+ * Any sentence about the scheduling tool becomes Seb's exact sentence, once.
+ * The model kept rewording it ("Once you confirm, my scheduling tool will...").
+ */
+export function withSchedulingSentence(text: string): string {
+  let seen = false;
+  return text
+    .replace(/([ \t]*)([^.!?\n]*\bscheduling (?:tool|link)\b[^.!?\n]*[.!?]?)/gi, (_m, lead: string) => {
+      if (seen) return "";
+      seen = true;
+      return `${lead}${SCHEDULING_SENTENCE}`;
+    })
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +\n/g, "\n");
 }
 
 /** Deterministic fallbacks when the model is unavailable. */
@@ -137,12 +157,12 @@ export function firstNameOfSender(name: string | null | undefined, email: string
 export function positiveDraft(firstName: string | null, detailSentence: string | null, casual = false): string {
   const hi = `Hi ${firstName ?? "there"},`;
   const detail = detailSentence && detailSentence.trim() ? ` ${detailSentence.trim().replace(/\s*[\u2013\u2014]\s*/g, ", ")}` : "";
-  const body = `Great to hear from you, and appreciate the willingness to talk.${detail} My scheduling tool will send over some times along with a Teams invite once you confirm.`;
+  const body = `Great to hear from you, and appreciate the willingness to talk.${detail} ${SCHEDULING_SENTENCE}`;
   const close = casual ? "Thank you,\nSeb" : "Best,\nSebastian";
   return `${hi}\n\n${body}\n\n${close}`;
 }
 
-export const POSITIVE_DETAIL_SYSTEM = `You help Sebastian (Seb) Alvarez of Valstone reply to someone who agreed to speak. Seb's reply already says: "Great to hear from you, and appreciate the willingness to talk. My scheduling tool will send over some times along with a Teams invite once you confirm."
+export const POSITIVE_DETAIL_SYSTEM = `You help Sebastian (Seb) Alvarez of Valstone reply to someone who agreed to speak. Seb's reply already says: "Great to hear from you, and appreciate the willingness to talk. ${SCHEDULING_SENTENCE}"
 
 Your only job: decide whether ONE short extra sentence is needed to acknowledge something specific they said that the fixed text does not cover, such as an in-person meeting they proposed in a named city on a date, a document or deck they attached, or a question they asked that needs a one-line answer. If so, write that one sentence in Seb's plain voice (no dashes, "thank you" never "thanks", no banned sales phrases). If nothing specific needs acknowledging, answer with an empty string.
 
