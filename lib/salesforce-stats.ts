@@ -20,8 +20,9 @@ export const SMALL_MA_OWNER_NAMES = [
 // The stats dashboard can be viewed for either team. The two things that differ
 // per team are (a) who is tracked and (b) how the BRO pipeline is defined:
 //   • CDM       → membership by Account.Group__c = 'CDM'
-//   • Small M&A → any open opp valued ≤ $8M. Amounts are stored in thousands
-//                 (see BRO_AMOUNT_MULTIPLIER), so ≤ $8M means Amount <= 8000.
+//   • Small M&A → any open opp valued ≤ $8M from anyone (Amount <= 8000, since
+//                 amounts are stored in thousands), PLUS any open opp a Small M&A
+//                 team member originated, at any size.
 // Everything else (stages, open-only, which stats/charts render) is identical.
 export type StatsTeam = "cdm" | "small_ma";
 
@@ -37,7 +38,7 @@ export const TEAM_CONFIG: Record<
   small_ma: {
     label: "Small M&A",
     ownerNames: SMALL_MA_OWNER_NAMES,
-    pipelineClause: "Amount <= 8000",
+    pipelineClause: `(Amount <= 8000 OR Owner.Name IN (${SMALL_MA_OWNER_NAMES.map((n) => `'${n.replace(/'/g, "\\'")}'`).join(",")}))`,
   },
 };
 
@@ -117,7 +118,7 @@ function ownerNamesClauseFor(team: StatsTeam): string {
 // The SOQL predicate that decides BRO-pipeline membership for the active team.
 // CDM: Account.Group__c = 'CDM' (owners can also own non-CDM deals, so the
 // owner filter alone would leak rows — group is the authoritative signal,
-// matching the "Pipeline - CDM" list view). Small M&A: Amount <= 8000 (≤ $8M).
+// matching the "Pipeline - CDM" list view). Small M&A: ≤ $8M from anyone, or any size from a team member.
 function pipelineClauseFor(team: StatsTeam): string {
   return TEAM_CONFIG[team].pipelineClause;
 }
