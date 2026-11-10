@@ -59,3 +59,15 @@ describe("fixEmailWords", () => {
     expect(fixEmailWords(s)).toBe(s);
   });
 });
+
+describe("enjoy", () => {
+  it("turns \"I'd enjoy hearing\" into \"I'd love to hear\"", () => {
+    expect(fixEmailWords("Either way, I'd enjoy hearing how the year turned out for the business.")).toBe("Either way, I'd love to hear how the year turned out for the business.");
+    expect(fixEmailWords("I would really enjoy catching up in Toronto.")).toBe("I would really love to catch up in Toronto.");
+    expect(fixEmailWords("We'd enjoy a quick call.")).toBe("We'd love a quick call.");
+    expect(bannedLeft("I'd enjoy hearing more.")).toContain('"I\'d enjoy"');
+  });
+  it("leaves other uses alone", () => {
+    expect(fixEmailWords("I enjoyed our call in June.")).toBe("I enjoyed our call in June.");
+  });
+});

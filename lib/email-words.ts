@@ -8,17 +8,29 @@
  * - Template phrases Seb never uses (Nov 2026 list): squarely, shifted,
  *   tracking, on the X side, remains strong, shaping up, from scratch,
  *   top of mind, on my radar, got buried.
+ * - "I'd enjoy hearing" -> "I'd love to hear" (Seb never says he'd "enjoy" something).
  */
 export const EMAIL_WORD_RULE =
-  'Call an email an "email", never a "note". Never write "squarely", "if anything has shifted" (say "changed"), "how things are tracking", "on the growth side" or "on the ownership side", "remains strong", "shaping up", "so we\'re not starting from scratch", "top of mind", "on my radar", or "got buried".';
+  'Call an email an "email", never a "note". Never write "squarely", "if anything has shifted" (say "changed"), "how things are tracking", "on the growth side" or "on the ownership side", "remains strong", "shaping up", "so we\'re not starting from scratch", "top of mind", "on my radar", or "got buried". Never write "I\'d enjoy" or "would enjoy" (say "I\'d love to hear" or "it would be great to hear").';
 
 const SIDE_TOPICS =
   "growth|ownership|M&A|hiring|team|product|sales|business|deal|funding|capital|investment|strategy|financing|exit|succession|transaction|partnership|acquisition|operations|technology|tech|development|commercial|financial";
 
 type Fix = [RegExp, string | ((...m: string[]) => string)];
+
+// "enjoy hearing" -> "love to hear": the -ing verbs that show up after "enjoy".
+const BASE_VERB: Record<string, string> = {
+  hearing: "hear", learning: "learn", catching: "catch", speaking: "speak", connecting: "connect", reconnecting: "reconnect",
+  chatting: "chat", getting: "get", meeting: "meet", talking: "talk", seeing: "see", comparing: "compare", sharing: "share",
+  having: "have", swapping: "swap", making: "make", discussing: "discuss", understanding: "understand", exploring: "explore",
+  finding: "find", following: "follow", reading: "read", grabbing: "grab", visiting: "visit", walking: "walk", setting: "set",
+};
 const cap = (word: string, like: string) => (/^[A-Z]/.test(like) ? word[0].toUpperCase() + word.slice(1) : word);
 
 const FIXES: Fix[] = [
+  // enjoy: "I'd enjoy hearing how the year went" -> "I'd love to hear how the year went"
+  [/\b(I'd|I would|we'd|we would|I'll|I will|I'm sure I'd|would)( really| also| certainly)? enjoy ([a-z]+ing)\b/gi, (_m, who, adv, v) => `${who}${adv ?? ""} love ${BASE_VERB[v.toLowerCase()] ? `to ${BASE_VERB[v.toLowerCase()]}` : v}`],
+  [/\b(I'd|I would|we'd|we would|would)( really| also| certainly)? enjoy\b/gi, (_m, who, adv) => `${who}${adv ?? ""} love`],
   // "note" meaning an email, only where it can only mean one: "my last note",
   // "sent you a note", "exchanged notes". Never "field notes", "release notes",
   // "comparing notes", "call notes".
@@ -90,6 +102,7 @@ const BANNED: Array<[RegExp, string]> = [
   [/top of mind/i, '"top of mind"'],
   [/\bradar\b/i, '"on my radar"'],
   [/got buried/i, '"got buried"'],
+  [/\b(I'd|I would|we'd|we would|would)( really| also| certainly)? enjoy\b/i, '"I\'d enjoy"'],
   [/circle back|circling back/i, '"circle back"'],
   [/touch base/i, '"touch base"'],
   [/synerg/i, '"synergies"'],
