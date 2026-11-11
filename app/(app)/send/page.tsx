@@ -185,7 +185,7 @@ export default function SendQueuePage() {
       return n;
     });
   }
-  async function act(id: string, action: "approve" | "reject" | "unapprove" | "cancel" | "recheck" | "rehook" | "add_contact" | "confirm" | "resume" | "restore", extra: Record<string, unknown> = {}): Promise<boolean> {
+  async function act(id: string, action: "approve" | "reject" | "unapprove" | "cancel" | "recheck" | "rehook" | "add_contact" | "confirm" | "resume" | "restore" | "allow_new_contact", extra: Record<string, unknown> = {}): Promise<boolean> {
     setRowBusy(id, true);
     setError(null);
     try {
@@ -252,6 +252,10 @@ export default function SendQueuePage() {
   }
   async function retry(row: Row) {
     if (await act(row.id, "approve")) await send([row.id]);
+  }
+  /** The 60-day rule's exception: the earlier email went to someone who left. Clears this row, then sends it like Retry. */
+  async function newContactRetry(row: Row) {
+    if (await act(row.id, "allow_new_contact")) await retry(row);
   }
 
   const counts: Record<Stage, number> = { review: byStage.review.length, ready: byStage.ready.length, scheduled: byStage.scheduled.length, sent: byStage.sent.length, rejected: byStage.rejected.length };
@@ -370,6 +374,7 @@ export default function SendQueuePage() {
                     onSend={() => void send([row.id])}
                     onSendNow={() => void send([row.id], true)}
                     onRetry={() => void retry(row)}
+                    onNewContact={() => void newContactRetry(row)}
                     onPullBack={() => void act(row.id, "unapprove")}
                     onCancel={() => void act(row.id, "cancel")}
                     onResume={() => void act(row.id, "resume")}
@@ -476,7 +481,7 @@ function useCopy() {
 }
 
 /** Ready, Scheduled, Sent and Rejected: a simple card, the status in words, and at most two actions. */
-function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onSendNow, onRetry, onPullBack, onCancel, onConfirm, onResume, onRestore }: {
+function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, onSendNow, onRetry, onNewContact, onPullBack, onCancel, onConfirm, onResume, onRestore }: {
   row: Row;
   now: number;
   sending: boolean;
@@ -486,6 +491,7 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
   onSend: () => void;
   onSendNow?: () => void;
   onRetry: () => void;
+  onNewContact?: () => void;
   onPullBack: () => void;
   onCancel: () => void;
   onConfirm?: () => void;
@@ -535,9 +541,15 @@ function QueueCard({ row, now, sending, manualSend, busy, jobRunning, onSend, on
       </div>
       {ready ? (
         <div className="mt-3 grid shrink-0 grid-cols-3 gap-2 md:mt-0 md:flex">
-          <Button variant="secondary" className="max-md:h-11" loading={busy} disabled={jobRunning} title={jobRunning ? "Wait for the current batch to finish" : "Send at the next planned slot (recipient's morning or evening)"} onClick={row.status === "failed" ? onRetry : onSend}>
-            {row.status === "failed" ? "Retry" : "Schedule"}
-          </Button>
+          {row.status === "failed" && onNewContact && /^Another email to this account (went to|was scheduled)/.test(row.status_reason ?? "") ? (
+            <Button variant="secondary" className="max-md:h-11" loading={busy} disabled={jobRunning} title="The earlier email went to someone who left. Send this one to the new contact; the same person is never emailed twice." onClick={onNewContact}>
+              New contact, send anyway
+            </Button>
+          ) : (
+            <Button variant="secondary" className="max-md:h-11" loading={busy} disabled={jobRunning} title={jobRunning ? "Wait for the current batch to finish" : "Send at the next planned slot (recipient's morning or evening)"} onClick={row.status === "failed" ? onRetry : onSend}>
+              {row.status === "failed" ? "Retry" : "Schedule"}
+            </Button>
+          )}
           {row.status !== "failed" && onSendNow ? (
             <Button
               variant="secondary"

@@ -1001,6 +1001,72 @@ export async function restoreSend(id: string): Promise<E1Send> {
 
 export type ScheduleOutcome = { id: string; status: E1Status; reason: string | null };
 
+// ── The 60-day rule and its one exception ───────────────────────────────────
+
+const NEW_CONTACT_KEY = "e1_new_contact_overrides";
+export const SIXTY_DAY_PREFIX = "Another email to this account went to";
+
+type EarlierSend = { id: string; contact_email: string | null; contact_name: string | null; updated_at: string };
+
+async function earlierSends(send: E1Send): Promise<EarlierSend[]> {
+  const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
+  const { data } = await getSupabaseAdmin()
+    .from("e1_sends")
+    .select("id, contact_email, contact_name, updated_at")
+    .eq("sf_account_id", send.sf_account_id)
+    .neq("id", send.id)
+    .in("status", ["scheduled", "sent"])
+    .gte("updated_at", since)
+    .limit(10);
+  return (data ?? []) as EarlierSend[];
+}
+
+async function newContactOverrides(): Promise<string[]> {
+  const { data } = await getSupabaseAdmin().from("app_settings").select("value").eq("key", NEW_CONTACT_KEY).maybeSingle();
+  const ids = (data?.value as { ids?: unknown } | undefined)?.ids;
+  return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
+}
+
+const sameEmail = (a: string | null | undefined, b: string | null | undefined) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** Pure: is this send blocked by the 60-day rule, given the account's earlier sends and whether Seb cleared it. */
+export function sixtyDayVerdict(contactEmail: string | null, earlier: EarlierSend[], cleared: boolean): { blocked: string | null; sameContact: boolean } {
+  if (earlier.length === 0) return { blocked: null, sameContact: false };
+  const sameContact = earlier.some((e) => sameEmail(e.contact_email, contactEmail));
+  if (sameContact) return { blocked: "This contact already got an email from us in the last 60 days.", sameContact };
+  if (cleared) return { blocked: null, sameContact };
+  const last = [...earlier].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0];
+  const day = new Date(last.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Toronto" });
+  return { blocked: `${SIXTY_DAY_PREFIX} ${last.contact_name ?? last.contact_email ?? "someone else"} on ${day}. If they left, tap "New contact, send anyway".`, sameContact };
+}
+
+async function sixtyDayCheck(send: E1Send): Promise<{ blocked: string | null }> {
+  const earlier = await earlierSends(send);
+  if (earlier.length === 0) return { blocked: null };
+  return { blocked: sixtyDayVerdict(send.contact_email, earlier, (await newContactOverrides()).includes(send.id)).blocked };
+}
+
+/**
+ * Seb's exception to the 60-day rule: the earlier E1 went to someone who has
+ * since left, so this row (a different person at the same account) may go.
+ * Never allowed for the same contact. Kept per row; the newest 200 are kept.
+ */
+export async function allowNewContact(id: string): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (!send.contact_email) throw new Error("This row has no contact email.");
+  const verdict = sixtyDayVerdict(send.contact_email, await earlierSends(send), false);
+  if (verdict.sameContact) throw new Error("This is the same person who got the earlier email. Pick a different contact first.");
+  const supabase = getSupabaseAdmin();
+  const ids = [id, ...(await newContactOverrides()).filter((x) => x !== id)].slice(0, 200);
+  const { data } = await supabase.from("app_settings").select("key").eq("key", NEW_CONTACT_KEY).maybeSingle();
+  const { error } = data
+    ? await supabase.from("app_settings").update({ value: { ids }, updated_at: new Date().toISOString() }).eq("key", NEW_CONTACT_KEY)
+    : await supabase.from("app_settings").insert({ key: NEW_CONTACT_KEY, value: { ids } });
+  if (error) throw new Error(`Could not save: ${error.message}`);
+  return send;
+}
+
 /** Everything up to the task: prospect, enrolment. Returns ids for the next step. */
 export async function enrolSend(id: string): Promise<{ prospectId: string; stateId: string; mailboxId: string } | { blocked: string }> {
   const send = await getSend(id);
@@ -1027,17 +1093,10 @@ export async function enrolSend(id: string): Promise<{ prospectId: string; state
       if (states.length > 0) return { blocked: "This contact is already in an active Outreach sequence." };
     }
   }
-  // Our own queue: one email per account per 60 days.
-  const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
-  const { data: dupes } = await getSupabaseAdmin()
-    .from("e1_sends")
-    .select("id")
-    .eq("sf_account_id", send.sf_account_id)
-    .neq("id", id)
-    .in("status", ["scheduled", "sent"])
-    .gte("updated_at", since)
-    .limit(1);
-  if ((dupes ?? []).length > 0) return { blocked: "Another email to this account was scheduled in the last 60 days." };
+  // Our own queue: one email per account per 60 days, unless Seb cleared this
+  // row for a different contact (the first one left or was let go).
+  const check = await sixtyDayCheck(send);
+  if (check.blocked) return { blocked: check.blocked };
 
   const mailboxes = await listMailboxes();
   const mailbox = mailboxes.find((m) => m.email.toLowerCase() === "sebastian@valstonecorp.com") ?? mailboxes[0];

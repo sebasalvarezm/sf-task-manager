@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { pruneResolvedFlags, restoreSend, addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { allowNewContact, pruneResolvedFlags, restoreSend, addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences, type OutreachSequence } from "@/lib/outreach";
 import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
 
@@ -84,6 +84,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ item: await updateSend(row.id, { status_reason: "Resumed: the app is filling in step 1 and sending now." }) });
       }
       case "confirm": return NextResponse.json({ item: await confirmSent(need(body.id)) });
+      case "allow_new_contact": return NextResponse.json({ item: await allowNewContact(need(body.id)) });
       case "schedule": {
         const existing = await runningJob();
         if (existing) return NextResponse.json({ jobId: existing.id, duplicate: true });
