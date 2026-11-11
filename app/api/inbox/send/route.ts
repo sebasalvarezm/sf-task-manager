@@ -12,7 +12,7 @@ function friendly(message: string): string {
   return message;
 }
 
-/** POST { messageId, body, rceDays|null, sentiment? } sends the reply and updates Salesforce. */
+/** POST { messageId, body, rceDays|null, sentiment?, cc? } sends the reply and updates Salesforce. cc = copy the scheduling bot. */
 export async function POST(request: NextRequest) {
   if (!(await isAdmin())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
@@ -21,11 +21,12 @@ export async function POST(request: NextRequest) {
       body?: string;
       rceDays?: number | null;
       sentiment?: "positive" | "neutral" | "negative" | "unclear";
+      cc?: boolean;
     };
     if (!body.messageId) return NextResponse.json({ error: "Missing message" }, { status: 400 });
     if (!body.body || !body.body.trim()) return NextResponse.json({ error: "The reply is empty." }, { status: 400 });
     const rceDays = typeof body.rceDays === "number" && body.rceDays > 0 ? Math.round(body.rceDays) : null;
-    const result = await sendInboxReply({ messageId: body.messageId, body: body.body, rceDays, sentiment: body.sentiment });
+    const result = await sendInboxReply({ messageId: body.messageId, body: body.body, rceDays, sentiment: body.sentiment, cc: typeof body.cc === "boolean" ? body.cc : undefined });
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unexpected error";

@@ -1,3 +1,4 @@
+import { trackedCreate } from "./model-cost";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient, MODELS } from "@/lib/anthropic";
 
@@ -327,7 +328,7 @@ export async function extractMetricsFromPdf(
 
   // Fetch FX rates in parallel with the extraction call — both are independent.
   const [message, rates] = await Promise.all([
-    anthropic.messages.create({
+    trackedCreate(anthropic, "deal_docs", {
       model: MODELS.drafting,
       max_tokens: 1024,
       messages,

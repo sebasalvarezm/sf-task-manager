@@ -2500,6 +2500,11 @@ const FEATURE_LABEL: Record<string, string> = {
   accounts_enrich: "Accounts",
   trip: "Trip planner",
   send_review: "Send queue review",
+  hook_research: "Hook deep research",
+  sequence_change: "Sequence change rewrites",
+  nudges: "Nudges",
+  deal_docs: "Deal docs",
+  triage: "Email triage",
   discovery_parallel: "Discovery (Parallel)",
   discovery_pdl: "Discovery staff check (PDL credits)",
 };

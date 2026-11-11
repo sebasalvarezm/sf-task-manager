@@ -1,3 +1,4 @@
+import { trackedCreate } from "@/lib/model-cost";
 import { MODELS } from "@/lib/anthropic";
 import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
@@ -83,7 +84,7 @@ ${threadText}
 `;
     });
 
-    const response = await anthropic.messages.create({
+    const response = await trackedCreate(anthropic, "triage", {
       model: MODELS.extraction,
       max_tokens: 4096,
       messages: [

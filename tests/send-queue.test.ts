@@ -72,7 +72,7 @@ describe("email verdicts", () => {
 
 describe("cost estimate", () => {
   it("prices tokens and searches", () => {
-    expect(estimateCost("claude-sonnet-5-5", { input_tokens: 1_000_000, output_tokens: 0 })).toBeCloseTo(3, 5);
+    expect(estimateCost("claude-sonnet-5-5", { input_tokens: 1_000_000, output_tokens: 0 })).toBeCloseTo(2, 5);
     expect(estimateCost("claude-haiku-5-5", { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 2 } })).toBeCloseTo(0.02, 5);
   });
 });

@@ -8,7 +8,7 @@ import { listSequences, listMailboxes, findProspectByEmail, createProspect, addP
 import { getValidCredentials } from "./token-manager";
 import { getStoredSignature, saveStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
 import { importSignatureFromSentItems } from "./microsoft";
-import { trackedCreate } from "./model-cost";
+import { asFeature, trackedCreate } from "./model-cost";
 import { recipientTimeZone, planSendSlots } from "./send-slots";
 import { currentWeekStart, type WeeklyOutreachItem } from "./weekly-outreach";
 import { isTemplateWording, shortenRestaurantName } from "./email-prepackage";
@@ -622,7 +622,7 @@ export async function rebuildForSequence(id: string): Promise<{ rebuilt: boolean
   if (!found) return { rebuilt: false, note: "No sourcing result on this row to build from. Run Sourcing for it again." };
   const key = findGroupFileName(group, loadGroupFiles());
   const mainGroup = key?.includes("/") ? key.split("/")[0] : null;
-  const rebuilt = await reclassifySourcingResult(found.result, { matched: true, group, mainGroup, confidence: 100 });
+  const rebuilt = await asFeature("sequence_change", () => reclassifySourcingResult(found.result, { matched: true, group, mainGroup, confidence: 100 }));
   const pe = rebuilt.prepackagedEmail;
   if (!pe || pe.skipped || !pe.body) return { rebuilt: false, note: `No template for ${group}: ${pe?.skipReason ?? "unknown reason"}` };
   // Keep the sourcing run and Weekly Outreach in step with the new draft.
@@ -675,7 +675,7 @@ export async function rehookSend(id: string): Promise<E1Send> {
   const target = idx >= 0 ? (items[idx]?.result as SourcingResult | null | undefined) ?? null : null;
   if (!target) throw new Error("This company is not in its sourcing run.");
 
-  const patch = await rerunHookResearch(target);
+  const patch = await asFeature("hook_research", () => rerunHookResearch(target));
   if (patch.emailHook === undefined || !patch.emailHook) {
     throw new Error("Nothing better turned up: the research found no verifiable detail to build a new hook from. The draft is unchanged.");
   }

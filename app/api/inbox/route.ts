@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
-import { listInbox, refreshInbox, reclassifyInboxRow, updateInboxRow, markInboxUnread, type InboxStatus } from "@/lib/inbox";
+import { listInbox, refreshInbox, reclassifyInboxRow, updateInboxRow, markInboxUnread, dismissInboxRow, undismissInboxRow, remindAfterOutOfOffice, type InboxStatus } from "@/lib/inbox";
 
 export const dynamic = "force-dynamic";
 // Refresh reads every candidate thread and classifies it inline.
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** PATCH { messageId, status?, draftBody?, suggestedDate?, sentiment?, reclassify?, markUnread? } */
+/** PATCH { messageId, status?, draftBody?, suggestedDate?, sentiment?, reclassify?, markUnread?, dismiss?, undismiss?, oooReminder? } */
 export async function PATCH(request: NextRequest) {
   if (!(await isAdmin())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
@@ -52,8 +52,14 @@ export async function PATCH(request: NextRequest) {
       sentiment?: "positive" | "neutral" | "negative" | "unclear";
       reclassify?: boolean;
       markUnread?: boolean;
+      dismiss?: boolean;
+      undismiss?: boolean;
+      oooReminder?: boolean;
     };
     if (!body.messageId) return NextResponse.json({ error: "Missing message" }, { status: 400 });
+    if (body.dismiss) return NextResponse.json(await dismissInboxRow(body.messageId));
+    if (body.undismiss) return NextResponse.json({ item: await undismissInboxRow(body.messageId) });
+    if (body.oooReminder) return NextResponse.json(await remindAfterOutOfOffice(body.messageId));
     if (body.reclassify) {
       return NextResponse.json({ item: await reclassifyInboxRow(body.messageId) });
     }

@@ -1,3 +1,4 @@
+import { asFeature } from "@/lib/model-cost";
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
 import { getJob, markSucceeded, normalizeSourcingUrl } from "@/lib/jobs";
@@ -78,7 +79,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const patch = await rerunHookResearch(target);
+    const patch = await asFeature("hook_research", () => rerunHookResearch(target));
     const updated: SourcingResult = {
       ...target,
       ...patch,

@@ -1,5 +1,5 @@
 import { fixEmailWords } from "./email-words";
-import type { Sentiment, ThreadMessage } from "./inbox-classify";
+import type { ReplyType, Sentiment, ThreadMessage } from "./inbox-classify";
 
 /**
  * Inbox: drafting Seb's reply to an inbound message. Pure prompt builders and
@@ -26,16 +26,26 @@ Hard rules:
 
 How to write: read what they actually said and answer that, the way Seb would if he typed it in two minutes. No formula, no filler, no restating their email. If they asked something, answer it. If they mentioned something specific (a trip, a product, a timing, a colleague), pick it up in one natural line. Match their register: casual if they are casual.
 
-By reply type:
-- POSITIVE (they will speak): say you'd be glad to talk, in your own words for this thread. Then use this exact sentence, word for word, once: "${SCHEDULING_SENTENCE}" Never start with "Once you confirm". Never propose specific times yourself. Answer anything they asked.
-- NEUTRAL (deferral or not now): acknowledge without arguing, close the loop, and name the next touch plainly using any timing they gave ("I'll check back in the spring"). If they gave none, say you'll check back in a few months. A short genuine note about something they said is welcome when it fits. Never longer than their email.
-- NEGATIVE (stop, remove, hostile): one or two sentences. "Understood" and a clean close. No door left open, no pitch, no apology beyond a brief one if we clearly overstepped.
-- UNCLEAR or BROKER INTRO: answer what they actually asked or acknowledged, in the same voice, and ask one plain question if needed.
+What the reply does (Seb picked it; follow it even if the email could be read another way):
+- BOOK A CALL: say you'd be glad to talk, in your own words for this thread. Then use this exact sentence, word for word, once: "${SCHEDULING_SENTENCE}" Never start with "Once you confirm". Never propose specific times yourself. Answer anything they asked.
+- ACCEPT THEIR TIME: confirm the day and time they named in a few words ("Tomorrow at 4:30 works. I'll send over an invite."), or confirm the call already set. Never mention a scheduling tool. Never propose other times.
+- ACKNOWLEDGE: a short thank-you for what they sent or said, picking up the one specific thing ("Thank you, Jeff. I'll go through the financials and come back with any questions."). If they promised something, say you'll look out for it. No call ask, no scheduling tool, no "check back" date. Usually one or two sentences.
+- CHECK BACK LATER: acknowledge without arguing, close the loop, and name the next touch plainly using any timing they gave ("I'll check back in the spring"). If they gave none, say you'll check back in a few months. If their stance is NEGATIVE (stop, remove, hostile): one or two sentences, "Understood" and a clean close, no door left open, no pitch. Never longer than their email.
+Never mention a scheduling tool unless the reply is BOOK A CALL.
 `;
+
+const REPLY_TYPE_PROMPT: Record<ReplyType, string> = {
+  book_call: "BOOK A CALL",
+  accept_time: "ACCEPT THEIR TIME",
+  acknowledge: "ACKNOWLEDGE",
+  check_back: "CHECK BACK LATER",
+  none: "ACKNOWLEDGE",
+};
 
 export function inboxDraftPrompt(params: {
   thread: ThreadMessage[];
   sentiment: Sentiment;
+  replyType: ReplyType;
   isBrokerIntro: boolean;
   accountName: string | null;
   senderName: string | null;
@@ -43,14 +53,15 @@ export function inboxDraftPrompt(params: {
   nextTouchDate: string | null;
   examples: Array<{ to: string; subject: string; body: string }>;
 }): string {
-  const type = params.isBrokerIntro ? "BROKER INTRO" : params.sentiment.toUpperCase();
+  const stance = params.isBrokerIntro ? "BROKER OR BANKER" : params.sentiment.toUpperCase();
   const thread = params.thread.slice(-4).map((m) => {
     const who = m.mine ? "SEB" : `${m.from || m.email}`;
     return `--- ${who}, ${m.at.slice(0, 10)} ---\n${m.text.trim().slice(0, 2000)}`;
   });
   const examples = params.examples.slice(0, 6).map((e, i) => `Example ${i + 1} (to ${e.to}, "${e.subject}"):\n${e.body.trim().slice(0, 900)}`);
   return [
-    `Reply type: ${type}`,
+    `Reply: ${REPLY_TYPE_PROMPT[params.replyType]}`,
+    `Their stance: ${stance}`,
     `Company: ${params.accountName ?? "unknown (no Salesforce account)"}`,
     `Sender: ${params.senderName ?? "unknown"}`,
     params.timingText ? `Timing they gave: "${params.timingText}"` : "Timing they gave: none",
@@ -94,15 +105,15 @@ export function validateDraft(body: string, theirsLength: number): string[] {
   return issues;
 }
 
-/** Normalise model output: strip quotes/code fences, dashes, double blank lines. */
-export function normalizeDraft(raw: string): string {
+/** Normalise model output: strip quotes/code fences, dashes, double blank lines. The scheduling sentence only when booking a call. */
+export function normalizeDraft(raw: string, replyType: ReplyType = "book_call"): string {
   let t = raw.trim();
   t = t.replace(/^```[a-z]*\n?/i, "").replace(/\n?```$/, "");
   t = t.replace(/^(subject\s*:.*\n+)/i, "");
   t = t.replace(/^"([\s\S]*)"$/, "$1");
   t = t.replace(/\s*[–—]\s*/g, ", ");
   t = fixEmailWords(t);
-  t = withSchedulingSentence(t);
+  t = replyType === "book_call" ? withSchedulingSentence(t) : withoutSchedulingSentence(t);
   t = t.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n");
   return t.trim();
 }
@@ -123,10 +134,21 @@ export function withSchedulingSentence(text: string): string {
     .replace(/ +\n/g, "\n");
 }
 
+/** Any sentence about a scheduling tool or link is dropped (replies that do not book a call). */
+export function withoutSchedulingSentence(text: string): string {
+  return text
+    .replace(/[ \t]*[^.!?\n]*\bscheduling (?:tool|link)\b[^.!?\n]*[.!?]?/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ +\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
 /** Deterministic fallbacks when the model is unavailable. */
-export function fallbackDraft(sentiment: Sentiment, firstName: string | null, timingText: string | null): string {
+export function fallbackDraft(sentiment: Sentiment, firstName: string | null, timingText: string | null, replyType: ReplyType = sentiment === "positive" ? "book_call" : "check_back"): string {
   const hi = `Hi ${firstName ?? "there"},`;
-  if (sentiment === "positive") return positiveDraft(firstName, null);
+  if (replyType === "book_call") return positiveDraft(firstName, null);
+  if (replyType === "accept_time") return `${hi}\n\nThat works. I'll send over an invite.\n\nBest,\nSebastian`;
+  if (replyType === "acknowledge") return `${hi}\n\nThank you, appreciate it.\n\nBest,\nSebastian`;
   if (sentiment === "negative") {
     return `${hi}\n\nUnderstood. I will leave it there.\n\nBest,\nSebastian`;
   }

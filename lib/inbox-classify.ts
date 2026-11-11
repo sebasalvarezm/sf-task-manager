@@ -8,6 +8,28 @@
 
 export type Sentiment = "positive" | "neutral" | "negative" | "unclear";
 
+/**
+ * What Seb's reply should do, separate from the sentiment (which only feeds
+ * Salesforce's response type). Nov 2026: one label used to decide the reply,
+ * the scheduling-bot CC and the RCE date all at once, so "Friday works" got a
+ * bot invite and "I'll send the data end of week" got "I'll check back in May".
+ *   book_call    they will talk, no time named: scheduling sentence + bot CC
+ *   accept_time  they named a time, or confirm one already set: confirm it, no bot
+ *   acknowledge  they sent or promised something, or a plain update: short thank-you
+ *   check_back   deferral or no: close the loop, RCE on their timing
+ *   none         an automatic reply (out of office, left the company): no reply
+ */
+export type ReplyType = "book_call" | "accept_time" | "acknowledge" | "check_back" | "none";
+export const REPLY_TYPES: ReplyType[] = ["book_call", "accept_time", "acknowledge", "check_back"];
+export const REPLY_TYPE_LABEL: Record<ReplyType, string> = {
+  book_call: "Book a call",
+  accept_time: "Accept their time",
+  acknowledge: "Acknowledge",
+  check_back: "Check back later",
+  none: "No reply needed",
+};
+export type AutoReply = "out_of_office" | "left_company" | null;
+
 export type ThreadMessage = {
   from: string;
   email: string;
@@ -26,7 +48,39 @@ export type Classification = {
   summary: string;
   /** A broker or intermediary introducing a business, not a reply to our outreach. */
   isBrokerIntro: boolean;
+  /** What the reply should do. */
+  replyType: ReplyType;
+  /** An automatic reply: out of office, or the person has left the company. */
+  autoReply: AutoReply;
+  /** Out of office: the day they are back (YYYY-MM-DD), when stated. */
+  returnDate: string | null;
+  /** Left the company / away: who to write to instead, as given ("Jane Doe, jane@x.com"). */
+  newContact: string | null;
 };
+
+/** Reply type for rows classified before reply types existed. */
+export function fallbackReplyType(sentiment: Sentiment | null, isBrokerIntro: boolean): ReplyType {
+  if (isBrokerIntro) return "acknowledge";
+  if (sentiment === "positive") return "book_call";
+  if (sentiment === "neutral" || sentiment === "negative") return "check_back";
+  return "acknowledge";
+}
+
+/**
+ * Defaults when a reply type is picked: CC the scheduling bot only to book a
+ * call; an RCE only for "check back later" (their timing, else 6 months, a
+ * year after a no).
+ */
+export function replyDefaults(
+  type: ReplyType,
+  row: { sentiment: Sentiment | null; suggested_date: string | null; received_at: string; is_broker_intro: boolean },
+  today: string,
+): { cc: boolean; rceDays: number | null } {
+  if (type === "book_call") return { cc: !row.is_broker_intro, rceDays: null };
+  if (type !== "check_back") return { cc: false, rceDays: null };
+  if (row.suggested_date && row.suggested_date > today) return { cc: false, rceDays: Math.max(1, daysBetweenDates(today, row.suggested_date)) };
+  return { cc: false, rceDays: row.sentiment === "negative" ? DEFAULT_NEXT_TOUCH_DAYS.negative! : DEFAULT_NEXT_TOUCH_DAYS.neutral! };
+}
 
 /** Senders that are never a human reply to outreach. */
 const AUTOMATED_LOCAL_PARTS = /^(no-?reply|noreply|notifications?|notification|mailer-daemon|postmaster|donotreply|do-not-reply|bounce|alerts?|support|newsletter|news|marketing|info|hello|team|digest|billing|security|calendar)([.+-].*)?$/i;
@@ -128,9 +182,18 @@ Timing: if they name when to reconnect ("six months or so", "Q1", "next year", "
 
 isBrokerIntro: true when the sender is a broker, banker or intermediary introducing a business for sale (not the company owner replying to our outreach).
 
+replyType, what Seb's reply should do:
+- "book_call": they agree to talk or ask for a call, but name no specific day or time. Seb's scheduling tool will send times.
+- "accept_time": they propose a specific day or time ("tomorrow at 4:30", "Friday works"), or confirm a call that is already set. Seb just confirms.
+- "acknowledge": they sent something (financials, a deck, a CIM), promise to send something ("I'll send the data end of week"), answer a question, or give an update that needs only a short thank-you. Also broker emails sharing materials.
+- "check_back": a deferral, "not now", "not selling", or a no. Seb closes the loop and reconnects later.
+- "none": an automatic reply (out of office, the person has left the company). No reply is needed.
+
+autoReply: "out_of_office" for an automatic away or vacation reply, "left_company" when the reply says the person no longer works there, otherwise null. returnDate: for out of office, the day they are back (YYYY-MM-DD) if stated, else null. newContact: the person or address they point to instead ("Jane Doe, jane@acme.com", "contact@acme.com"), copied as written, else null.
+
 summary: one short sentence in plain words saying what they said, e.g. "Not selling, suggests reconnecting in six months."
 
-Return exactly: {"sentiment":"positive|neutral|negative|unclear","timingText":string|null,"timingDate":"YYYY-MM-DD"|null,"summary":string,"isBrokerIntro":boolean}`;
+Return exactly: {"sentiment":"positive|neutral|negative|unclear","timingText":string|null,"timingDate":"YYYY-MM-DD"|null,"summary":string,"isBrokerIntro":boolean,"replyType":"book_call|accept_time|acknowledge|check_back|none","autoReply":"out_of_office"|"left_company"|null,"returnDate":"YYYY-MM-DD"|null,"newContact":string|null}`;
 
 export function inboxClassifyPrompt(thread: ThreadMessage[], accountName: string | null): string {
   const lines = thread.slice(-4).map((m) => {
@@ -168,12 +231,27 @@ export function parseClassification(raw: string): Classification | null {
     typeof parsed.timingDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.timingDate)
       ? parsed.timingDate
       : null;
+  const isBrokerIntro = parsed.isBrokerIntro === true;
+  const autoRaw = String(parsed.autoReply ?? "").toLowerCase();
+  const autoReply: AutoReply = autoRaw === "out_of_office" || autoRaw === "left_company" ? autoRaw : null;
+  const typeRaw = String(parsed.replyType ?? "").toLowerCase();
+  const replyType: ReplyType = autoReply
+    ? "none"
+    : (["book_call", "accept_time", "acknowledge", "check_back"] as string[]).includes(typeRaw)
+      ? (typeRaw as ReplyType)
+      : fallbackReplyType(sentiment, isBrokerIntro);
+  const returnDate = autoReply === "out_of_office" && typeof parsed.returnDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.returnDate) ? parsed.returnDate : null;
+  const newContact = autoReply && typeof parsed.newContact === "string" && parsed.newContact.trim() ? parsed.newContact.trim().slice(0, 200) : null;
   return {
     sentiment,
     timingText: typeof parsed.timingText === "string" && parsed.timingText.trim() ? parsed.timingText.trim() : null,
     timingDate,
     summary: typeof parsed.summary === "string" ? parsed.summary.trim().slice(0, 240) : "",
-    isBrokerIntro: parsed.isBrokerIntro === true,
+    isBrokerIntro,
+    replyType,
+    autoReply,
+    returnDate,
+    newContact,
   };
 }
 

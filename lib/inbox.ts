@@ -37,10 +37,15 @@ import {
   suggestedNextTouch,
   addDays,
   trimReplyBody,
+  fallbackReplyType,
+  daysBetweenDates,
+  type AutoReply,
   type Classification,
+  type ReplyType,
   type Sentiment,
   type ThreadMessage,
 } from "./inbox-classify";
+import { readInboxMeta, saveInboxMeta } from "./inbox-meta";
 
 /**
  * Inbox: inbound replies to outreach, one row per thread (its latest inbound
@@ -79,7 +84,34 @@ export type InboxRow = {
   task_date: string | null;
   created_at: string;
   updated_at: string;
+  /** From inbox_meta (no table column): what the reply should do. */
+  reply_type: ReplyType;
+  auto_reply: AutoReply;
+  return_date: string | null;
+  new_contact: string | null;
 };
+
+/** Columns the table actually has (the meta fields are not written to it). */
+type InboxRowColumns = Omit<InboxRow, "reply_type" | "auto_reply" | "return_date" | "new_contact">;
+
+function metaEntry(c: Classification) {
+  return { replyType: c.replyType, autoReply: c.autoReply, returnDate: c.returnDate, newContact: c.newContact };
+}
+
+/** Attach the reply type and auto-reply details; rows without them get the old sentiment-based default. */
+async function withMeta(rows: InboxRowColumns[]): Promise<InboxRow[]> {
+  const meta = await readInboxMeta().catch(() => ({}) as Awaited<ReturnType<typeof readInboxMeta>>);
+  return rows.map((row) => {
+    const m = meta[row.message_id];
+    return {
+      ...row,
+      reply_type: m?.replyType ?? fallbackReplyType(row.sentiment, row.is_broker_intro),
+      auto_reply: m?.autoReply ?? null,
+      return_date: m?.returnDate ?? null,
+      new_contact: m?.newContact ?? null,
+    };
+  });
+}
 
 type GraphMessage = {
   id: string;
@@ -103,13 +135,19 @@ export async function listInbox(): Promise<InboxRow[]> {
     .order("received_at", { ascending: false })
     .limit(200);
   if (error) throw new Error(error.message);
-  return ((data ?? []) as InboxRow[]).map((row) => {
+  return withMeta(((data ?? []) as InboxRowColumns[]).map((row) => {
     // Re-run the cutter on read: rows stored before it learned a pattern
     // (signature blocks, tracking links, legal footers) still come out clean.
     const thread = (row.thread ?? []).map((m) => ({ ...m, text: trimReplyBody(m.text) }));
     const latest = thread[thread.length - 1];
     return { ...row, thread, preview: latest ? latest.text.slice(0, 400) : row.preview };
-  });
+  }));
+}
+
+async function getRow(messageId: string): Promise<InboxRow> {
+  const { data, error } = await getSupabaseAdmin().from("inbox_replies").select("*").eq("message_id", messageId).single();
+  if (error) throw new Error(error.message);
+  return (await withMeta([data as InboxRowColumns]))[0];
 }
 
 /** Unread inbound messages in the last `days` days, newest first. */
@@ -210,7 +248,7 @@ async function classify(thread: ThreadMessage[], accountName: string | null): Pr
   if (!client) return null;
   const response = await trackedCreate(client, "inbox", {
     model: CLASSIFY_MODEL,
-    max_tokens: 400,
+    max_tokens: 600,
     system: INBOX_CLASSIFY_SYSTEM,
     messages: [{ role: "user", content: inboxClassifyPrompt(thread, accountName) }],
   });
@@ -342,6 +380,7 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
   const messages = await fetchUnreadInbound(days);
   const summary: InboxRefreshSummary = { scanned: messages.length, added: 0, skippedAutomated: 0, skippedInternal: 0, alreadyKnown: 0, repliedInOutlook: 0, readInOutlook: 0 };
   await reconcileWithOutlook(identities, summary);
+  await backfillReplyTypes().catch(() => undefined);
 
   // Latest inbound message per thread.
   const latestByConversation = new Map<string, GraphMessage>();
@@ -392,6 +431,7 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
   const subjectNames = fresh.map((c) => companyFromSubject(c.subject)).filter((n): n is string => Boolean(n));
   const { byEmail, byDomain, byName } = await matchAccounts(emails, domains, subjectNames);
 
+  const metaById: Record<string, ReturnType<typeof metaEntry>> = {};
   const rawRows = await mapLimit(fresh, 4, async (m) => {
     const email = (m.from?.emailAddress?.address ?? "").toLowerCase();
     const domain = domainOf(email);
@@ -433,6 +473,7 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
     const sentiment = classification?.sentiment ?? null;
     const suggested = classification ? suggestedNextTouch(classification, m.receivedDateTime) : null;
 
+    if (classification) metaById[m.id] = metaEntry(classification);
     return {
       message_id: m.id,
       conversation_id: m.conversationId,
@@ -468,8 +509,36 @@ export async function refreshInbox(days = 14): Promise<InboxRefreshSummary> {
   }
   const { error } = await supabase.from("inbox_replies").upsert(rows, { onConflict: "message_id" });
   if (error) throw new Error(error.message);
+  // Extras are best effort: a row without them falls back to the sentiment default.
+  await saveInboxMeta(Object.fromEntries(rows.filter((r) => metaById[r.message_id]).map((r) => [r.message_id, metaById[r.message_id]]))).catch(() => undefined);
   summary.added = rows.length;
   return summary;
+}
+
+/**
+ * Replies already in the pile from before reply types existed get read once
+ * more (a cheap classifier call each, at most 25 per refresh) so they show the
+ * right reply type and auto-reply details. The stored sentiment is left alone.
+ */
+async function backfillReplyTypes(): Promise<number> {
+  const { data } = await getSupabaseAdmin()
+    .from("inbox_replies")
+    .select("message_id, thread, account_name")
+    .in("status", ["new", "drafted"])
+    .order("received_at", { ascending: false })
+    .limit(100);
+  const open = (data ?? []) as Array<{ message_id: string; thread: ThreadMessage[]; account_name: string | null }>;
+  if (open.length === 0) return 0;
+  const meta = await readInboxMeta();
+  const missing = open.filter((r) => !meta[r.message_id]).slice(0, 25);
+  if (missing.length === 0) return 0;
+  const found: Record<string, ReturnType<typeof metaEntry>> = {};
+  await mapLimit(missing, 4, async (r) => {
+    const c = await classify(r.thread ?? [], r.account_name).catch(() => null);
+    if (c) found[r.message_id] = metaEntry(c);
+  });
+  await saveInboxMeta(found);
+  return Object.keys(found).length;
 }
 
 export async function updateInboxRow(
@@ -483,15 +552,13 @@ export async function updateInboxRow(
     .select("*")
     .single();
   if (error) throw new Error(error.message);
-  return data as InboxRow;
+  return (await withMeta([data as InboxRowColumns]))[0];
 }
 
 /** Re-run the classifier for one row (after Seb hits "Reclassify"). */
 export async function reclassifyInboxRow(messageId: string): Promise<InboxRow> {
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase.from("inbox_replies").select("*").eq("message_id", messageId).single();
-  if (error) throw new Error(error.message);
-  const row = data as InboxRow;
+  const row = await getRow(messageId);
   if (!row.account_id && row.from_email) {
     const domain = domainOf(row.from_email);
     const name = companyFromSubject(row.subject);
@@ -507,6 +574,7 @@ export async function reclassifyInboxRow(messageId: string): Promise<InboxRow> {
   }
   const classification = await classify(row.thread, row.account_name);
   if (!classification) throw new Error("The classifier did not return a readable answer. Try again.");
+  await saveInboxMeta({ [messageId]: metaEntry(classification) }).catch(() => undefined);
   return updateInboxRow(messageId, {
     sentiment: classification.sentiment,
     suggested_date: suggestedNextTouch(classification, row.received_at),
@@ -515,7 +583,16 @@ export async function reclassifyInboxRow(messageId: string): Promise<InboxRow> {
       .from("inbox_replies")
       .update({ timing_text: classification.timingText, summary: classification.summary, is_broker_intro: classification.isBrokerIntro })
       .eq("message_id", messageId);
-    return { ...updated, timing_text: classification.timingText, summary: classification.summary, is_broker_intro: classification.isBrokerIntro };
+    return {
+      ...updated,
+      timing_text: classification.timingText,
+      summary: classification.summary,
+      is_broker_intro: classification.isBrokerIntro,
+      reply_type: classification.replyType,
+      auto_reply: classification.autoReply,
+      return_date: classification.returnDate,
+      new_contact: classification.newContact,
+    };
   });
 }
 
@@ -569,12 +646,18 @@ export type InboxDraft = { body: string; issues: string[]; source: "model" | "fa
  * every reply type. mode "template": Seb's fixed positive structure (the one
  * the scheduling bot expects), with an optional model-written detail line.
  */
-export async function draftInboxReply(messageId: string, nextTouchDate: string | null | undefined, mode: "natural" | "template" = "natural"): Promise<{ item: InboxRow; draft: InboxDraft }> {
+export async function draftInboxReply(
+  messageId: string,
+  nextTouchDate: string | null | undefined,
+  mode: "natural" | "template" = "natural",
+  replyTypeOverride?: ReplyType,
+): Promise<{ item: InboxRow; draft: InboxDraft }> {
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase.from("inbox_replies").select("*").eq("message_id", messageId).single();
-  if (error) throw new Error(error.message);
-  const row = data as InboxRow;
+  const row = await getRow(messageId);
   const sentiment = row.sentiment ?? "unclear";
+  // "No reply needed" rows still get a plain acknowledgement if Seb asks for a draft.
+  const requested = replyTypeOverride ?? row.reply_type;
+  const replyType: ReplyType = requested === "none" ? "acknowledge" : requested;
   const firstName = firstNameOfSender(row.from_name, row.from_email);
   const theirs = row.thread[row.thread.length - 1]?.text ?? row.preview ?? "";
   const nextTouch = nextTouchDate === undefined ? row.suggested_date : nextTouchDate;
@@ -582,7 +665,7 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
   let body: string | null = null;
   let source: InboxDraft["source"] = "model";
   const client = getAnthropicClient();
-  if (sentiment === "positive" && !row.is_broker_intro && mode === "template") {
+  if (replyType === "book_call" && mode === "template") {
     // Seb's fixed structure; the model only contributes an optional detail sentence.
     let detail: string | null = null;
     if (client) {
@@ -612,6 +695,7 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
           content: inboxDraftPrompt({
             thread: row.thread,
             sentiment,
+            replyType,
             isBrokerIntro: row.is_broker_intro,
             accountName: row.account_name,
             senderName: row.from_name,
@@ -622,13 +706,13 @@ export async function draftInboxReply(messageId: string, nextTouchDate: string |
         }],
       });
       const text = response.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim();
-      body = text ? normalizeDraft(text) : null;
+      body = text ? normalizeDraft(text, replyType) : null;
     } catch {
       body = null;
     }
   }
   if (!body) {
-    body = fallbackDraft(sentiment, firstName, row.timing_text);
+    body = fallbackDraft(sentiment, firstName, row.timing_text, replyType);
     source = "fallback";
   }
   const issues = validateDraft(body, theirs.length);
@@ -684,11 +768,11 @@ export async function sendInboxReply(params: {
   body: string;
   rceDays: number | null;
   sentiment?: Sentiment;
+  /** CC the scheduling bot. Seb's switch; when absent, the old rule (positive, not a broker). */
+  cc?: boolean;
 }): Promise<SendOutcome> {
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase.from("inbox_replies").select("*").eq("message_id", params.messageId).single();
-  if (error) throw new Error(error.message);
-  const row = data as InboxRow;
+  const row = await getRow(params.messageId);
   if (row.status === "sent") throw new Error("This reply was already sent.");
   const body = params.body.trim();
   if (!body) throw new Error("The reply is empty.");
@@ -697,7 +781,7 @@ export async function sendInboxReply(params: {
 
   // 1. Outlook: reply all in-thread (their CCs stay on), Blockit copied on a positive.
   const identities = await getMailboxIdentities();
-  const cc = sentiment === "positive" && !row.is_broker_intro ? [BLOCKIT_CC] : [];
+  const cc = (params.cc ?? (sentiment === "positive" && !row.is_broker_intro)) ? [BLOCKIT_CC] : [];
   const draft = await createOutlookReplyAllDraft(row.message_id, body, {
     selfAddresses: identities,
     sender: { name: row.from_name, email: row.from_email },
@@ -759,5 +843,41 @@ export async function sendInboxReply(params: {
     .select("*")
     .single();
   if (updateError) throw new Error(updateError.message);
-  return { item: updated as InboxRow, recipients, cc: draft.cc, salesforce };
+  return { item: (await withMeta([updated as InboxRowColumns]))[0], recipients, cc: draft.cc, salesforce };
+}
+
+// ── Dismiss and undo ────────────────────────────────────────────────────────
+
+/** Out of the pile with no reply, and read in Outlook. Nothing is sent, Salesforce is not touched. */
+export async function dismissInboxRow(messageId: string): Promise<{ item: InboxRow; outlook: boolean }> {
+  const row = await getRow(messageId);
+  if (row.status === "sent") throw new Error("This one was already answered.");
+  const outlook = await setMessageRead(messageId, true);
+  return { item: await updateInboxRow(messageId, { status: "skipped" }), outlook };
+}
+
+/** Undo a dismiss: back in the pile and unread in Outlook (so the next sync does not file it again). */
+export async function undismissInboxRow(messageId: string): Promise<InboxRow> {
+  const row = await getRow(messageId);
+  if (row.status !== "skipped") return row;
+  await setMessageRead(messageId, false);
+  return updateInboxRow(messageId, { status: row.draft_body ? "drafted" : "new" });
+}
+
+/**
+ * Out of office with a return date, on a Salesforce account: move (or create)
+ * the account's open RCE task to the day after they are back, then file the
+ * reply. Only on Seb's tap.
+ */
+export async function remindAfterOutOfOffice(messageId: string): Promise<{ item: InboxRow; task: FollowUpOutcome }> {
+  const row = await getRow(messageId);
+  if (row.auto_reply !== "out_of_office" || !row.return_date) throw new Error("No return date on this reply.");
+  if (!row.account_id) throw new Error("No Salesforce account on this reply.");
+  const today = new Date().toISOString().slice(0, 10);
+  const days = Math.max(1, daysBetweenDates(today, row.return_date) + 1);
+  const task = await scheduleRceTask(row.account_id, today, days);
+  await setMessageRead(messageId, true);
+  const item = await updateInboxRow(messageId, { status: "skipped" });
+  await getSupabaseAdmin().from("inbox_replies").update({ task_id: task.taskId, task_date: task.date }).eq("message_id", messageId);
+  return { item: { ...item, task_id: task.taskId, task_date: task.date }, task };
 }
