@@ -16,6 +16,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
  */
 type Price = { input: number; output: number; cacheRead: number; cacheWrite: number };
 const PRICES: Array<{ match: RegExp; price: Price; over100k?: Price }> = [
+  // Voyage embeddings (reply search): input only. voyage-4 models also come with free tokens, so this is an upper bound.
+  { match: /voyage/i, price: { input: 0.02, output: 0, cacheRead: 0, cacheWrite: 0 } },
   { match: /opus-5/i, price: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 } },
   { match: /sonnet-5/i, price: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 } },
   // Haiku 5.5 is the one tiered model: a prompt over 100,000 tokens (cache reads and writes included) pays 5x.

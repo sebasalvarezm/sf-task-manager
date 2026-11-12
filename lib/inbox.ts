@@ -46,6 +46,7 @@ import {
   type ThreadMessage,
 } from "./inbox-classify";
 import { readInboxMeta, saveInboxMeta } from "./inbox-meta";
+import { similarReplies } from "./reply-search";
 
 /**
  * Inbox: inbound replies to outreach, one row per thread (its latest inbound
@@ -684,7 +685,8 @@ export async function draftInboxReply(
     }
     body = positiveDraft(firstName, detail);
   } else if (client) {
-    const examples = await recentSentReplies();
+    // Seb's past replies closest to this email (reply search); the most recent ones when that is off or not set up.
+    const examples = (await similarReplies(theirs)) ?? (await recentSentReplies());
     try {
       const response = await trackedCreate(client, "inbox", {
         model: DRAFT_MODEL,

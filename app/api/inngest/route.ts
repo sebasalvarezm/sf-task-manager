@@ -17,6 +17,7 @@ import { discoveryWeeklyJob, discoveryPreviewJob } from "@/lib/inngest/functions
 import { auditWeeklyJob } from "@/lib/inngest/functions/audit-weekly";
 import { scheduledActionsJob } from "@/lib/inngest/functions/scheduled-actions";
 import { contactNotesJob } from "@/lib/inngest/functions/contact-notes";
+import { replyIndexJob } from "@/lib/inngest/functions/reply-index";
 
 export const maxDuration = 300;
 
@@ -41,5 +42,6 @@ export const { GET, POST, PUT } = serve({
     auditWeeklyJob,
     scheduledActionsJob,
     contactNotesJob,
+    replyIndexJob,
   ],
 });

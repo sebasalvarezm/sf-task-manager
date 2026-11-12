@@ -122,7 +122,9 @@ export default function AuditPage() {
         </div>
       ) : null}
 
+      <OwnerSwitch />
       <ContactNotesSwitch />
+      <ReplySearchSwitch />
     </PageContent>
   );
 }
@@ -156,6 +158,81 @@ function ContactNotesSwitch() {
         {state.paused ? "paused" : `on, ${state.active} account${state.active !== 1 ? "s" : ""} marked`}
       </p>
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void toggle()}>{state.paused ? "Resume" : "Pause"}</Button>
+    </div>
+  );
+}
+
+/** Reply search for Inbox drafts (lib/reply-search.ts): setup state, index size, Index now, pause. */
+function ReplySearchSwitch() {
+  const [state, setState] = useState<{ paused: boolean; indexed: number | null; tableReady: boolean; keySet: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/inbox/reply-search")
+      .then((r) => r.json())
+      .then((d) => setState({ paused: Boolean(d.settings?.paused), indexed: d.indexed ?? null, tableReady: Boolean(d.tableReady), keySet: Boolean(d.keySet) }))
+      .catch(() => setState(null));
+  }, []);
+  if (!state) return null;
+  async function post(body: Record<string, unknown>) {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/inbox/reply-search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      return res.ok ? await res.json() : null;
+    } finally {
+      setBusy(false);
+    }
+  }
+  const status = !state.keySet
+    ? "needs the Voyage key in Vercel (VOYAGE_API_KEY)"
+    : !state.tableReady
+      ? "needs the one-time database step (supabase/2026-11-reply-search.sql)"
+      : state.paused
+        ? "paused, drafts use your most recent replies"
+        : `on, ${state.indexed ?? 0} past replies indexed`;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-white px-4 py-3 text-sm">
+      <p className="text-ink-secondary">
+        <span className="text-ink">Inbox drafts learn from your most similar past replies:</span> {status}
+        {note ? <span className="text-ink-muted"> · {note}</span> : null}
+      </p>
+      {state.keySet && state.tableReady ? (
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" disabled={busy || state.paused} onClick={() => void post({ action: "index" }).then((d) => d && setNote("indexing the last year of Sent Items, a few minutes"))}>Index now</Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void post({ action: "settings", paused: !state.paused }).then((d) => d && setState({ ...state, paused: Boolean(d.settings?.paused) }))}>{state.paused ? "Resume" : "Pause"}</Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Weekly Outreach accounts owned by Seb in Salesforce (lib/account-owner.ts): pause switch. */
+function OwnerSwitch() {
+  const [paused, setPaused] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    fetch("/api/weekly-outreach/owners")
+      .then((r) => r.json())
+      .then((d) => setPaused(Boolean(d.settings?.paused)))
+      .catch(() => setPaused(null));
+  }, []);
+  if (paused === null) return null;
+  async function toggle() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/weekly-outreach/owners", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "settings", paused: !paused }) });
+      const d = await res.json();
+      if (res.ok) setPaused(Boolean(d.settings?.paused));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-white px-4 py-3 text-sm">
+      <p className="text-ink-secondary">
+        <span className="text-ink">Weekly Outreach accounts become yours in Salesforce:</span> {paused ? "paused" : "on"}
+      </p>
+      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void toggle()}>{paused ? "Resume" : "Pause"}</Button>
     </div>
   );
 }

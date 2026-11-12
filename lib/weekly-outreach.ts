@@ -399,7 +399,8 @@ export async function upsertWeeklyOutreachItem(input: {
     .single();
   if (error) throw new Error(`Could not add to Weekly Outreach: ${error.message}`);
   // An E1 gets "Will contact this week" in its Salesforce description.
-  if (input.outreachType === "E1") await requestContactNotesRun();
+  // Owner becomes Seb (any row), and E1s get "Will contact this week".
+  await requestContactNotesRun();
   return data as WeeklyOutreachItem;
 }
 
@@ -532,7 +533,7 @@ export async function addWeeklyOutreachBatch(input: {
     })
     .select("*");
   if (error) throw new Error(`Could not paste Weekly Outreach rows: ${error.message}`);
-  if (pending.some((row) => row.entry.outreachType === "E1")) await requestContactNotesRun();
+  if (pending.length > 0) await requestContactNotesRun();
 
   const savedByKey = new Map<string, WeeklyOutreachItem>();
   for (const item of (data ?? []) as WeeklyOutreachItem[]) {
