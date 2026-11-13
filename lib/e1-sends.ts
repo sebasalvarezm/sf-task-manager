@@ -9,6 +9,8 @@ import { getValidCredentials } from "./token-manager";
 import { getStoredSignature, saveStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
 import { importSignatureFromSentItems } from "./microsoft";
 import { asFeature, trackedCreate } from "./model-cost";
+import { recordFinal, refreshLearnedRules } from "./draft-learning";
+import { applyLearnedSwaps } from "./email-words";
 import { recipientTimeZone, planSendSlots } from "./send-slots";
 import { currentWeekStart, type WeeklyOutreachItem } from "./weekly-outreach";
 import { isTemplateWording, shortenRestaurantName } from "./email-prepackage";
@@ -227,6 +229,7 @@ export function splitDraft(draft: string | null): { subject: string | null; body
  */
 export async function createSendsForWeek(weekStart = currentWeekStart()): Promise<string[]> {
   const db = getSupabaseAdmin();
+  await refreshLearnedRules();
   const { data: items, error } = await db
     .from("weekly_outreach")
     .select("*")
@@ -298,7 +301,9 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
   const created: string[] = [];
   for (const r of fresh) {
     const { subject, body: rawBody } = splitDraft(r.draft);
-    const body = withHeadOfOps(rawBody, r.notes);
+    // Accepted learned swaps apply to new rows only, so a new rule never resets rows already in the queue.
+    const learned = withHeadOfOps(rawBody, r.notes);
+    const body = learned ? applyLearnedSwaps(learned) : learned;
     const loc = states.get(r.sf_account_id);
     const { data, error: insErr } = await db
       .from("e1_sends")
@@ -513,6 +518,29 @@ export function hookInfoFrom(r: Pick<SourcingResult, "emailHook" | "hookAnchor" 
   return { ...base, level: "low", note: `Thin evidence${where ? ` (from ${where})` : ""}${base.evidence ? `: ${base.evidence}` : ". The model could not point to a source."}` };
 }
 
+/** The E1 exactly as Sourcing wrote it (before Weekly Outreach or Send queue edits), as "subject\n\nbody". */
+async function sourcingOriginal(send: E1Send): Promise<string | null> {
+  if (!send.sourcing_job_id || !send.weekly_outreach_id) return null;
+  const job = await getJob(send.sourcing_job_id).catch(() => null);
+  if (!job) return null;
+  const idx = (((job.input ?? {}) as { weeklyOutreachIds?: string[] }).weeklyOutreachIds ?? []).indexOf(send.weekly_outreach_id);
+  const items = ((job.result ?? {}) as { items?: Array<{ result: SourcingResult | null }> }).items ?? [];
+  const pe = idx >= 0 ? items[idx]?.result?.prepackagedEmail : null;
+  if (!pe || pe.skipped || !pe.body) return null;
+  return `${pe.subject ?? ""}\n\n${pe.body}`.trim();
+}
+
+/** For learning from Seb's edits: what Sourcing wrote vs what went to Outreach. Never throws. */
+async function captureE1(send: E1Send): Promise<void> {
+  try {
+    const original = await sourcingOriginal(send);
+    if (!original) return;
+    await recordFinal("e1", send.id, `${send.subject ?? ""}\n\n${send.body ?? ""}`.trim(), { original, accountName: send.account_name });
+  } catch {
+    /* best effort */
+  }
+}
+
 async function sourcingContextFor(send: E1Send): Promise<SourcingContext> {
   if (!send.sourcing_job_id || !send.weekly_outreach_id) return null;
   const job = await getJob(send.sourcing_job_id).catch(() => null);
@@ -641,6 +669,7 @@ export async function confirmSent(id: string): Promise<E1Send> {
   const send = await getSend(id);
   if (!send) throw new Error("Send row not found.");
   if (send.status !== "scheduled") throw new Error("Only an enrolled email can be confirmed.");
+  await captureE1(send);
   return updateSend(id, { status: "sent", status_reason: null });
 }
 
@@ -1255,6 +1284,7 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
 
   // Salesforce: the E1 task, as a sequence send would have logged it.
   const sfTaskId = await logE1Task(send, sendAt);
+  await captureE1(send);
   return updateSend(id, {
     ...patch,
     outreach_task_id: sfTaskId,
@@ -1402,7 +1432,9 @@ export async function fillStepMailing(id: string, mailingId: string, sendAt: Dat
   });
   if (!flip.ok) throw new Error(`Outreach would not schedule step 1: ${(await flip.text()).slice(0, 300)}`);
   // No Salesforce task here: Outreach logs "[E1] - <subject>" when step 1 sends.
-  return updateSend(id, { ...base, scheduled_for: at.toISOString(), status: "scheduled", status_reason: null });
+  const done = await updateSend(id, { ...base, scheduled_for: at.toISOString(), status: "scheduled", status_reason: null });
+  await captureE1(done);
+  return done;
 }
 
 /** One-off: rows already out the door get custom1 and the Salesforce E1 task. */

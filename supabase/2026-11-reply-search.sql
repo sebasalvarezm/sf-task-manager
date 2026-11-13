@@ -30,3 +30,23 @@ LANGUAGE sql STABLE AS $$
   ORDER BY embedding <=> query_embedding
   LIMIT match_count;
 $$;
+
+-- ============================================================
+-- Learning from Seb's edits (November 2026). Same one-time run.
+-- One row per email the tool wrote: its draft, and what Seb actually sent.
+-- A weekly review compares them and PROPOSES rules; nothing changes until
+-- Seb accepts a rule on the Weekly check page.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS draft_edits (
+  source       TEXT        NOT NULL,             -- e1 | rce | followup | nudge | inbox
+  ref_id       TEXT        NOT NULL,             -- the row it came from (send row, weekly row, account, message)
+  account_name TEXT,
+  original     TEXT        NOT NULL,             -- what the tool wrote
+  final        TEXT,                             -- what went out (null until sent)
+  drafted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sent_at      TIMESTAMPTZ,
+  PRIMARY KEY (source, ref_id)
+);
+
+CREATE INDEX IF NOT EXISTS draft_edits_sent_at ON draft_edits (sent_at DESC);

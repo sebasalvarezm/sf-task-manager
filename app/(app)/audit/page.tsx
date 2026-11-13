@@ -122,6 +122,7 @@ export default function AuditPage() {
         </div>
       ) : null}
 
+      <LearnedRules />
       <OwnerSwitch />
       <ContactNotesSwitch />
       <ReplySearchSwitch />
@@ -183,6 +184,23 @@ function ReplySearchSwitch() {
       setBusy(false);
     }
   }
+  async function runIndex() {
+    if (!state) return;
+    setNote("reading your Sent Items, this can take a few minutes");
+    setBusy(true);
+    try {
+      const res = await fetch("/api/inbox/reply-search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "index" }) });
+      const d = await res.json().catch(() => null);
+      if (!d) throw new Error("No answer from the server (it may have run out of time). Tap Index now again; it continues where it stopped.");
+      if (!res.ok) throw new Error(d.error ?? "Indexing failed");
+      setState({ ...state, indexed: d.indexed ?? state.indexed });
+      setNote(`${d.summary.added} new replies indexed (${d.summary.scanned} sent emails read, ${d.summary.usable} usable)${d.reason ? `. Stopped early: ${d.reason}` : ""}`);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Indexing failed");
+    } finally {
+      setBusy(false);
+    }
+  }
   const status = !state.keySet
     ? "needs the Voyage key in Vercel (VOYAGE_API_KEY)"
     : !state.tableReady
@@ -198,7 +216,7 @@ function ReplySearchSwitch() {
       </p>
       {state.keySet && state.tableReady ? (
         <div className="flex gap-2">
-          <Button size="sm" variant="ghost" disabled={busy || state.paused} onClick={() => void post({ action: "index" }).then((d) => d && setNote("indexing the last year of Sent Items, a few minutes"))}>Index now</Button>
+          <Button size="sm" variant="ghost" disabled={busy || state.paused} onClick={() => void runIndex()}>{busy ? "Indexing…" : "Index now"}</Button>
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => void post({ action: "settings", paused: !state.paused }).then((d) => d && setState({ ...state, paused: Boolean(d.settings?.paused) }))}>{state.paused ? "Resume" : "Pause"}</Button>
         </div>
       ) : null}
@@ -233,6 +251,101 @@ function OwnerSwitch() {
         <span className="text-ink">Weekly Outreach accounts become yours in Salesforce:</span> {paused ? "paused" : "on"}
       </p>
       <Button size="sm" variant="ghost" disabled={busy} onClick={() => void toggle()}>{paused ? "Resume" : "Pause"}</Button>
+    </div>
+  );
+}
+
+type LearnedRuleView = {
+  id: string;
+  kind: "swap" | "style";
+  summary: string;
+  emails: number;
+  evidence: Array<{ source: string; account: string | null; before: string; after: string }>;
+  status: "proposed" | "active" | "rejected" | "removed";
+};
+const SOURCE_NAME: Record<string, string> = { e1: "E1", rce: "RCE", followup: "Follow-up", nudge: "Nudge", inbox: "Inbox reply" };
+
+/** Learning from Seb's edits (lib/draft-learning.ts): proposals to accept or reject, active rules to remove. */
+function LearnedRules() {
+  const [data, setData] = useState<{ rules: LearnedRuleView[]; paused: boolean; captured: number | null } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const load = useCallback(() => {
+    fetch("/api/draft-learning")
+      .then((r) => r.json())
+      .then((d) => setData({ rules: d.rules ?? [], paused: Boolean(d.settings?.paused), captured: d.capturedThisWeek ?? null }))
+      .catch(() => setData(null));
+  }, []);
+  useEffect(() => load(), [load]);
+  if (!data) return null;
+  async function post(key: string, body: Record<string, unknown>) {
+    setBusy(key);
+    setNote(null);
+    try {
+      const res = await fetch("/api/draft-learning", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error ?? "Failed");
+      if (d.run) setNote(d.run.note ?? `${d.run.edited} edited emails reviewed, ${d.run.proposed} new proposal${d.run.proposed === 1 ? "" : "s"}.`);
+      load();
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+  const proposed = data.rules.filter((r) => r.status === "proposed");
+  const active = data.rules.filter((r) => r.status === "active");
+  return (
+    <div className="rounded-md border border-line bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
+        <div>
+          <h2 className="text-[15px] font-medium text-ink">Learned from your edits</h2>
+          <p className="text-[13px] text-ink-secondary">
+            {data.captured === null
+              ? "Needs the one-time database step (supabase/2026-11-reply-search.sql)."
+              : `${data.captured} email${data.captured === 1 ? "" : "s"} sent through the tool this week. Reviewed Sundays${data.paused ? " (paused)" : ""}; nothing changes until you accept.`}
+          </p>
+          {note ? <p className="mt-1 text-[13px] text-ink-muted">{note}</p> : null}
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" disabled={busy !== null || data.paused || data.captured === null} onClick={() => void post("run", { action: "run" })}>{busy === "run" ? "Reviewing…" : "Review now"}</Button>
+          <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void post("pause", { action: "settings", paused: !data.paused })}>{data.paused ? "Resume" : "Pause"}</Button>
+        </div>
+      </div>
+      {proposed.map((r) => (
+        <div key={r.id} className="border-b border-line px-4 py-3 last:border-b-0">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[14px] text-ink">{r.summary}</p>
+              <p className="text-[12px] text-ink-muted">Seen in {r.emails} emails{r.kind === "swap" ? " · applied as a word fix on every draft" : " · added to the drafting instructions"}</p>
+              <ul className="mt-1 space-y-0.5">
+                {r.evidence.slice(0, 2).map((e, i) => (
+                  <li key={i} className="text-[12px] text-ink-secondary">
+                    {SOURCE_NAME[e.source] ?? e.source}{e.account ? `, ${e.account}` : ""}: &ldquo;{e.before}&rdquo; → {e.after ? <>&ldquo;{e.after}&rdquo;</> : <em>deleted</em>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button size="sm" disabled={busy !== null} onClick={() => void post(r.id, { action: "decide", id: r.id, decision: "accept" })}>Accept</Button>
+              <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void post(r.id, { action: "decide", id: r.id, decision: "reject" })}>Reject</Button>
+            </div>
+          </div>
+        </div>
+      ))}
+      {active.length > 0 ? (
+        <div className="px-4 py-3">
+          <p className="text-[12px] uppercase tracking-wide text-ink-muted">Active rules</p>
+          <ul className="mt-1 space-y-1">
+            {active.map((r) => (
+              <li key={r.id} className="flex items-center justify-between gap-3 text-[13px] text-ink">
+                <span className="min-w-0">{r.summary}</span>
+                <button type="button" disabled={busy !== null} onClick={() => void post(r.id, { action: "decide", id: r.id, decision: "remove" })} className="shrink-0 text-[13px] text-info disabled:text-ink-muted">Remove</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

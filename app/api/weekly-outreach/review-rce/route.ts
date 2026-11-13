@@ -1,3 +1,4 @@
+import { recordFinal } from "@/lib/draft-learning";
 import { NextResponse } from "next/server";
 import { isAdmin } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
@@ -190,6 +191,7 @@ export async function POST(request: Request) {
       }
       await sendOutlookDraft(metadata.outlookDraftId!);
       metadata.rceFirstSentAt = new Date().toISOString();
+      await recordFinal("rce", item.id, draft);
       metadata.conversationId = threadInfo.conversationId;
       metadata.recipients = threadInfo.recipients;
       salesforceNotes = await takeoverSalesforce(draft);

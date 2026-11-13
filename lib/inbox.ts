@@ -47,6 +47,8 @@ import {
 } from "./inbox-classify";
 import { readInboxMeta, saveInboxMeta } from "./inbox-meta";
 import { similarReplies } from "./reply-search";
+import { recordDraft, recordFinal, refreshLearnedRules } from "./draft-learning";
+import { learnedStyleText } from "./email-words";
 
 /**
  * Inbox: inbound replies to outreach, one row per thread (its latest inbound
@@ -654,6 +656,7 @@ export async function draftInboxReply(
   replyTypeOverride?: ReplyType,
 ): Promise<{ item: InboxRow; draft: InboxDraft }> {
   const supabase = getSupabaseAdmin();
+  await refreshLearnedRules();
   const row = await getRow(messageId);
   const sentiment = row.sentiment ?? "unclear";
   // "No reply needed" rows still get a plain acknowledgement if Seb asks for a draft.
@@ -691,7 +694,7 @@ export async function draftInboxReply(
       const response = await trackedCreate(client, "inbox", {
         model: DRAFT_MODEL,
         max_tokens: 1200,
-        system: INBOX_DRAFT_SYSTEM,
+        system: INBOX_DRAFT_SYSTEM + learnedStyleText(),
         messages: [{
           role: "user",
           content: inboxDraftPrompt({
@@ -718,6 +721,7 @@ export async function draftInboxReply(
     source = "fallback";
   }
   const issues = validateDraft(body, theirs.length);
+  await recordDraft("inbox", messageId, body, row.account_name ?? row.from_name);
   // Seb may have dismissed or sent the row while the model was writing; never
   // pull it back into the pile. Only a row still "new" becomes "drafted".
   await supabase.from("inbox_replies").update({ status: "drafted" }).eq("message_id", messageId).eq("status", "new");
@@ -802,6 +806,7 @@ export async function sendInboxReply(params: {
   }
   await markMessageRead(row.message_id);
   const sentAt = new Date().toISOString();
+  await recordFinal("inbox", row.message_id, body);
 
   // 2. Salesforce, account threads only.
   const salesforce: SendOutcome["salesforce"] = { responded: null, task: null, skipped: null };

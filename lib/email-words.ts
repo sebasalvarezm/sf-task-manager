@@ -80,8 +80,43 @@ const FIXES: Fix[] = [
   [/\bon your radar\b/g, "in front of you"],
 ];
 
-export function fixEmailWords(text: string): string {
+// ── Rules learned from Seb's edits (lib/draft-learning.ts) ─────────────────
+// Only rules Seb accepted on the Weekly check page. The server loads them
+// into this cache (refreshLearnedRules) before drafting; until then, or if
+// loading fails, drafts behave exactly as before.
+
+export type LearnedSwap = { from: string; to: string };
+let learnedSwaps: LearnedSwap[] = [];
+let learnedStyle: string[] = [];
+
+export function setLearnedRules(swaps: LearnedSwap[], style: string[]): void {
+  learnedSwaps = swaps.filter((s) => s.from.trim().length > 0);
+  learnedStyle = style.filter((r) => r.trim().length > 0);
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Apply accepted swaps: whole words/phrases, any case, keeping a capital first letter. */
+export function applyLearnedSwaps(text: string, swaps: LearnedSwap[] = learnedSwaps): string {
   let out = text;
+  for (const { from, to } of swaps) {
+    const re = new RegExp(`(^|[^\\w])(${escapeRe(from.trim())})(?=$|[^\\w])`, "gi");
+    out = out.replace(re, (_m, lead: string, hit: string) => `${lead}${to && /^[A-Z]/.test(hit) ? to[0].toUpperCase() + to.slice(1) : to}`);
+  }
+  return to_tidy(out);
+}
+function to_tidy(t: string): string {
+  return t.replace(/ {2,}/g, " ").replace(/ +([.,!?])(?=\s|$)/g, "$1").replace(/^ +/gm, "");
+}
+
+/** The accepted style rules, as one line for a drafting prompt ("" when none). */
+export function learnedStyleText(): string {
+  if (learnedStyle.length === 0) return "";
+  return ` Seb's own rules, learned from his edits: ${learnedStyle.map((r) => r.replace(/[.\s]+$/, "")).join("; ")}.`;
+}
+
+export function fixEmailWords(text: string): string {
+  let out = learnedSwaps.length ? applyLearnedSwaps(text) : text;
   for (const [re, to] of FIXES) out = out.replace(re, to as never);
   // Tidy only the gaps a removal left ("fits  in", "in .") and never ".NET".
   return out.replace(/ {2,}/g, " ").replace(/ +([.,!?])(?=\s|$)/g, "$1");

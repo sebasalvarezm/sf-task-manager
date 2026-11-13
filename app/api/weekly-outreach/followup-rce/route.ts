@@ -1,3 +1,4 @@
+import { recordDraft, recordFinal } from "@/lib/draft-learning";
 import { NextResponse } from "next/server";
 import { sfQuery } from "@/lib/sf-query";
 import { isAdmin } from "@/lib/auth";
@@ -130,6 +131,7 @@ export async function POST(request: Request) {
     if (body.action === "preview") {
       // A Weekly Outreach follow-up is the second email of a fresh reconnect.
       const built = buildRceFollowUp({ seed: item.id, firstName, now: new Date(), kind: "second" });
+      await recordDraft("followup", item.id, built.body, item.account_name);
       return NextResponse.json({
         body: built.body,
         firstNamePlaceholder: built.usedPlaceholder,
@@ -181,6 +183,7 @@ export async function POST(request: Request) {
       body: text,
     });
     await sendOutlookDraft(draft.id);
+    await recordFinal("followup", item.id, text);
 
     metadata.rceSecondSent = true;
     const { data: updated, error: updateError } = await supabase

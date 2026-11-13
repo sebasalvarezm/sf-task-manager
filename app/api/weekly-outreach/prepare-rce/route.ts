@@ -1,4 +1,5 @@
-import { EMAIL_WORD_RULE, fixEmailWords } from "@/lib/email-words";
+import { EMAIL_WORD_RULE, fixEmailWords, learnedStyleText } from "@/lib/email-words";
+import { recordDraft, refreshLearnedRules } from "@/lib/draft-learning";
 import { NextResponse } from "next/server";
 import { trackedCreate } from "@/lib/model-cost";
 import { fetchContactsForAccounts } from "@/lib/salesforce-contacts";
@@ -118,7 +119,7 @@ function replyPrompt(input: {
   const replyLine = input.replyTo
     ? `This reply goes into the Outlook thread "${input.replyTo.subject}" (last message from ${input.replyTo.email} on ${input.replyTo.sentAt.slice(0, 10)}). Write it for that person and that thread; do not address anyone else and do not use a name from a different thread.`
     : "";
-  return `Draft a reconnect email for an M&A professional. ${SHARED_RULES} Do not include a subject line, greeting, or signature because this will be inserted into an existing Outlook reply draft. ${replyLine}
+  return `Draft a reconnect email for an M&A professional. ${SHARED_RULES}${learnedStyleText()} Do not include a subject line, greeting, or signature because this will be inserted into an existing Outlook reply draft. ${replyLine}
 
 Company: ${input.item.account_name}
 Salesforce activity timeline (newest first; "(me)" is Sebastian, "(colleague)" is a teammate):
@@ -165,7 +166,7 @@ function takeoverPrompt(input: {
   const takeover = input.history.takeover!;
   const contact = takeover.contactName ?? "the contact";
   const when = formatDateForEmail(takeover.lastExchangeDate);
-  return `Draft a short email from Sebastian (Seb) at Valstone, following up on a conversation his colleague had with this company. ${SHARED_RULES}
+  return `Draft a short email from Sebastian (Seb) at Valstone, following up on a conversation his colleague had with this company. ${SHARED_RULES}${learnedStyleText()}
 
 Situation: ${takeover.colleagueName} exchanged emails with ${contact} at ${input.item.account_name} in ${when}. Seb has never written to ${contact}. This is a NEW email, not a reply. Do not include a subject line in the body.
 
@@ -253,6 +254,7 @@ export async function POST(request: Request) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = (await request.json()) as { id?: string };
   if (!id) return NextResponse.json({ error: "Missing row id" }, { status: 400 });
+  await refreshLearnedRules();
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.from("weekly_outreach").select("*").eq("id", id).single();
   if (error || !data) return NextResponse.json({ error: "Weekly Outreach row not found" }, { status: 404 });
@@ -377,6 +379,7 @@ export async function POST(request: Request) {
     }
     if (typeof parsed.draft === "string") parsed.draft = fixEmailWords(parsed.draft);
     if (typeof parsed.subject === "string") parsed.subject = fixEmailWords(parsed.subject);
+    if (typeof parsed.draft === "string") await recordDraft("rce", item.id, parsed.draft, item.account_name);
 
     const metadata = readWeeklyOutreachSourceMetadata(item.source_reference);
     // Preparing again replaces the Outlook draft. The previous one is removed

@@ -2502,6 +2502,7 @@ const FEATURE_LABEL: Record<string, string> = {
   send_review: "Send queue review",
   hook_research: "Hook deep research",
   reply_search: "Reply search (Voyage)",
+  draft_learning: "Learning from your edits",
   sequence_change: "Sequence change rewrites",
   nudges: "Nudges",
   deal_docs: "Deal docs",

@@ -59,6 +59,8 @@ export async function embed(texts: string[], inputType: "document" | "query"): P
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({ input: texts, model: VOYAGE_MODEL, input_type: inputType, output_dimension: DIMENSIONS, truncation: true }),
   });
+  if (res.status === 429) throw new Error("VOYAGE_RATE_LIMIT");
+  if (res.status === 401 || res.status === 403) throw new Error("VOYAGE_KEY_REJECTED");
   if (!res.ok) throw new Error(`Voyage ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
   const body = (await res.json()) as {
     data?: Array<{ embedding: number[]; index?: number }>;
@@ -128,8 +130,24 @@ export function usableSent(m: SentMessage, ownDomains: Set<string>): { mine: str
 
 export type IndexSummary = { scanned: number; usable: number; added: number; stoppedBy: string | null };
 
+/** Plain words for why an index run stopped early. */
+export function indexStopReason(code: string | null): string | null {
+  if (!code) return null;
+  if (code === "VOYAGE_RATE_LIMIT") return "Voyage is limiting requests. Add a payment method in your Voyage account (you stay on the free tokens), then tap Index now again.";
+  if (code === "VOYAGE_KEY_REJECTED") return "Voyage rejected the key. Check VOYAGE_API_KEY in Vercel, then redeploy.";
+  if (code === "VOYAGE_NOT_CONFIGURED") return "No Voyage key in Vercel yet.";
+  if (code === "REPLY_SEARCH_CAP") return "Today's $0.50 cap was reached; it continues tomorrow.";
+  if (code === "REPLY_SEARCH_TABLE_MISSING") return "The database step has not been run yet.";
+  if (code === "paused") return "Paused.";
+  return code;
+}
+
 /** Read Sent Items from the last `sinceDays` days and add the replies not stored yet. Capped; never sends anything. */
+const BATCH = 20;
+const TIME_BUDGET_MS = 240_000;
+
 export async function indexSentReplies(sinceDays: number): Promise<IndexSummary> {
+  const startedAt = Date.now();
   const summary: IndexSummary = { scanned: 0, usable: 0, added: 0, stoppedBy: null };
   if ((await getReplySearchSettings()).paused) return { ...summary, stoppedBy: "paused" };
   const credentials = await getMsValidCredentials();
@@ -173,14 +191,30 @@ export async function indexSentReplies(sinceDays: number): Promise<IndexSummary>
   }
   const fresh = found.filter((f) => !known.has(f.m.id));
 
-  for (let i = 0; i < fresh.length; i += 100) {
-    const batch = fresh.slice(i, i + 100);
+  // Small batches: a Voyage account without a payment method allows only ~10,000 tokens a minute.
+  for (let i = 0; i < fresh.length; i += BATCH) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      summary.stoppedBy = "time budget (the rest is picked up next run)";
+      break;
+    }
+    const batch = fresh.slice(i, i + BATCH);
+    const texts = batch.map((f) => documentText(f.theirs, f.mine));
     let vectors: number[][];
     try {
-      vectors = await embed(batch.map((f) => documentText(f.theirs, f.mine)), "document");
+      vectors = await embed(texts, "document");
     } catch (err) {
-      summary.stoppedBy = err instanceof Error ? err.message : "Voyage error";
-      break;
+      if (err instanceof Error && err.message === "VOYAGE_RATE_LIMIT") {
+        await new Promise((r) => setTimeout(r, 21_000)); // one minute window: wait, then one retry
+        try {
+          vectors = await embed(texts, "document");
+        } catch (again) {
+          summary.stoppedBy = again instanceof Error ? again.message : "Voyage error";
+          break;
+        }
+      } else {
+        summary.stoppedBy = err instanceof Error ? err.message : "Voyage error";
+        break;
+      }
     }
     const rows = batch.map((f, j) => ({
       message_id: f.m.id,

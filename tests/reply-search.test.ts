@@ -34,7 +34,7 @@ vi.mock("@/lib/microsoft", () => ({
 }));
 let spent = 0;
 
-import { documentText, embed, indexSentReplies, similarReplies, splitSentMessage, usableSent } from "@/lib/reply-search";
+import { documentText, embed, indexSentReplies, indexStopReason, similarReplies, splitSentMessage, usableSent } from "@/lib/reply-search";
 
 const vec = () => Array.from({ length: 512 }, () => 0.01);
 const voyageCalls: Array<{ input: string[]; input_type: string }> = [];
@@ -133,5 +133,27 @@ describe("indexing and search", () => {
     expect(voyageCalls.at(-1)?.input_type).toBe("query");
     delete process.env.VOYAGE_API_KEY;
     expect(await similarReplies("Here are the financials")).toBeNull();
+  });
+});
+
+describe("Voyage limits", () => {
+  it("a rate limit waits once, then stops with a plain reason instead of failing silently", async () => {
+    vi.useFakeTimers();
+    let voyage = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.startsWith("https://api.voyageai.com")) { voyage++; return new Response("rate limited", { status: 429 }); }
+      return new Response(JSON.stringify({ value: [reply("a")] }), { status: 200 });
+    }));
+    const run = indexSentReplies(30);
+    await vi.advanceTimersByTimeAsync(25_000);
+    const s = await run;
+    vi.useRealTimers();
+    expect(voyage).toBe(2);
+    expect(s).toMatchObject({ added: 0, stoppedBy: "VOYAGE_RATE_LIMIT" });
+    expect(indexStopReason(s.stoppedBy)).toMatch(/payment method/);
+  });
+  it("a rejected key says so", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url.startsWith("https://api.voyageai.com") ? new Response("no", { status: 401 }) : new Response(JSON.stringify({ value: [reply("a")] }), { status: 200 })));
+    expect(indexStopReason((await indexSentReplies(30)).stoppedBy)).toMatch(/rejected the key/);
   });
 });

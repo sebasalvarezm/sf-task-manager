@@ -9,7 +9,7 @@
  * on send the open task is completed and, optionally, a new one opened.
  */
 import { addDays, format } from "date-fns";
-import { EMAIL_WORD_RULE, fixEmailWords } from "./email-words";
+import { EMAIL_WORD_RULE, fixEmailWords, learnedStyleText } from "./email-words";
 import { trackedCreate } from "./model-cost";
 import { getAnthropicClient, MODELS } from "./anthropic";
 import { getValidCredentials } from "./token-manager";
@@ -333,7 +333,7 @@ async function draftFollowUp(thread: NudgeThreadMessage[], accountName: string, 
 This one is a FOLLOW-UP under Seb's own unanswered email. Read the whole thread first.
 
 1. Decide whether another nudge makes sense. It does NOT when they said they are not selling or not interested (respect it), or when Seb's last two or more emails are already unanswered follow-ups. In that case write "advice": one short sentence for Seb (e.g. "John said TowWorks isn't for sale and you've followed up twice since. Push this task out a few months instead of nudging."), and still write the gentlest possible body in case he sends anyway (no ask, just staying in touch, or none at all).
-2. The body must be NEW. Never repeat or lightly reword a sentence Seb already sent in this thread (check every SEB message). Do not reuse these stock lines either: "Following up once more", "Following up a final time", "Quickly following up on my last email", "We're still interested". ${EMAIL_WORD_RULE}
+2. The body must be NEW. Never repeat or lightly reword a sentence Seb already sent in this thread (check every SEB message). Do not reuse these stock lines either: "Following up once more", "Following up a final time", "Quickly following up on my last email", "We're still interested". ${EMAIL_WORD_RULE}${learnedStyleText()}
 3. Pick up one concrete thing from the thread when there is one (a date, a trip, the group, something they said), in a few words. One or two short sentences. Calm, never needy, no apology.
 Greeting: ${first ? `"Hi ${first},"` : "no name, just start"}. Closing: "${closer}" then "Seb" on its own line.
 
@@ -377,7 +377,7 @@ async function draftNudge(
       max_tokens: 1200,
       system: `${INBOX_DRAFT_SYSTEM}
 
-This one is a NUDGE: Seb is moving a live relationship to its next step. Topic: ${topic}. One to three short sentences in the body. Calm, not anxious. Pick up the concrete open item: from the call notes when there are any (what they said they would do, e.g. check back after their board meeting), otherwise from the thread (the NDA, the information they said they'd send, the call they agreed to). Refer to the call naturally ("Good speaking earlier this month") without repeating details they already know. For booking a call, ask plainly for a time next week; do not mention a scheduling tool. Address it to ${first ?? "them"}. ${EMAIL_WORD_RULE}`,
+This one is a NUDGE: Seb is moving a live relationship to its next step. Topic: ${topic}. One to three short sentences in the body. Calm, not anxious. Pick up the concrete open item: from the call notes when there are any (what they said they would do, e.g. check back after their board meeting), otherwise from the thread (the NDA, the information they said they'd send, the call they agreed to). Refer to the call naturally ("Good speaking earlier this month") without repeating details they already know. For booking a call, ask plainly for a time next week; do not mention a scheduling tool. Address it to ${first ?? "them"}. ${EMAIL_WORD_RULE}${learnedStyleText()}`,
       messages: [{ role: "user", content: parts.join("\n\n") }],
     });
     const text = fixEmailWords(res.content.map((b) => (b.type === "text" ? b.text : "")).join("").trim());
