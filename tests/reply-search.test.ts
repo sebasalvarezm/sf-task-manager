@@ -9,8 +9,9 @@ function table(name: string) {
   const api: Record<string, unknown> = {
     select: (_c?: string, o?: { head?: boolean }) => { if (o?.head) return Promise.resolve({ count: db[name].length, error: null }); return api; },
     eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return api; },
-    in: (k: string, v: unknown[]) => { filters.push((r) => v.includes(r[k])); return api; },
+    in: () => { throw new Error("no long id lists in a request"); },
     gte: () => api,
+    range: () => api,
     limit: () => api,
     maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
     insert: async (row: Row) => { db[name].push(row); return { error: null }; },

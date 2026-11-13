@@ -182,12 +182,15 @@ export async function indexSentReplies(sinceDays: number): Promise<IndexSummary>
   if (url) summary.stoppedBy = `message cap (${MAX_SCAN})`;
   summary.usable = found.length;
 
-  // Only the ones not stored yet.
+  // Only the ones not stored yet. Read the stored ids by date, not by listing
+  // ids in the request: Outlook ids are ~150 characters, and 200 of them made
+  // the request too long to accept ("Bad Request", Nov 2026).
   const known = new Set<string>();
-  for (let i = 0; i < found.length; i += 200) {
-    const { data, error } = await supabase.from("sent_replies").select("message_id").in("message_id", found.slice(i, i + 200).map((f) => f.m.id));
-    if (error) throw new Error(/sent_replies|relation|schema cache/.test(error.message) ? "REPLY_SEARCH_TABLE_MISSING" : error.message);
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from("sent_replies").select("message_id").gte("sent_at", since).range(from, from + 999);
+    if (error) throw new Error(/sent_replies|relation|schema cache/.test(error.message) ? "REPLY_SEARCH_TABLE_MISSING" : `Reading stored replies failed: ${error.message}`);
     for (const r of data ?? []) known.add((r as { message_id: string }).message_id);
+    if (!data || data.length < 1000) break;
   }
   const fresh = found.filter((f) => !known.has(f.m.id));
 
@@ -226,7 +229,7 @@ export async function indexSentReplies(sinceDays: number): Promise<IndexSummary>
       embedding: JSON.stringify(vectors[j]),
     }));
     const { error } = await supabase.from("sent_replies").upsert(rows, { onConflict: "message_id" });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(`Saving replies failed: ${error.message}`);
     summary.added += rows.length;
   }
   return summary;
