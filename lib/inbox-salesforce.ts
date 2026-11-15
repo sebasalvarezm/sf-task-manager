@@ -84,21 +84,48 @@ export type RespondedOutcome = {
   keptExisting: string | null;
 };
 
+/** Which kind of response a picklist value means, whatever the org calls it ("Positive - call held" is positive). */
+export function responseKind(value: string | null | undefined, values: string[]): Sentiment | null {
+  if (!value || !value.trim()) return null;
+  const v = value.trim();
+  for (const s of ["negative", "positive", "neutral"] as const) if (pickResponseTypeValue(values, s) === v) return s;
+  const l = v.toLowerCase();
+  if (/^negative|do not|don't|never|stop|remove|unsubscribe|not interested|cold/.test(l)) return "negative";
+  if (/^positive|interested|call|meeting|^yes|warm/.test(l)) return "positive";
+  if (/^neutral|not now|later|defer|future|timing|maybe/.test(l)) return "neutral";
+  return null;
+}
+
 /**
  * Positive is sticky: an account that once agreed to talk and is now "too
  * busy, try Q1" is still a positive relationship, and the stats should say
  * so. Negative always wins (do-not-contact must land). Neutral only fills an
- * empty field or replaces another neutral-type value.
+ * empty field or replaces another non-positive value. Compared by kind, not
+ * exact text, so any positive-type value counts as positive.
  */
 export function shouldOverwriteResponseType(current: string | null, next: string, values: string[]): boolean {
   if (!current || !current.trim()) return true;
   if (current === next) return false;
-  const positive = pickResponseTypeValue(values, "positive");
-  const negative = pickResponseTypeValue(values, "negative");
-  if (next === negative) return true;
-  if (current === positive) return false;
-  if (current === negative) return false; // only the user should walk a do-not-contact back
+  const now = responseKind(current, values);
+  const then = responseKind(next, values);
+  if (then === "negative") return true;
+  if (now === "positive") return false;
+  if (now === "negative") return false; // only the user should walk a do-not-contact back
   return true;
+}
+
+/**
+ * Calls or meetings already held (a completed C1, RCC or F2F task) or any
+ * opportunity on the account: the relationship is positive, so a "not now"
+ * reply does not make it neutral (OptiPro, Nov 2026).
+ */
+export async function hasPositiveHistory(accountId: string): Promise<boolean> {
+  assertSalesforceId(accountId, "account id");
+  const [calls, opps] = await Promise.all([
+    sfQuery<{ Id: string }>(`SELECT Id FROM Task WHERE AccountId = '${accountId}' AND Status = 'Completed' AND Subject_Type__c IN ('C1','RCC','F2F') LIMIT 1`),
+    sfQuery<{ Id: string }>(`SELECT Id FROM Opportunity WHERE AccountId = '${accountId}' LIMIT 1`),
+  ]);
+  return calls.length > 0 || opps.length > 0;
 }
 
 export async function markAccountResponded(accountId: string, sentiment: Sentiment): Promise<RespondedOutcome> {
@@ -113,9 +140,13 @@ export async function markAccountResponded(accountId: string, sentiment: Sentime
     outcome.respondedField = fields.responded.name;
   }
   if (fields.responseType) {
-    const value = pickResponseTypeValue(fields.responseType.values, sentiment);
+    // A "not now" from an account where calls were already held stays positive.
+    let kind: Sentiment = sentiment;
+    if (sentiment === "neutral" && (await hasPositiveHistory(accountId).catch(() => false))) kind = "positive";
+    const value = pickResponseTypeValue(fields.responseType.values, kind);
     if (value) {
       let current: string | null = null;
+      let readOk = true;
       try {
         const rows = await sfQuery<Record<string, unknown>>(
           `SELECT ${fields.responseType.name} FROM Account WHERE Id = '${accountId}' LIMIT 1`,
@@ -124,9 +155,10 @@ export async function markAccountResponded(accountId: string, sentiment: Sentime
         const raw = rows[0]?.[fields.responseType.name];
         current = typeof raw === "string" ? raw : null;
       } catch {
-        current = null;
+        readOk = false;
       }
-      if (shouldOverwriteResponseType(current, value, fields.responseType.values)) {
+      // If the current value could not be read, leave it alone rather than risk overwriting a positive.
+      if (readOk && shouldOverwriteResponseType(current, value, fields.responseType.values)) {
         patch[fields.responseType.name] = value;
         outcome.responseTypeField = fields.responseType.name;
         outcome.responseTypeValue = value;

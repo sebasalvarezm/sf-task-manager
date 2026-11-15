@@ -58,7 +58,6 @@ const TYPE_HINT: Record<ReplyType, string> = {
   none: "Automatic reply. Nothing to answer.",
 };
 
-const SENTIMENT_LABEL: Record<Sentiment, string> = { positive: "Positive", neutral: "Neutral", negative: "Negative", unclear: "Unclear" };
 
 function when(iso: string): string {
   const d = new Date(iso);
@@ -392,6 +391,8 @@ export default function InboxPage() {
       const to = (data.recipients ?? []).map((r: { name: string | null; email: string }) => r.name ?? r.email).join(", ");
       const sf = data.salesforce;
       const parts = [`Sent to ${to}${data.cc?.length ? ` (cc ${data.cc.join(", ")})` : ""}.`];
+      if (sf?.responded?.responseTypeValue) parts.push(`Response type set to ${sf.responded.responseTypeValue}.`);
+      else if (sf?.responded?.keptExisting) parts.push(`Response type kept as ${sf.responded.keptExisting}.`);
       if (sf?.task) parts.push(`RCE task ${sf.task.action} for ${longDate(sf.task.date)}.`);
       if (sf?.skipped && sf.skipped !== "no Salesforce account" && sf.skipped !== "broker intro") parts.push(`Salesforce: ${sf.skipped}.`);
       showToast(parts.join(" "));
@@ -631,13 +632,13 @@ export default function InboxPage() {
                         <span>
                           <span className="block text-[15px] text-ink">Next touch</span>
                           <span className="block text-[13px] text-ink-muted">
-                            {!hasAccount
-                              ? "No Salesforce account, nothing is written there"
-                              : rceDays === undefined
-                                ? "Days, like 50"
-                                : rceDate
+                            {rceDays === undefined
+                              ? "Days, like 50"
+                              : !rceDate
+                                ? "No RCE"
+                                : hasAccount
                                   ? `RCE task on ${longDate(rceDate)}${open.timing_text ? ` (they said “${open.timing_text}”)` : ""}`
-                                  : "No RCE task"}
+                                  : `${longDate(rceDate)}, used in the email. No Salesforce account matched, so no task is created`}
                           </span>
                         </span>
                         <span className="flex items-center gap-1.5">
@@ -646,7 +647,6 @@ export default function InboxPage() {
                             inputMode="numeric"
                             value={rceInput}
                             onChange={(e) => setRceInput(e.target.value)}
-                            disabled={!hasAccount}
                             placeholder="None"
                             className={`h-9 w-20 rounded-lg bg-surface-3 px-2 text-right text-[15px] text-ink placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-info/30 disabled:opacity-50 ${rceDays === undefined ? "ring-2 ring-danger/40" : ""}`}
                           />
@@ -656,7 +656,7 @@ export default function InboxPage() {
                     </div>
                     {hasAccount ? (
                       <p className="mt-1.5 px-1 text-[12px] text-ink-muted">
-                        On send, {open.account_name} gets Responded{open.sentiment ? ` (${SENTIMENT_LABEL[open.sentiment]})` : ""} in Salesforce.
+                        On send, {open.account_name} is marked Responded in Salesforce. A positive response type is never changed to neutral, and a &ldquo;not now&rdquo; from an account you&rsquo;ve had calls with counts as positive.
                       </p>
                     ) : null}
                   </>
