@@ -88,10 +88,18 @@ const FIXES: Fix[] = [
 export type LearnedSwap = { from: string; to: string };
 let learnedSwaps: LearnedSwap[] = [];
 let learnedStyle: string[] = [];
+let learnedHooks: string[] = [];
 
-export function setLearnedRules(swaps: LearnedSwap[], style: string[]): void {
+export function setLearnedRules(swaps: LearnedSwap[], style: string[], hooks: string[] = []): void {
   learnedSwaps = swaps.filter((s) => s.from.trim().length > 0);
   learnedStyle = style.filter((r) => r.trim().length > 0);
+  learnedHooks = hooks.filter((r) => r.trim().length > 0);
+}
+
+/** Accepted hook rules, as a block for the hook-writing prompt ("" when none). */
+export function learnedHookText(): string {
+  if (learnedHooks.length === 0) return "";
+  return `\nSEB'S OWN HOOK RULES (learned from hooks he replaced in the Send queue; follow them as strictly as the hard bans):\n${learnedHooks.map((r) => `- ${r.replace(/[.\s]+$/, "")}.`).join("\n")}\n`;
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

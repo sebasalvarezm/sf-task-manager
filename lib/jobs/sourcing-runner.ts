@@ -37,6 +37,7 @@ import {
   buildPrepackagedEmail,
   type PrepackagedEmail,
 } from "@/lib/email-prepackage";
+import { refreshLearnedRules } from "@/lib/draft-learning";
 import {
   findBusinessLocation,
   findBusinessDinnerRestaurants,
@@ -137,6 +138,7 @@ export async function rerunHookResearch(
 
   const logs: string[] = [];
   const deadlineAt = Date.now() + RUN_BUDGET_MS;
+  await refreshLearnedRules(); // accepted hook rules reach generateEmailHook
   const normalized = stored.url.startsWith("http")
     ? stored.url
     : `https://${stored.url}`;
@@ -469,6 +471,7 @@ export async function runFullSourcing(input: {
   portfolioMatchOverride?: SourcingResult["portfolioMatch"];
 }): Promise<SourcingResult> {
   const { url, onProgress, portfolioMatchOverride } = input;
+  await refreshLearnedRules(); // accepted hook rules reach generateEmailHook
   const anthropic = getAnthropicClient();
   if (!anthropic) {
     throw new Error("AI service not configured (missing ANTHROPIC_API_KEY)");

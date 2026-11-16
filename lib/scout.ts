@@ -14,6 +14,7 @@ import { guardAddress, guardTown } from "./location-guard";
 import fs from "fs";
 import path from "path";
 import { getCachedSnapshot, putCachedSnapshot } from "./wayback-cache";
+import { learnedHookText } from "./email-words";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -3424,7 +3425,7 @@ LENGTH & SHAPE:
 - READ IT ALOUD. The anchor slots straight after "going back to", so it must sound like a person talking. Natural anchors nearly always start "the days...", "the release of...", "the launch of...", or "back when...". If it reads like a database record ("the founding in Ontario, Canada in 1983 under Les M. Bildy"), rewrite it.
 - Do NOT add a second sentence about our thesis, portfolio, adjacencies, or what we are building. The opener stands alone.
 - Tone: respectful, founder-to-founder, no sales jargon.
-
+${learnedHookText()}
 INPUTS:
 ${anchorsBlock}${discontinuedBlock}${oldProductsBlock}${productsBlock}${foundingYearBlock}
 CURRENT WEBSITE COPY:

@@ -9,7 +9,7 @@ import { getValidCredentials } from "./token-manager";
 import { getStoredSignature, saveStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
 import { importSignatureFromSentItems } from "./microsoft";
 import { asFeature, trackedCreate } from "./model-cost";
-import { recordFinal, refreshLearnedRules } from "./draft-learning";
+import { freezeDraft, hookOfBody, recordDraft, recordFinal, recordHookRejection, refreshLearnedRules } from "./draft-learning";
 import { applyLearnedSwaps } from "./email-words";
 import { recipientTimeZone, planSendSlots } from "./send-slots";
 import { currentWeekStart, type WeeklyOutreachItem } from "./weekly-outreach";
@@ -184,6 +184,13 @@ export async function updateSend(id: string, patch: Partial<E1Send>): Promise<E1
     .single();
   if (error) throw new Error(error.message);
   const row = data as E1Send;
+  // Text edits in the queue (Seb's, a re-researched hook, a new restaurant)
+  // are copied to the Weekly Outreach draft. Otherwise the next "Check this
+  // week's E1s" saw a different draft there, took the row as re-sourced and
+  // put the old text back.
+  if ((patch.subject !== undefined || patch.body !== undefined) && row.weekly_outreach_id && row.body) {
+    await getSupabaseAdmin().from("weekly_outreach").update({ draft: weeklyDraftOf(row) }).eq("id", row.weekly_outreach_id).then(() => null, () => null);
+  }
   // Weekly Outreach mirrors the outcome: sent once the E1 is scheduled or
   // enrolled, back to draft_ready if it is cancelled or rejected after that.
   if (patch.status && row.weekly_outreach_id) {
@@ -212,6 +219,11 @@ export function isRalphRow(notes: string | null | undefined): boolean {
 export function withHeadOfOps(body: string | null, notes: string | null | undefined): string | null {
   if (!body || !isRalphRow(notes) || /head of operations/i.test(body)) return body;
   return body.replace(/(I will be near [^.\n]*? in the \w+ week of [A-Z][a-z]+)/, "$1 alongside our Head of Operations");
+}
+
+/** The row's text as Weekly Outreach stores a draft ("subject\n\nbody"). */
+export function weeklyDraftOf(row: { subject: string | null; body: string | null }): string {
+  return [row.subject, row.body].filter((x) => x && x.trim()).join("\n\n");
 }
 
 /** Split the Weekly Outreach draft ("subject\n\nbody") back into its parts. */
@@ -273,6 +285,8 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
       })
       .eq("id", prev.id);
     if (updErr) throw new Error(updErr.message);
+    // Re-sourced: this is a new first draft from the tool, so learning starts over from it.
+    await recordDraft("e1", prev.id, weeklyDraftOf({ subject, body }), r.account_name);
     refreshed.push(prev.id);
   }
 
@@ -325,7 +339,14 @@ export async function createSendsForWeek(weekStart = currentWeekStart()): Promis
       .select("id")
       .single();
     if (insErr) throw new Error(insErr.message);
-    created.push((data as { id: string }).id);
+    const newId = (data as { id: string }).id;
+    // The first draft as the queue shows it, saved once: every later change
+    // (Research hook, rewrites, restaurant) is Seb's, for the Sunday review.
+    await freezeDraft("e1", newId, weeklyDraftOf({ subject, body }), r.account_name);
+    // A learned word fix changed the text: Weekly Outreach gets the same text,
+    // so the next check does not mistake the row for a re-sourced one.
+    if (body !== learned) await db.from("weekly_outreach").update({ draft: weeklyDraftOf({ subject, body }) }).eq("id", r.id).then(() => null, () => null);
+    created.push(newId);
   }
   return [...refreshed, ...recheck, ...created];
 }
@@ -660,7 +681,9 @@ export async function rebuildForSequence(id: string): Promise<{ rebuilt: boolean
   if (send.weekly_outreach_id) {
     await getSupabaseAdmin().from("weekly_outreach").update({ draft, group_name: group, industry: mainGroup, status: "draft_ready" }).eq("id", send.weekly_outreach_id).then(() => null, () => null);
   }
-  await updateSend(id, { group_name: group, subject: pe.subject ?? send.subject, body: pe.body, hook: hookInfoFrom(rebuilt), restaurant_options: (rebuilt.restaurants ?? []).map((x) => ({ name: x.name, description: x.description ?? "" })) });
+  const saved = await updateSend(id, { group_name: group, subject: pe.subject ?? send.subject, body: pe.body, hook: hookInfoFrom(rebuilt), restaurant_options: (rebuilt.restaurants ?? []).map((x) => ({ name: x.name, description: x.description ?? "" })) });
+  // A different group's template is a new first draft, not Seb's edit.
+  await recordDraft("e1", id, weeklyDraftOf(saved), send.account_name);
   return { rebuilt: true, note: null };
 }
 
@@ -727,6 +750,8 @@ export async function rehookSend(id: string): Promise<E1Send> {
   } else {
     body = body.replace(/^[^\n.]*going back to[^\n]*?\./m, newHook);
   }
+  // The old hook was not good enough: logged for the Sunday hook review.
+  await recordHookRejection(id, oldHook || hookOfBody(send.body ?? ""), newHook, send.account_name);
   // The model's old hook flag was about the sentence just replaced.
   await updateSend(id, { body, hook: hookInfoFrom(updated), review_flags: send.review_flags.filter((f) => f.kind !== "hook") });
   return recheckSend(id);

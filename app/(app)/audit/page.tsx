@@ -257,23 +257,23 @@ function OwnerSwitch() {
 
 type LearnedRuleView = {
   id: string;
-  kind: "swap" | "style";
+  kind: "swap" | "style" | "hook";
   summary: string;
   emails: number;
   evidence: Array<{ source: string; account: string | null; before: string; after: string }>;
   status: "proposed" | "active" | "rejected" | "removed";
 };
-const SOURCE_NAME: Record<string, string> = { e1: "E1", rce: "RCE", followup: "Follow-up", nudge: "Nudge", inbox: "Inbox reply" };
+const SOURCE_NAME: Record<string, string> = { e1: "E1", rce: "RCE", followup: "Follow-up", nudge: "Nudge", inbox: "Inbox reply", hook: "Hook" };
 
 /** Learning from Seb's edits (lib/draft-learning.ts): proposals to accept or reject, active rules to remove. */
 function LearnedRules() {
-  const [data, setData] = useState<{ rules: LearnedRuleView[]; paused: boolean; captured: number | null } | null>(null);
+  const [data, setData] = useState<{ rules: LearnedRuleView[]; paused: boolean; captured: number | null; bySource: Record<string, number>; hooks: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const load = useCallback(() => {
     fetch("/api/draft-learning")
       .then((r) => r.json())
-      .then((d) => setData({ rules: d.rules ?? [], paused: Boolean(d.settings?.paused), captured: d.capturedThisWeek ?? null }))
+      .then((d) => setData({ rules: d.rules ?? [], paused: Boolean(d.settings?.paused), captured: d.capturedThisWeek ?? null, bySource: d.bySource ?? {}, hooks: d.hookRejections ?? 0 }))
       .catch(() => setData(null));
   }, []);
   useEffect(() => load(), [load]);
@@ -285,7 +285,10 @@ function LearnedRules() {
       const res = await fetch("/api/draft-learning", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error ?? "Failed");
-      if (d.run) setNote(d.run.note ?? `${d.run.edited} edited emails reviewed, ${d.run.proposed} new proposal${d.run.proposed === 1 ? "" : "s"}.`);
+      if (d.run) {
+        const r = d.run as { edited: number; proposed: number; hooks?: { replaced: number }; note?: string };
+        setNote(`${r.edited} edited emails and ${r.hooks?.replaced ?? 0} replaced hooks reviewed, ${r.proposed} new proposal${r.proposed === 1 ? "" : "s"}.${r.note ? ` ${r.note}` : ""}`);
+      }
       load();
     } catch (e) {
       setNote(e instanceof Error ? e.message : "Failed");
@@ -303,7 +306,7 @@ function LearnedRules() {
           <p className="text-[13px] text-ink-secondary">
             {data.captured === null
               ? "Needs the one-time database step (supabase/2026-11-reply-search.sql)."
-              : `${data.captured} email${data.captured === 1 ? "" : "s"} sent through the tool this week. Reviewed Sundays${data.paused ? " (paused)" : ""}; nothing changes until you accept.`}
+              : `This week: ${Object.entries(data.bySource).map(([k, n]) => `${n} ${SOURCE_NAME[k] ?? k}`).join(", ") || "no emails"}${data.hooks ? `, ${data.hooks} hook${data.hooks === 1 ? "" : "s"} re-researched` : ""}. Reviewed Sundays${data.paused ? " (paused)" : ""}; nothing changes until you accept.`}
           </p>
           {note ? <p className="mt-1 text-[13px] text-ink-muted">{note}</p> : null}
         </div>
@@ -317,7 +320,7 @@ function LearnedRules() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <p className="text-[14px] text-ink">{r.summary}</p>
-              <p className="text-[12px] text-ink-muted">Seen in {r.emails} emails{r.kind === "swap" ? " · applied as a word fix on every draft" : " · added to the drafting instructions"}</p>
+              <p className="text-[12px] text-ink-muted">Seen in {r.emails} emails{r.kind === "swap" ? " · applied as a word fix on every draft" : r.kind === "hook" ? " · added to Sourcing's hook instructions" : " · added to the drafting instructions"}</p>
               <ul className="mt-1 space-y-0.5">
                 {r.evidence.slice(0, 2).map((e, i) => (
                   <li key={i} className="text-[12px] text-ink-secondary">

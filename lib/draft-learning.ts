@@ -9,7 +9,9 @@ import { setLearnedRules, type LearnedSwap } from "./email-words";
  * 1. Capture: every email the tool writes is stored with what Seb actually
  *    sent (draft_edits). Best effort: capture never blocks a send.
  * 2. Weekly review (Sunday): the week's edited emails are compared word by
- *    word, and repeated changes become PROPOSED rules, each with the edits
+ *    word, and the hooks Seb replaced in the Send queue (rewrote or threw out
+ *    with "Research hook") are compared with the ones he kept. Repeated
+ *    changes become PROPOSED rules, each with the edits
  *    that back it. A proposal needs the same change in at least 3 different
  *    emails, checked in code against the real text, not the model's say-so.
  * 3. Seb accepts or rejects each one on the Weekly check page. Nothing
@@ -18,8 +20,9 @@ import { setLearnedRules, type LearnedSwap } from "./email-words";
  *    prompts. Rejected proposals never come back. Every rule can be removed.
  */
 
-export type DraftSource = "e1" | "rce" | "followup" | "nudge" | "inbox";
-export const SOURCE_LABEL: Record<DraftSource, string> = { e1: "E1", rce: "RCE", followup: "Follow-up", nudge: "Nudge", inbox: "Inbox reply" };
+/** "hook": a hook Seb threw out with "Research hook" in the Send queue (original = the rejected hook, final = what replaced it). */
+export type DraftSource = "e1" | "rce" | "followup" | "nudge" | "inbox" | "hook";
+export const SOURCE_LABEL: Record<DraftSource, string> = { e1: "E1", rce: "RCE", followup: "Follow-up", nudge: "Nudge", inbox: "Inbox reply", hook: "Hook" };
 
 /** Same change in at least this many different emails before it is proposed. */
 export const MIN_EMAILS = 3;
@@ -38,6 +41,35 @@ export async function recordDraft(source: DraftSource, refId: string | null | un
       .upsert({ source, ref_id: refId, account_name: accountName ?? null, original: original.trim(), final: null, sent_at: null, drafted_at: new Date().toISOString() }, { onConflict: "source,ref_id" });
   } catch {
     /* table not created yet, or a hiccup: learning just skips this one */
+  }
+}
+
+/**
+ * The tool's first draft, saved once and never overwritten (E1s, when the row
+ * lands in the Send queue). Later re-research, rewrites and restaurant
+ * changes all count as Seb's edits. Never throws.
+ */
+export async function freezeDraft(source: DraftSource, refId: string | null | undefined, original: string | null | undefined, accountName?: string | null): Promise<void> {
+  if (!refId || !original?.trim()) return;
+  try {
+    await getSupabaseAdmin()
+      .from("draft_edits")
+      .upsert({ source, ref_id: refId, account_name: accountName ?? null, original: original.trim(), final: null, sent_at: null, drafted_at: new Date().toISOString() }, { onConflict: "source,ref_id", ignoreDuplicates: true });
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Seb clicked "Research hook": the old hook was not good enough. Logged for the Sunday hook review. Never throws. */
+export async function recordHookRejection(sendId: string, rejected: string | null | undefined, replacement: string | null | undefined, accountName?: string | null): Promise<void> {
+  if (!sendId || !rejected?.trim()) return;
+  try {
+    const now = new Date().toISOString();
+    await getSupabaseAdmin()
+      .from("draft_edits")
+      .insert({ source: "hook", ref_id: `${sendId}:${Date.now()}`, account_name: accountName ?? null, original: rejected.trim(), final: replacement?.trim() || "", drafted_at: now, sent_at: now });
+  } catch {
+    /* best effort */
   }
 }
 
@@ -114,11 +146,12 @@ export function wasEdited(original: string, final: string): boolean {
 export type RuleEvidence = { source: DraftSource; account: string | null; before: string; after: string };
 export type LearnedRule = {
   id: string;
-  kind: "swap" | "style";
+  /** hook: a rule for Sourcing's hook writer, learned from replaced hooks. */
+  kind: "swap" | "style" | "hook";
   /** swap: replace `from` with `to` ("" = delete). */
   from?: string;
   to?: string;
-  /** style: one plain sentence for the prompts. */
+  /** style / hook: one plain sentence for the prompts. */
   rule?: string;
   /** Plain-English summary for the review card. */
   summary: string;
@@ -172,6 +205,7 @@ export async function refreshLearnedRules(force = false): Promise<void> {
     setLearnedRules(
       active.filter((r) => r.kind === "swap" && r.from).map((r) => ({ from: r.from!, to: r.to ?? "" }) as LearnedSwap),
       active.filter((r) => r.kind === "style" && r.rule).map((r) => r.rule!),
+      active.filter((r) => r.kind === "hook" && r.rule).map((r) => r.rule!),
     );
     loadedAt = Date.now();
   } catch {
@@ -290,9 +324,127 @@ export function verifyProposals(raw: unknown, pairs: Pair[], existing: LearnedRu
   return out;
 }
 
-export type LearningRun = { paused?: boolean; emails: number; edited: number; proposed: number; note?: string };
+// ── Hooks ───────────────────────────────────────────────────────────────────
 
-/** Review the last `days` days of sent emails and add proposals. One model call. */
+/**
+ * The opening sentence (the hook) of an E1 stored as "subject\n\nbody": the
+ * text before "My name is", or the first sentence. Pure.
+ */
+export function hookOf(email: string): string {
+  const t = email.replace(/\r/g, "").trim();
+  const i = t.indexOf("\n\n");
+  return hookOfBody(i >= 0 ? t.slice(i + 2) : t);
+}
+
+/** The hook of an email body (no subject line). Pure. */
+export function hookOfBody(text: string): string {
+  let body = text.replace(/\r/g, "").trim();
+  body = body.replace(/^(hi|hello|dear)\b[^\n,]{0,60},\s*/i, "");
+  const cut = body.search(/\s*\bMy name is\b/);
+  const head = cut > 0 ? body.slice(0, cut) : (body.split(/(?<=[.!?])\s+/)[0] ?? "");
+  return head.replace(/\s+/g, " ").trim();
+}
+
+export type HookCase = { before: string; after: string; account: string | null; ref: string };
+
+/**
+ * Hooks Seb kept as written, and hooks he replaced (rewrote, or threw out with
+ * "Research hook"), each replaced hook once. Pure.
+ */
+export function collectHooks(pairs: Pair[]): { kept: string[]; replaced: HookCase[] } {
+  const kept: string[] = [];
+  const replaced: HookCase[] = [];
+  const seen = new Set<string>();
+  const add = (c: HookCase) => {
+    const k = norm(c.before);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    replaced.push(c);
+  };
+  // E1s first: their "after" is the hook that actually went out.
+  for (const p of pairs) {
+    if (p.source !== "e1") continue;
+    const a = hookOf(p.original);
+    const b = hookOf(p.final);
+    if (!a) continue;
+    if (norm(a) === norm(b)) kept.push(a);
+    else add({ before: a, after: b, account: p.account_name, ref: p.ref_id });
+  }
+  // Then every hook thrown out on the way (a second "Research hook" included).
+  for (const p of pairs) if (p.source === "hook") add({ before: p.original, after: p.final, account: p.account_name, ref: p.ref_id });
+  return { kept, replaced };
+}
+
+const HOOK_SYSTEM = `You study the opening sentences ("hooks") of cold acquisition emails that Sebastian (Seb) Alvarez's tool wrote, and what Seb did with them in his Send queue: kept them, rewrote them, or threw them out and asked for new research.
+
+Find REPEATED reasons he replaces hooks: what the replaced hooks have in common that the kept hooks and his own versions do not. Ignore one-off facts about a single company (a wrong product name, a wrong year for that company).
+
+Each rule is one plain instruction for the model that writes hooks, e.g. "Name the product and stop; never add a clause describing what it does" or "Never include a month or year". Do not repeat these rules the writer already has: the "I have studied X going back to..." formula, no founding year or founder as the anchor, one sentence under 25 words, no hype words.
+
+Back every rule with at least 3 REPLACED hooks that show it, by number. Never cite a kept hook.
+
+Answer with JSON only: {"rules":[{"rule":string,"summary":string,"evidence":[number]}]}. "summary" is one short plain sentence for Seb, e.g. "You cut the description after the product name." Return {"rules":[]} if nothing repeats.`;
+
+function hooksPrompt(h: { kept: string[]; replaced: HookCase[] }): string {
+  const rep = h.replaced
+    .map((c, i) => `R${i + 1}${c.account ? ` (${c.account})` : ""}\n  tool wrote: ${c.before}\n  ${c.after ? `went out instead: ${c.after}` : "Seb asked for new research"}`)
+    .join("\n");
+  const kept = h.kept.map((k) => `- ${k}`).join("\n");
+  return `REPLACED HOOKS (cite these by number, R1 = 1):\n${rep}\n\nKEPT HOOKS (sent exactly as the tool wrote them):\n${kept || "(none)"}`;
+}
+
+/** Keep only hook rules backed by at least MIN_EMAILS different replaced hooks. Pure. */
+export function verifyHookProposals(raw: unknown, replaced: HookCase[], existing: LearnedRule[], now: string): LearnedRule[] {
+  const list = (raw as { rules?: unknown[] } | null)?.rules;
+  if (!Array.isArray(list)) return [];
+  const seen = new Set(existing.filter((r) => r.kind === "hook").map((r) => norm(r.rule ?? "")));
+  const out: LearnedRule[] = [];
+  for (const item of list) {
+    const r = item as { rule?: string; summary?: string; evidence?: unknown[] };
+    const rule = (r.rule ?? "").trim();
+    if (!rule || rule.length > 220 || seen.has(norm(rule))) continue;
+    const cases = Array.from(new Set((r.evidence ?? []).filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= replaced.length)))
+      .map((n) => replaced[n - 1]);
+    const emails = new Set(cases.map((c) => c.ref.split(":")[0])).size;
+    if (emails < MIN_EMAILS) continue;
+    seen.add(norm(rule));
+    out.push({
+      id: `hook-${now.slice(0, 10)}-${out.length + 1}-${Math.random().toString(36).slice(2, 7)}`,
+      kind: "hook",
+      rule,
+      summary: (r.summary ?? "").trim().slice(0, 200) || rule,
+      emails,
+      evidence: cases.slice(0, 3).map((c) => ({ source: "hook" as const, account: c.account, before: c.before.slice(0, 200), after: c.after.slice(0, 200) })),
+      status: "proposed",
+      createdAt: now,
+    });
+    if (out.length >= MAX_PROPOSALS) break;
+  }
+  return out;
+}
+
+// ── Weekly run ──────────────────────────────────────────────────────────────
+
+export type LearningRun = {
+  paused?: boolean;
+  emails: number;
+  edited: number;
+  proposed: number;
+  /** Per module: emails that went out, and how many Seb changed. */
+  bySource?: Record<string, { sent: number; edited: number }>;
+  hooks?: { kept: number; replaced: number; proposed: number };
+  note?: string;
+};
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+  } catch {
+    return null;
+  }
+}
+
+/** Review the last `days` days of sent emails and add proposals. Up to two model calls (wording, hooks). */
 export async function runDraftLearning(days = 7, now = new Date()): Promise<LearningRun> {
   if ((await getLearningSettings()).paused) return { paused: true, emails: 0, edited: 0, proposed: 0 };
   const since = new Date(now.getTime() - days * 86_400_000).toISOString();
@@ -300,29 +452,96 @@ export async function runDraftLearning(days = 7, now = new Date()): Promise<Lear
     .from("draft_edits")
     .select("source, ref_id, account_name, original, final")
     .gte("sent_at", since)
-    .limit(400);
+    .limit(600);
   if (error) throw new Error(/draft_edits|relation|schema cache/.test(error.message) ? "The learning table is missing. Run supabase/2026-11-reply-search.sql in Supabase once." : error.message);
   const all = ((data ?? []) as Array<Pair & { final: string | null }>).filter((p): p is Pair => typeof p.final === "string");
-  const edited = all.filter((p) => wasEdited(p.original, p.final)).slice(0, 60);
-  const run: LearningRun = { emails: all.length, edited: edited.length, proposed: 0 };
-  if (edited.length < MIN_EMAILS) return { ...run, note: `Only ${edited.length} edited emails this week, nothing to learn yet.` };
+  const emails = all.filter((p) => p.source !== "hook");
+  const bySource: Record<string, { sent: number; edited: number }> = {};
+  for (const p of emails) {
+    const b = (bySource[p.source] ??= { sent: 0, edited: 0 });
+    b.sent++;
+    if (wasEdited(p.original, p.final)) b.edited++;
+  }
+  const edited = emails.filter((p) => wasEdited(p.original, p.final)).slice(0, 60);
+  const hooks = collectHooks(all);
+  hooks.replaced = hooks.replaced.slice(0, 40);
+  hooks.kept = hooks.kept.slice(0, 30);
+  const run: LearningRun = { emails: emails.length, edited: edited.length, proposed: 0, bySource, hooks: { kept: hooks.kept.length, replaced: hooks.replaced.length, proposed: 0 } };
+  const notes: string[] = [];
   const client = getAnthropicClient();
   if (!client) return { ...run, note: "No AI key." };
-  const res = await trackedCreate(client, "draft_learning", {
-    model: MODELS.drafting,
-    max_tokens: 3000,
-    system: LEARN_SYSTEM,
-    messages: [{ role: "user", content: pairsPrompt(edited) }],
-  });
-  const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("");
-  let parsed: unknown = null;
-  try {
-    parsed = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
-  } catch {
-    return { ...run, note: "The review came back unreadable; it runs again next week." };
-  }
   const existing = await listLearnedRules();
-  const proposals = verifyProposals(parsed, edited, existing, now.toISOString());
-  if (proposals.length > 0) await updateRules((rules) => [...rules, ...proposals]);
-  return { ...run, proposed: proposals.length };
+  const nowIso = now.toISOString();
+
+  // Wording habits.
+  if (edited.length < MIN_EMAILS) {
+    notes.push(`Only ${edited.length} edited emails this week, nothing to learn from wording yet.`);
+  } else {
+    const res = await trackedCreate(client, "draft_learning", { model: MODELS.drafting, max_tokens: 3000, system: LEARN_SYSTEM, messages: [{ role: "user", content: pairsPrompt(edited) }] });
+    const parsed = parseJson(res.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
+    if (!parsed) notes.push("The wording review came back unreadable; it runs again next week.");
+    const proposals = parsed ? verifyProposals(parsed, edited, existing, nowIso) : [];
+    if (proposals.length > 0) await updateRules((rules) => [...rules, ...proposals]);
+    run.proposed += proposals.length;
+  }
+
+  // Hooks: what the replaced ones have in common.
+  if (hooks.replaced.length < MIN_EMAILS) {
+    notes.push(`Only ${hooks.replaced.length} replaced hooks, nothing to learn about hooks yet.`);
+  } else {
+    const res = await trackedCreate(client, "draft_learning", { model: MODELS.drafting, max_tokens: 2000, system: HOOK_SYSTEM, messages: [{ role: "user", content: hooksPrompt(hooks) }] });
+    const parsed = parseJson(res.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
+    if (!parsed) notes.push("The hook review came back unreadable; it runs again next week.");
+    const proposals = parsed ? verifyHookProposals(parsed, hooks.replaced, existing, nowIso) : [];
+    if (proposals.length > 0) await updateRules((rules) => [...rules, ...proposals]);
+    run.proposed += proposals.length;
+    run.hooks!.proposed = proposals.length;
+  }
+  return notes.length ? { ...run, note: notes.join(" ") } : run;
+}
+
+// ── One-off: Send queue edits from before first drafts were saved ───────────
+
+type QueueRow = { id: string; weekly_outreach_id: string | null; account_name: string | null; subject: string | null; body: string | null; scheduled_for: string | null; updated_at: string };
+
+/** The learning record for a queue row that already went out: started from the Weekly Outreach draft, ended as scheduled. Pure. */
+export function pairFromQueueRow(row: QueueRow, weeklyDraft: string | null): { source: "e1"; ref_id: string; account_name: string | null; original: string; final: string; sent_at: string } | null {
+  const final = `${row.subject ?? ""}\n\n${row.body ?? ""}`.trim();
+  const original = (weeklyDraft ?? "").replace(/\r/g, "").trim();
+  if (!row.body?.trim() || !original || !row.subject) return null;
+  return { source: "e1", ref_id: row.id, account_name: row.account_name, original, final, sent_at: row.scheduled_for ?? row.updated_at };
+}
+
+/**
+ * E1s that went out before the Send queue saved first drafts: adds each one
+ * (Weekly Outreach draft vs what was scheduled) unless it already has a
+ * record. Only writes to the learning table.
+ */
+export async function backfillQueueEdits(days = 21, now = new Date()): Promise<{ added: number; skipped: number }> {
+  const supabase = getSupabaseAdmin();
+  const since = new Date(now.getTime() - days * 86_400_000).toISOString();
+  const { data: rows, error } = await supabase
+    .from("e1_sends")
+    .select("id, weekly_outreach_id, account_name, subject, body, scheduled_for, updated_at")
+    .in("status", ["scheduled", "sent"])
+    .gte("created_at", since)
+    .limit(500);
+  if (error) throw new Error(error.message);
+  const queue = (rows ?? []) as QueueRow[];
+  if (queue.length === 0) return { added: 0, skipped: 0 };
+  const { data: known } = await supabase.from("draft_edits").select("ref_id").eq("source", "e1").gte("drafted_at", new Date(now.getTime() - (days + 30) * 86_400_000).toISOString()).limit(2000);
+  const have = new Set(((known ?? []) as Array<{ ref_id: string }>).map((r) => r.ref_id));
+  const todo = queue.filter((r) => !have.has(r.id) && r.weekly_outreach_id);
+  const drafts = new Map<string, string | null>();
+  const ids = todo.map((r) => r.weekly_outreach_id!);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await supabase.from("weekly_outreach").select("id, draft").in("id", ids.slice(i, i + 100));
+    for (const w of (data ?? []) as Array<{ id: string; draft: string | null }>) drafts.set(w.id, w.draft);
+  }
+  const records = todo.map((r) => pairFromQueueRow(r, drafts.get(r.weekly_outreach_id!) ?? null)).filter((x): x is NonNullable<typeof x> => x !== null);
+  if (records.length > 0) {
+    const { error: insErr } = await supabase.from("draft_edits").insert(records.map((r) => ({ ...r, drafted_at: r.sent_at })));
+    if (insErr) throw new Error(insErr.message);
+  }
+  return { added: records.length, skipped: queue.length - records.length };
 }

@@ -14,7 +14,11 @@ function table(name: string) {
     limit: () => api,
     maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
     insert: async (r: Row) => { db[name].push({ ...r, updated_at: `t${++clock}` }); return { error: null }; },
-    upsert: async (r: Row) => { db[name] = db[name].filter((x) => !(x.source === r.source && x.ref_id === r.ref_id)); db[name].push(r); return { error: null }; },
+    upsert: async (r: Row, opts?: { ignoreDuplicates?: boolean }) => {
+      const dup = db[name].some((x) => x.source === r.source && x.ref_id === r.ref_id);
+      if (dup && opts?.ignoreDuplicates) return { error: null };
+      db[name] = db[name].filter((x) => !(x.source === r.source && x.ref_id === r.ref_id)); db[name].push(r); return { error: null };
+    },
     update: (p: Row) => { patch = p; return api; },
     then: (resolve: (v: unknown) => void) => {
       if (patch) { const hit = rows(); hit.forEach((r) => Object.assign(r, patch, name === "app_settings" ? { updated_at: `t${++clock}` } : {})); resolve({ data: hit.map((r) => ({ key: r.key })), error: null }); }
@@ -25,13 +29,15 @@ function table(name: string) {
 }
 vi.mock("@/lib/supabase", () => ({ getSupabaseAdmin: () => ({ from: (n: string) => table(n) }) }));
 let modelAnswer = "";
+const answers: string[] = [];
+const calls: string[] = [];
 vi.mock("@/lib/anthropic", () => ({ getAnthropicClient: () => ({}), MODELS: { drafting: "claude-sonnet-5-5", extraction: "claude-haiku-5-5" } }));
-vi.mock("@/lib/model-cost", () => ({ trackedCreate: async () => ({ content: [{ type: "text", text: modelAnswer }] }) }));
+vi.mock("@/lib/model-cost", () => ({ trackedCreate: async (_c: unknown, _f: string, req: { system: string }) => { calls.push(req.system); return { content: [{ type: "text", text: answers.length ? answers.shift()! : modelAnswer }] }; } }));
 
-import { decideRule, listLearnedRules, recordDraft, recordFinal, runDraftLearning, verifyProposals, wordDiff, saveLearningSettings } from "@/lib/draft-learning";
-import { applyLearnedSwaps, fixEmailWords, learnedStyleText, setLearnedRules } from "@/lib/email-words";
+import { collectHooks, decideRule, freezeDraft, hookOf, listLearnedRules, pairFromQueueRow, recordDraft, recordFinal, recordHookRejection, runDraftLearning, verifyHookProposals, verifyProposals, wordDiff, saveLearningSettings } from "@/lib/draft-learning";
+import { applyLearnedSwaps, fixEmailWords, learnedHookText, learnedStyleText, setLearnedRules } from "@/lib/email-words";
 
-beforeEach(() => { db.draft_edits = []; db.app_settings = []; setLearnedRules([], []); });
+beforeEach(() => { db.draft_edits = []; db.app_settings = []; setLearnedRules([], []); answers.length = 0; calls.length = 0; });
 
 const pair = (i: number, original: string, final: string) => ({ source: "rce" as const, ref_id: `r${i}`, account_name: `Co ${i}`, original, final });
 
@@ -124,5 +130,90 @@ describe("the whole loop, with stand-ins", () => {
     expect((await runDraftLearning(7)).proposed).toBe(0);
     await saveLearningSettings(true);
     expect((await runDraftLearning(7)).paused).toBe(true);
+  });
+});
+
+// ── Send queue: first drafts and hooks (Nov 2026) ───────────────────────────
+
+const e1 = (hook: string, rest = "My name is Sebastian, and I lead investment efforts at Valstone.") => `Fancett's Nov 4: Valstone\n\n${hook} ${rest}\n\nI will be near Cambridge in the first week of November.`;
+
+describe("first draft is saved once", () => {
+  it("later saves never overwrite it, and the sent version is stored next to it", async () => {
+    await freezeDraft("e1", "s1", e1("I have studied Acme going back to the launch of Acme LINK, the mobile tool, in March 2019."), "Acme");
+    // Re-research rewrote the draft; a second freeze must not move the starting point.
+    await freezeDraft("e1", "s1", e1("I have studied Acme going back to the days operating as Acme Systems."), "Acme");
+    await recordFinal("e1", "s1", e1("I have studied Acme going back to the launch of Acme LINK."));
+    expect(db.draft_edits).toHaveLength(1);
+    expect(String(db.draft_edits[0].original)).toContain("the mobile tool, in March 2019");
+    expect(String(db.draft_edits[0].final)).toContain("launch of Acme LINK. My name");
+  });
+  it("recordDraft (a re-sourced or rebuilt draft) does replace it", async () => {
+    await freezeDraft("e1", "s1", "old", null);
+    await recordDraft("e1", "s1", "new", null);
+    expect(db.draft_edits.map((r) => r.original)).toEqual(["new"]);
+  });
+});
+
+describe("hooks", () => {
+  it("hookOf takes the sentence before 'My name is', with or without a greeting", () => {
+    expect(hookOf(e1("I have studied Acme going back to the release of ArcMiner."))).toBe("I have studied Acme going back to the release of ArcMiner.");
+    expect(hookOf("Subj\n\nHi Mat,\n\nI have followed Herbst going back to the release of Herbst Attendance. We are building...")).toBe("I have followed Herbst going back to the release of Herbst Attendance.");
+  });
+  it("collectHooks: kept vs replaced, re-researched hooks counted once", () => {
+    const pairs = [
+      { source: "e1" as const, ref_id: "a", account_name: "A", original: e1("I have studied A going back to X, the tool, in 2019."), final: e1("I have studied A going back to X.") },
+      { source: "e1" as const, ref_id: "b", account_name: "B", original: e1("I have studied B going back to Y."), final: e1("I have studied B going back to Y.") },
+      { source: "hook" as const, ref_id: "a:1", account_name: "A", original: "I have studied A going back to X, the tool, in 2019.", final: "I have studied A going back to Z." },
+      { source: "hook" as const, ref_id: "c:1", account_name: "C", original: "I have studied C going back to the founding.", final: "" },
+    ];
+    const h = collectHooks(pairs);
+    expect(h.kept).toEqual(["I have studied B going back to Y."]);
+    expect(h.replaced.map((c) => [c.ref, c.after])).toEqual([["a", "I have studied A going back to X."], ["c:1", ""]]);
+  });
+  it("a hook rule needs 3 different replaced hooks, cited by valid number", () => {
+    const replaced = ["a", "b", "c", "a:2"].map((ref) => ({ before: `hook ${ref}`, after: "", account: ref, ref }));
+    const now = "2026-11-22T22:00:00Z";
+    const raw = { rules: [
+      { rule: "Name the product and stop", summary: "You cut the description after the product name.", evidence: [1, 2, 3] },
+      { rule: "Never use a year", summary: "x", evidence: [1, 4, 4, 9] }, // a and a:2 are the same email, 9 does not exist
+    ] };
+    const out = verifyHookProposals(raw, replaced, [], now);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ kind: "hook", rule: "Name the product and stop", emails: 3, status: "proposed" });
+    // Already proposed or decided: not proposed again.
+    expect(verifyHookProposals(raw, replaced, out, now)).toHaveLength(0);
+  });
+  it("Sunday run: hook review proposes; accepting puts the rule into the hook writer's instructions", async () => {
+    const hooks = [
+      ["Acme", "I have studied Acme going back to the launch of Acme LINK, the mobile business intelligence tool, in March 2019.", "I have studied Acme going back to the launch of Acme LINK."],
+      ["Bolt", "I have studied Bolt going back to the release of BoltPro, its scheduling module for crews.", "I have studied Bolt going back to the release of BoltPro."],
+      ["Cora", "I have studied Cora going back to the days of CoraNet, the dial-up portal for dealers.", "I have studied Cora going back to the days of CoraNet."],
+      ["Dyn", "I have studied Dyn going back to the release of DynMap.", "I have studied Dyn going back to the release of DynMap."],
+    ];
+    for (const [i, [acc, before, after]] of hooks.entries()) {
+      await freezeDraft("e1", `s${i}`, e1(before), acc);
+      await recordFinal("e1", `s${i}`, e1(after));
+    }
+    await recordHookRejection("s9", "I have studied Eon going back to the founding in 1983.", "I have studied Eon going back to the days operating as Eon Labs.", "Eon");
+    answers.push(JSON.stringify({ rules: [] })); // wording review
+    answers.push(JSON.stringify({ rules: [{ rule: "Name the product or old name and stop; never add a clause describing it", summary: "You cut the description after the product name.", evidence: [1, 2, 3] }] }));
+    const run = await runDraftLearning(7);
+    expect(calls).toHaveLength(2);
+    expect(run.bySource).toEqual({ e1: { sent: 4, edited: 3 } });
+    expect(run.hooks).toEqual({ kept: 1, replaced: 4, proposed: 1 });
+    const rule = (await listLearnedRules()).find((r) => r.kind === "hook")!;
+    expect(learnedHookText()).toBe("");
+    await decideRule(rule.id, "accept");
+    expect(learnedHookText()).toContain("- Name the product or old name and stop; never add a clause describing it.");
+    expect(learnedStyleText()).toBe(""); // a hook rule never reaches the email-drafting prompts
+  });
+});
+
+describe("one-off import of queue edits", () => {
+  it("pairs the Weekly Outreach draft with what was scheduled, and skips rows with nothing to compare", () => {
+    const row = { id: "q1", weekly_outreach_id: "w1", account_name: "Acme", subject: "Xochi Dec 2: Valstone", body: "I have studied Acme.", scheduled_for: "2026-11-10T14:00:00Z", updated_at: "2026-11-10T13:00:00Z" };
+    expect(pairFromQueueRow(row, "Xochi Dec 2: Valstone\r\n\r\nI have studied Acme going back to 2019.")).toEqual({ source: "e1", ref_id: "q1", account_name: "Acme", original: "Xochi Dec 2: Valstone\n\nI have studied Acme going back to 2019.", final: "Xochi Dec 2: Valstone\n\nI have studied Acme.", sent_at: "2026-11-10T14:00:00Z" });
+    expect(pairFromQueueRow(row, null)).toBeNull();
+    expect(pairFromQueueRow({ ...row, body: null }, "x")).toBeNull();
   });
 });
