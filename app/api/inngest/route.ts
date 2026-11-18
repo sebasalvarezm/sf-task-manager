@@ -9,7 +9,7 @@ import { prepJob } from "@/lib/inngest/functions/prep";
 import { accountsEnrichJob } from "@/lib/inngest/functions/accounts-enrich";
 import { granolaSyncJob } from "@/lib/inngest/functions/granola-sync";
 import { outreachScreenJob } from "@/lib/inngest/functions/outreach-screen";
-import { outcomesBuildJob } from "@/lib/inngest/functions/outcomes-build";
+import { outcomesBuildJob, outcomesWeeklyJob } from "@/lib/inngest/functions/outcomes-build";
 import { e1PrepareJob } from "@/lib/inngest/functions/e1-prepare";
 import { e1ScheduleJob } from "@/lib/inngest/functions/e1-schedule";
 import { e1FillStepJob } from "@/lib/inngest/functions/e1-fill-step";
@@ -35,6 +35,7 @@ export const { GET, POST, PUT } = serve({
     granolaSyncJob,
     outreachScreenJob,
     outcomesBuildJob,
+    outcomesWeeklyJob,
     e1PrepareJob,
     e1ScheduleJob,
     e1FillStepJob,

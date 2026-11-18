@@ -3,7 +3,7 @@ import { isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
-import { allowNewContact, pruneResolvedFlags, restoreSend, addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
+import { allowNewContact, applyFirstPass, undoFirstPass, pruneResolvedFlags, restoreSend, addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
 import { listSequences, type OutreachSequence } from "@/lib/outreach";
 import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
 
@@ -16,6 +16,7 @@ function platformSequences(all: OutreachSequence[]): OutreachSequence[] {
 import { currentWeekStart } from "@/lib/weekly-outreach";
 import { isVerifyConfigured } from "@/lib/email-verify";
 import { getValidCredentials } from "@/lib/token-manager";
+import { firstPassIds } from "@/lib/draft-learning";
 
 export const dynamic = "force-dynamic";
 // "rehook" runs the public-source research ladder inline: a few searches and a page read.
@@ -33,7 +34,8 @@ export async function GET(request: NextRequest) {
       runningJob(),
       getValidCredentials().catch(() => null),
     ]);
-    return NextResponse.json({ week, items, settings, sequences: platformSequences(sequences), job, verifierConfigured: isVerifyConfigured(), sfInstanceUrl: creds?.instance_url ?? null });
+    const passed = await firstPassIds(items.map((i) => i.id)).catch(() => new Set<string>());
+    return NextResponse.json({ week, items: items.map((i) => ({ ...i, first_pass: passed.has(i.id) })), settings, sequences: platformSequences(sequences), job, verifierConfigured: isVerifyConfigured(), sfInstanceUrl: creds?.instance_url ?? null });
   } catch (err) {
     return NextResponse.json({ error: friendly(err) }, { status: 500 });
   }
@@ -49,11 +51,13 @@ export async function GET(request: NextRequest) {
  *   cancel   { id }           undo a dry-run or scheduled send
  *   schedule { ids? }         schedule every approved row (or the given ones)
  *   settings { ...patch }     save settings (dryRun, sequenceMap, signatureText, reviewWithModel)
+ *   first_pass { id, subject?, body?, note, clearFlags? }  Claude's first pass from Cowork: text and a note only, no model call, never approves
+ *   undo_first_pass { id }    put the tool's draft back
  */
 export async function POST(request: NextRequest) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const body = (await request.json().catch(() => ({}))) as { action?: string; id?: string; ids?: string[]; week?: string; reason?: string } & Partial<SendSettings>;
+    const body = (await request.json().catch(() => ({}))) as { action?: string; id?: string; ids?: string[]; week?: string; reason?: string; subject?: string; body?: string; note?: string; clearFlags?: string[] } & Partial<SendSettings>;
     switch (body.action) {
       case "prepare": {
         const existing = await runningJob();
@@ -84,6 +88,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ item: await updateSend(row.id, { status_reason: "Resumed: the app is filling in step 1 and sending now." }) });
       }
       case "confirm": return NextResponse.json({ item: await confirmSent(need(body.id)) });
+      case "first_pass": return NextResponse.json({ item: await applyFirstPass(need(body.id), { subject: body.subject, body: body.body, note: body.note ?? "", clearFlags: body.clearFlags }) });
+      case "undo_first_pass": return NextResponse.json({ item: await undoFirstPass(need(body.id)) });
       case "allow_new_contact": return NextResponse.json({ item: await allowNewContact(need(body.id)) });
       case "schedule": {
         const existing = await runningJob();
@@ -99,8 +105,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ jobId: job.id, count: ids.length, dryRun: settings.dryRun, manualSend: settings.manualSend });
       }
       case "settings": {
-        const { action: _a, id: _i, ids: _s, week: _w, reason: _r, ...patch } = body;
-        void _a; void _i; void _s; void _w; void _r;
+        const { action: _a, id: _i, ids: _s, week: _w, reason: _r, subject: _su, body: _b, note: _n, clearFlags: _c, ...patch } = body;
+        void _a; void _i; void _s; void _w; void _r; void _su; void _b; void _n; void _c;
         return NextResponse.json({ settings: await saveSendSettings(patch) });
       }
       default:

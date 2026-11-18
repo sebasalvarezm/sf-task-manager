@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthenticated } from "@/lib/auth";
+import { isAdmin, isAuthenticated } from "@/lib/auth";
 import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { loadReport } from "@/lib/outcomes";
 import { sfQuery } from "@/lib/sf-query";
+import { decideFactor, loadFactorState, loadHistory, proposeFactor } from "@/lib/outcomes-factors-store";
+import { FLAG_FIELDS, NUMBER_FIELDS, TEXT_FIELDS, CONTROL_KEYS } from "@/lib/outcomes-factors";
+
+export const maxDuration = 300;
 
 export const dynamic = "force-dynamic";
 
@@ -18,17 +22,30 @@ export async function GET(request: NextRequest) {
     if (new URL(request.url).searchParams.get("diag")) {
       return NextResponse.json({ report: report ? { sends: report.sends, matchedToOutreach: report.matchedToOutreach, replies: report.replies } : null, job, diag: await diagnostics() });
     }
-    return NextResponse.json({ report, job });
+    const [factors, history] = await Promise.all([loadFactorState().catch(() => null), loadHistory().catch(() => [])]);
+    // The vocabulary a proposed factor may use (for Claude's weekly suggestions).
+    const vocabulary = { text: TEXT_FIELDS, number: NUMBER_FIELDS, flag: FLAG_FIELDS, controls: CONTROL_KEYS, ops: { text: ["matches", "in", "known"], number: ["between", "known"], flag: ["is", "known"] } };
+    return NextResponse.json({ report, job, factors, history, vocabulary });
   } catch (err) {
     return NextResponse.json({ error: friendly(err) }, { status: 500 });
   }
 }
 
-/** POST { skipMailings? } starts a build unless one is already running. */
+/**
+ * POST { skipMailings? } starts a build unless one is already running.
+ * POST { action: "propose_factor", spec } adds a proposed factor (admin; nothing runs until approved).
+ * POST { action: "decide_factor", id, decision: approve|reject } (admin): approve tests it right away on the saved data.
+ */
 export async function POST(request: NextRequest) {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    const body = (await request.json().catch(() => ({}))) as { skipMailings?: boolean };
+    const body = (await request.json().catch(() => ({}))) as { skipMailings?: boolean; action?: string; spec?: unknown; id?: string; decision?: string };
+    if (body.action === "propose_factor" || body.action === "decide_factor") {
+      if (!(await isAdmin())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      if (body.action === "propose_factor") return NextResponse.json({ factors: await proposeFactor(body.spec) });
+      if (!body.id || !["approve", "reject"].includes(body.decision ?? "")) return NextResponse.json({ error: "Missing factor or decision" }, { status: 400 });
+      return NextResponse.json({ factors: await decideFactor(body.id, body.decision as "approve" | "reject") });
+    }
     const existing = await runningJob();
     if (existing) return NextResponse.json({ jobId: existing.id, status: existing.status, duplicate: true });
     const job = await createJob({ kind: "outcomes_build", input: { skipMailings: !!body.skipMailings }, label: "What gets replies: rebuild", resultRoute: "/replies" });

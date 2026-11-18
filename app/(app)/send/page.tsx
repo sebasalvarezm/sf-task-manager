@@ -49,6 +49,8 @@ type Row = {
   body: string | null;
   status: Status;
   status_reason: string | null;
+  /** Claude's first pass (Cowork) changed the text; Undo puts the tool's draft back. */
+  first_pass?: boolean;
   scheduled_for: string | null;
   time_zone: string | null;
   outreach_mailing_id: string | null;
@@ -185,7 +187,7 @@ export default function SendQueuePage() {
       return n;
     });
   }
-  async function act(id: string, action: "approve" | "reject" | "unapprove" | "cancel" | "recheck" | "rehook" | "add_contact" | "confirm" | "resume" | "restore" | "allow_new_contact", extra: Record<string, unknown> = {}): Promise<boolean> {
+  async function act(id: string, action: "approve" | "reject" | "unapprove" | "cancel" | "recheck" | "rehook" | "add_contact" | "confirm" | "resume" | "restore" | "allow_new_contact" | "undo_first_pass", extra: Record<string, unknown> = {}): Promise<boolean> {
     setRowBusy(id, true);
     setError(null);
     try {
@@ -359,6 +361,7 @@ export default function SendQueuePage() {
                     onReject={() => void act(row.id, "reject")}
                     onRecheck={() => void act(row.id, "recheck")}
                     onRehook={() => void act(row.id, "rehook")}
+                    onUndoFirstPass={() => void act(row.id, "undo_first_pass")}
                     onAddContact={(contact) => void act(row.id, "add_contact", { contact })}
                     onEdit={(patch) => void edit(row.id, patch)}
                   />
@@ -588,7 +591,7 @@ const REVIEW_LABEL: Partial<Record<Status, string>> = { pending: "Checking", rev
 const APPROVE = "max-md:h-11 md:h-8 !bg-ok text-white hover:!bg-[#1A5B3C] disabled:!bg-ok/50";
 
 /** To review: the same fast approve/reject, tap the card to edit in place. */
-function ReviewCard({ row, sequences, busy, open, sfUrl, onToggle, onApprove, onReject, onRecheck, onRehook, onAddContact, onEdit }: {
+function ReviewCard({ row, sequences, busy, open, sfUrl, onToggle, onApprove, onReject, onRecheck, onRehook, onUndoFirstPass, onAddContact, onEdit }: {
   sfUrl: string | null;
   row: Row;
   sequences: Sequence[];
@@ -599,6 +602,7 @@ function ReviewCard({ row, sequences, busy, open, sfUrl, onToggle, onApprove, on
   onReject: () => void;
   onRecheck: () => void;
   onRehook: () => void;
+  onUndoFirstPass: () => void;
   onAddContact: (contact: { firstName: string; lastName: string; email: string; title: string }) => void;
   onEdit: (patch: Record<string, unknown>) => void;
 }) {
@@ -610,6 +614,7 @@ function ReviewCard({ row, sequences, busy, open, sfUrl, onToggle, onApprove, on
   const yellow = row.review_flags.filter((f) => f.severity === "yellow");
   const verify = row.verify_result ? VERIFY_LABEL[row.verify_result] : null;
   const editable = ["pending", "review", "ready"].includes(row.status);
+  const firstPass = row.status_reason?.startsWith("First pass: ") ? row.status_reason.slice("First pass: ".length) : null;
   const [subject, setSubject] = useState(row.subject ?? "");
   const [body, setBody] = useState(row.body ?? "");
   const [adding, setAdding] = useState(false);
@@ -652,6 +657,7 @@ function ReviewCard({ row, sequences, busy, open, sfUrl, onToggle, onApprove, on
           ) : (
             <p className="mt-1 text-[13px] text-ink-secondary">{REVIEW_LABEL[row.status] ?? ""}</p>
           )}
+          {firstPass && !open ? <p className="mt-0.5 line-clamp-2 text-[13px] text-info">Claude: {firstPass}</p> : null}
         </div>
         <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 md:mt-0 md:flex md:items-center">
           <Button className={APPROVE} loading={busy} disabled={blocking.length > 0 || row.status === "pending"} title={blocking.length ? blocking[0].message : undefined} onClick={onApprove}>Approve</Button>
@@ -671,6 +677,12 @@ function ReviewCard({ row, sequences, busy, open, sfUrl, onToggle, onApprove, on
           ) : (
             <p className="text-ok">No flags from the checks.</p>
           )}
+          {firstPass || row.first_pass ? (
+            <p className="break-words text-ink">
+              {firstPass ? <>Claude&rsquo;s first pass: {firstPass}</> : "Claude edited this draft."}
+              {row.first_pass && (editable || row.status === "approved") ? <> <button type="button" disabled={busy} onClick={onUndoFirstPass} className={TEXT_BTN}>Undo first pass</button></> : null}
+            </p>
+          ) : null}
           {row.hook ? <HookLine hook={row.hook} /> : null}
           <label className="block">
             <span className="text-ink-secondary">Subject</span>

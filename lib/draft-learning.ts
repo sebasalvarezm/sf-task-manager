@@ -20,9 +20,12 @@ import { setLearnedRules, type LearnedSwap } from "./email-words";
  *    prompts. Rejected proposals never come back. Every rule can be removed.
  */
 
-/** "hook": a hook Seb threw out with "Research hook" in the Send queue (original = the rejected hook, final = what replaced it). */
-export type DraftSource = "e1" | "rce" | "followup" | "nudge" | "inbox" | "hook";
-export const SOURCE_LABEL: Record<DraftSource, string> = { e1: "E1", rce: "RCE", followup: "Follow-up", nudge: "Nudge", inbox: "Inbox reply", hook: "Hook" };
+/**
+ * "hook": a hook Seb threw out with "Research hook" in the Send queue (original = the rejected hook, final = what replaced it).
+ * "first_pass": Claude's first pass in Cowork (original = the tool's draft, final = Claude's version). Never sent, so never in a review by itself.
+ */
+export type DraftSource = "e1" | "rce" | "followup" | "nudge" | "inbox" | "hook" | "first_pass";
+export const SOURCE_LABEL: Record<DraftSource, string> = { e1: "E1", rce: "RCE", followup: "Follow-up", nudge: "Nudge", inbox: "Inbox reply", hook: "Hook", first_pass: "First pass" };
 
 /** Same change in at least this many different emails before it is proposed. */
 export const MIN_EMAILS = 3;
@@ -71,6 +74,49 @@ export async function recordHookRejection(sendId: string, rejected: string | nul
   } catch {
     /* best effort */
   }
+}
+
+// ── Claude's first pass (Cowork) ───────────────────────────────────────────
+
+/**
+ * Claude edited a queued E1 in its first pass. Keeps the tool's draft (the
+ * first one, if Claude passes twice) for Undo, and makes Claude's version the
+ * starting point for learning, so only Seb's own changes are learned from.
+ */
+export async function recordFirstPass(sendId: string, toolDraft: string, claudeDraft: string, accountName?: string | null): Promise<void> {
+  const supabase = getSupabaseAdmin();
+  const { data } = await supabase.from("draft_edits").select("source").eq("source", "first_pass").eq("ref_id", sendId).maybeSingle();
+  if (data) {
+    const { error } = await supabase.from("draft_edits").update({ final: claudeDraft.trim() }).eq("source", "first_pass").eq("ref_id", sendId);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from("draft_edits").insert({ source: "first_pass", ref_id: sendId, account_name: accountName ?? null, original: toolDraft.trim(), final: claudeDraft.trim(), drafted_at: new Date().toISOString(), sent_at: null });
+    if (error) throw new Error(error.message);
+  }
+  await recordDraft("e1", sendId, claudeDraft, accountName);
+}
+
+/** The tool's draft from before Claude's first pass, or null when there was none. */
+export async function firstPassOriginal(sendId: string): Promise<string | null> {
+  const { data } = await getSupabaseAdmin().from("draft_edits").select("original").eq("source", "first_pass").eq("ref_id", sendId).maybeSingle();
+  return (data as { original?: string } | null)?.original ?? null;
+}
+
+/** Undo: the first-pass record goes; learning starts again from the tool's draft. */
+export async function clearFirstPass(sendId: string, toolDraft: string, accountName?: string | null): Promise<void> {
+  const { error } = await getSupabaseAdmin().from("draft_edits").delete().eq("source", "first_pass").eq("ref_id", sendId);
+  if (error) throw new Error(error.message);
+  await recordDraft("e1", sendId, toolDraft, accountName);
+}
+
+/** Which of these queue rows have a first pass (for the Send queue). */
+export async function firstPassIds(sendIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < sendIds.length; i += 100) {
+    const { data } = await getSupabaseAdmin().from("draft_edits").select("ref_id").eq("source", "first_pass").in("ref_id", sendIds.slice(i, i + 100));
+    for (const r of (data ?? []) as Array<{ ref_id: string }>) out.add(r.ref_id);
+  }
+  return out;
 }
 
 /**
@@ -255,7 +301,7 @@ Two kinds of rule:
 - "swap": Seb consistently replaces an exact word or phrase with another, or deletes it. Give "from" exactly as the tool wrote it (copy the words) and "to" (empty string to delete). Only short phrases, never whole paragraphs.
 - "style": a broader habit you can state as one plain instruction for the drafting model ("Keep the body to two sentences", "Never end with a question asking if a time works").
 
-For every rule, give evidence: the edits that show it, each as {"email": <pair number>, "before": <exact words the tool wrote>, "after": <exact words Seb sent instead, or "">}. Copy the words exactly from the pair. At least 3 different emails per rule.
+For every rule, give evidence: the edits that show it, each as {"email": <pair number>, "before": <exact words the tool wrote>, "after": <exact words Seb sent instead, or "">}. Copy the words exactly from the pair. At least 3 and at most 5 different emails per rule. At most 8 rules, strongest first. Keep the answer short: it must be complete JSON.
 
 Answer with JSON only: {"rules":[{"kind":"swap"|"style","from":string,"to":string,"rule":string,"summary":string,"evidence":[{"email":number,"before":string,"after":string}]}]}. "summary" is one short plain sentence for Seb, e.g. "You replace \\"reach out\\" with \\"email\\"." Return {"rules":[]} if nothing repeats.`;
 
@@ -455,7 +501,7 @@ export async function runDraftLearning(days = 7, now = new Date()): Promise<Lear
     .limit(600);
   if (error) throw new Error(/draft_edits|relation|schema cache/.test(error.message) ? "The learning table is missing. Run supabase/2026-11-reply-search.sql in Supabase once." : error.message);
   const all = ((data ?? []) as Array<Pair & { final: string | null }>).filter((p): p is Pair => typeof p.final === "string");
-  const emails = all.filter((p) => p.source !== "hook");
+  const emails = all.filter((p) => p.source !== "hook" && p.source !== "first_pass");
   const bySource: Record<string, { sent: number; edited: number }> = {};
   for (const p of emails) {
     const b = (bySource[p.source] ??= { sent: 0, edited: 0 });
@@ -477,7 +523,7 @@ export async function runDraftLearning(days = 7, now = new Date()): Promise<Lear
   if (edited.length < MIN_EMAILS) {
     notes.push(`Only ${edited.length} edited emails this week, nothing to learn from wording yet.`);
   } else {
-    const res = await trackedCreate(client, "draft_learning", { model: MODELS.drafting, max_tokens: 3000, system: LEARN_SYSTEM, messages: [{ role: "user", content: pairsPrompt(edited) }] });
+    const res = await trackedCreate(client, "draft_learning", { model: MODELS.drafting, max_tokens: 6000, system: LEARN_SYSTEM, messages: [{ role: "user", content: pairsPrompt(edited) }] });
     const parsed = parseJson(res.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
     if (!parsed) notes.push("The wording review came back unreadable; it runs again next week.");
     const proposals = parsed ? verifyProposals(parsed, edited, existing, nowIso) : [];
@@ -489,7 +535,7 @@ export async function runDraftLearning(days = 7, now = new Date()): Promise<Lear
   if (hooks.replaced.length < MIN_EMAILS) {
     notes.push(`Only ${hooks.replaced.length} replaced hooks, nothing to learn about hooks yet.`);
   } else {
-    const res = await trackedCreate(client, "draft_learning", { model: MODELS.drafting, max_tokens: 2000, system: HOOK_SYSTEM, messages: [{ role: "user", content: hooksPrompt(hooks) }] });
+    const res = await trackedCreate(client, "draft_learning", { model: MODELS.drafting, max_tokens: 4000, system: HOOK_SYSTEM, messages: [{ role: "user", content: hooksPrompt(hooks) }] });
     const parsed = parseJson(res.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
     if (!parsed) notes.push("The hook review came back unreadable; it runs again next week.");
     const proposals = parsed ? verifyHookProposals(parsed, hooks.replaced, existing, nowIso) : [];

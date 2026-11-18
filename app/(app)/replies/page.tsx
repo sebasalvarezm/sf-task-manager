@@ -12,6 +12,8 @@ import { Spinner } from "@/app/components/ui/Spinner";
 import { Table } from "@/app/components/ui/Table";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { MIN_LEVEL, type OutcomesReport, type FeatureReport, type LevelStat, type StyleCompare } from "@/lib/outcomes-analysis";
+import type { FactorState, Snapshot } from "@/lib/outcomes-factors-store";
+import { FactorTestsCard, HistoryCard, TrendsCard } from "./LearningPanels";
 
 /**
  * What gets replies: every sequence start of the last year next to what
@@ -44,6 +46,8 @@ export default function RepliesPage() {
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [openFeature, setOpenFeature] = useState<string | null>(null);
+  const [factors, setFactors] = useState<FactorState | null>(null);
+  const [history, setHistory] = useState<Snapshot[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -52,6 +56,8 @@ export default function RepliesPage() {
       if (!res.ok) throw new Error(data.error ?? "Could not load");
       setReport(data.report ?? null);
       setJob(data.job ?? null);
+      setFactors(data.factors ?? null);
+      setHistory(data.history ?? []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load");
@@ -161,6 +167,10 @@ export default function RepliesPage() {
                 note={report.model.auc == null ? "needs more sends" : "0.5 = coin flip · 1.0 = perfect"}
               />
             </div>
+
+            {factors?.trends ? <TrendsCard trends={factors.trends} /> : null}
+            {factors ? <FactorTestsCard state={factors} onChange={() => void load()} canDecide /> : null}
+            <HistoryCard history={history} />
 
             {/* Subject lines: generic vs specific */}
             {report.subjectLines ? (

@@ -9,7 +9,7 @@ import { getValidCredentials } from "./token-manager";
 import { getStoredSignature, saveStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
 import { importSignatureFromSentItems } from "./microsoft";
 import { asFeature, trackedCreate } from "./model-cost";
-import { freezeDraft, hookOfBody, recordDraft, recordFinal, recordHookRejection, refreshLearnedRules } from "./draft-learning";
+import { clearFirstPass, firstPassOriginal, freezeDraft, hookOf, hookOfBody, recordDraft, recordFinal, recordFirstPass, recordHookRejection, refreshLearnedRules } from "./draft-learning";
 import { applyLearnedSwaps } from "./email-words";
 import { recipientTimeZone, planSendSlots } from "./send-slots";
 import { currentWeekStart, type WeeklyOutreachItem } from "./weekly-outreach";
@@ -554,12 +554,63 @@ async function sourcingOriginal(send: E1Send): Promise<string | null> {
 /** For learning from Seb's edits: what Sourcing wrote vs what went to Outreach. Never throws. */
 async function captureE1(send: E1Send): Promise<void> {
   try {
-    const original = await sourcingOriginal(send);
-    if (!original) return;
-    await recordFinal("e1", send.id, `${send.subject ?? ""}\n\n${send.body ?? ""}`.trim(), { original, accountName: send.account_name });
+    const final = `${send.subject ?? ""}\n\n${send.body ?? ""}`.trim();
+    // A saved first draft is updated even when the sourcing run is gone; the
+    // sourcing original only fills in for rows queued before drafts were saved.
+    const original = await sourcingOriginal(send).catch(() => null);
+    await recordFinal("e1", send.id, final, { original, accountName: send.account_name });
+    // Claude's first pass replaced the tool's hook and the replacement went
+    // out: the tool's hook counts as a replaced hook for the Sunday review.
+    const tool = await firstPassOriginal(send.id).catch(() => null);
+    if (tool) {
+      const before = hookOf(tool);
+      const after = hookOf(final);
+      if (before && before.replace(/\s+/g, " ").toLowerCase() !== after.replace(/\s+/g, " ").toLowerCase()) await recordHookRejection(send.id, before, after, send.account_name);
+    }
   } catch {
     /* best effort */
   }
+}
+
+// ── Claude's first pass (from Cowork) ───────────────────────────────────────
+
+const FIRST_PASS_PREFIX = "First pass: ";
+
+/**
+ * Claude (in Cowork, on Seb's plan) checked a queued E1 and saves its version
+ * with a short note. Text only: no model call here, nothing approved, nothing
+ * sent to Outreach or Salesforce. Approved, scheduled and sent rows are left
+ * alone. Seb can undo it.
+ */
+export async function applyFirstPass(id: string, input: { subject?: string; body?: string; note: string; clearFlags?: string[] }): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (!["pending", "review", "ready"].includes(send.status)) throw new Error("Only a row still waiting on Seb can get a first pass.");
+  const note = (input.note ?? "").replace(/\s+/g, " ").trim();
+  if (!note) throw new Error("A first pass needs a short note saying what was checked or changed.");
+  if (note.length > 600) throw new Error("Keep the first-pass note under 600 characters.");
+  const subject = typeof input.subject === "string" && input.subject.trim() ? input.subject.trim() : send.subject;
+  const body = typeof input.body === "string" && input.body.trim() ? input.body.replace(/\r/g, "").trim() : send.body;
+  if (/\u2014/.test(`${subject ?? ""} ${body ?? ""}`)) throw new Error("No em dashes: rewrite the sentence with a comma or full stop.");
+  const before = weeklyDraftOf(send);
+  const after = weeklyDraftOf({ subject, body });
+  if (after !== before) await recordFirstPass(id, before, after, send.account_name);
+  const clear = new Set((input.clearFlags ?? []).filter((k) => ["spelling", "town", "restaurant", "hook", "other"].includes(k)));
+  const flags = pruneResolvedFlags(send.review_flags ?? [], subject, body).filter((f) => !clear.has(f.kind));
+  await updateSend(id, { subject, body, review_flags: flags, status_reason: `${FIRST_PASS_PREFIX}${note}` });
+  return recheckSend(id);
+}
+
+/** Put the tool's draft back. */
+export async function undoFirstPass(id: string): Promise<E1Send> {
+  const send = await getSend(id);
+  if (!send) throw new Error("Send row not found.");
+  if (!["pending", "review", "ready", "approved"].includes(send.status)) throw new Error("This one is already with Outreach.");
+  const tool = await firstPassOriginal(id);
+  const { subject, body } = tool ? splitDraft(tool) : { subject: send.subject, body: send.body };
+  if (tool) await clearFirstPass(id, tool, send.account_name);
+  await updateSend(id, { subject, body, status_reason: null, ...(send.status === "approved" ? { status: "ready" as const } : {}) });
+  return recheckSend(id);
 }
 
 async function sourcingContextFor(send: E1Send): Promise<SourcingContext> {
