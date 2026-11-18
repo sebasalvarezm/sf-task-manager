@@ -127,7 +127,27 @@ export type OutreachSequence = {
   name: string;
   tags: string[];
   enabled: boolean;
+  /** "shared" (the team's) or "private" (one person's copy). */
+  shareType?: string | null;
 };
+
+/**
+ * One sequence per name. Colleagues keep private copies under the same name
+ * (Jeffrey Li's private "[E] - Equipment" next to the shared one), and the
+ * copy that came later in Outreach's list used to win, so an E1 went into a
+ * sequence whose templates need fields our prospects don't have (ISoft Data,
+ * Nov 2026). Shared beats private, then the oldest (lowest id) wins. Pure.
+ */
+export function preferredSequences(all: OutreachSequence[], normalize: (name: string) => string = (n) => n.trim().toLowerCase()): OutreachSequence[] {
+  const rank = (s: OutreachSequence) => (s.shareType === "private" ? 1 : 0);
+  const best = new Map<string, OutreachSequence>();
+  for (const s of all) {
+    const key = normalize(s.name);
+    const cur = best.get(key);
+    if (!cur || rank(s) < rank(cur) || (rank(s) === rank(cur) && Number(s.id) < Number(cur.id))) best.set(key, s);
+  }
+  return all.filter((s) => best.get(normalize(s.name)) === s);
+}
 
 export async function listSequences(): Promise<OutreachSequence[]> {
   const all: OutreachSequence[] = [];
@@ -142,7 +162,7 @@ export async function listSequences(): Promise<OutreachSequence[]> {
     const body = (await res.json()) as {
       data?: Array<{
         id: string;
-        attributes?: { name?: string; tags?: string[]; enabled?: boolean };
+        attributes?: { name?: string; tags?: string[]; enabled?: boolean; shareType?: string };
       }>;
       links?: { next?: string };
     };
@@ -154,6 +174,7 @@ export async function listSequences(): Promise<OutreachSequence[]> {
         name: row.attributes?.name ?? "(unnamed)",
         tags: row.attributes?.tags ?? [],
         enabled: row.attributes?.enabled ?? true,
+        shareType: row.attributes?.shareType ?? null,
       });
     }
     next = body.links?.next ?? null;

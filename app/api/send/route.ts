@@ -4,13 +4,14 @@ import { createJob, markFailed } from "@/lib/jobs";
 import { inngest } from "@/lib/inngest/client";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { allowNewContact, applyFirstPass, undoFirstPass, pruneResolvedFlags, restoreSend, addContactAndUse, confirmSent, getSend, rebuildForSequence, approveSend, cancelSend, chooseRestaurant, getSendSettings, listSends, recheckSend, rehookSend, rejectSend, saveSendSettings, unapproveSend, updateSend, type E1Send, type SendSettings } from "@/lib/e1-sends";
-import { listSequences, type OutreachSequence } from "@/lib/outreach";
+import { listSequences, preferredSequences, type OutreachSequence } from "@/lib/outreach";
 import { GROUP_SEQUENCE_NAMES, normalizeSequenceName } from "@/lib/e1-sends";
 
 /** Only the 20 group sequences from the fixed mapping, in a stable order. */
 function platformSequences(all: OutreachSequence[]): OutreachSequence[] {
   // [E] only: "[RCE] - Bulk Liquids" normalizes to the same name as "[E] - Bulk Liquids".
-  const byName = new Map(all.filter((s) => s.enabled && /^\s*\[E\]/i.test(s.name)).map((s) => [normalizeSequenceName(s.name), s]));
+  // One per name: shared beats a colleague's private copy with the same name (lib/outreach.ts).
+  const byName = new Map(preferredSequences(all.filter((s) => s.enabled && /^\s*\[E\]/i.test(s.name)), normalizeSequenceName).map((s) => [normalizeSequenceName(s.name), s]));
   return Object.values(GROUP_SEQUENCE_NAMES).map((n) => byName.get(normalizeSequenceName(n))).filter((s): s is OutreachSequence => !!s);
 }
 import { currentWeekStart } from "@/lib/weekly-outreach";

@@ -1,5 +1,5 @@
 import { inngest } from "@/lib/inngest/client";
-import { fillStepMailing, findStepMailing, getSend, getSendSettings, updateSend } from "@/lib/e1-sends";
+import { fillStepMailing, findStepMailing, getSend, getSendSettings, sequenceStateProblem, updateSend } from "@/lib/e1-sends";
 
 /**
  * Automatic E1 (settings.fillStep): the prospect is already in the sequence.
@@ -27,7 +27,14 @@ export const e1FillStepJob = inngest.createFunction(
         const row = await getSend(id);
         if (!row || row.status !== "scheduling") return { stop: true as const };
         const m = await findStepMailing(stateId);
-        return m ? { stop: false as const, mailingId: m.mailingId } : null;
+        if (m) return { stop: false as const, mailingId: m.mailingId };
+        // No step 1 yet: stop at once if Outreach has already given up on it.
+        const problem = await sequenceStateProblem(stateId).catch(() => null);
+        if (problem) {
+          await updateSend(id, { status: "failed", status_reason: `${problem}. Nothing was sent. Cancel, check the sequence, and send again.` });
+          return { stop: true as const };
+        }
+        return null;
       });
       if (found?.stop) return { id, stopped: "row no longer waiting" };
       if (found && !found.stop) {

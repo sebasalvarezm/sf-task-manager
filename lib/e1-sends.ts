@@ -4,7 +4,7 @@ import { sfQuery } from "./sf-query";
 import { fetchContactsForAccounts, type SfContact } from "./salesforce-contacts";
 import { sfFetch } from "./sf-query";
 import { verifyEmail, type VerifyDetail, type VerifyResult } from "./email-verify";
-import { listSequences, listMailboxes, findProspectByEmail, createProspect, addProspectToSequence, setProspectCustomFields, outreachRequest, type OutreachSequence } from "./outreach";
+import { listSequences, listMailboxes, findProspectByEmail, createProspect, addProspectToSequence, setProspectCustomFields, outreachRequest, preferredSequences, type OutreachSequence } from "./outreach";
 import { getValidCredentials } from "./token-manager";
 import { getStoredSignature, saveStoredSignature, composeHtmlBody, textToHtml } from "./outlook-signature";
 import { importSignatureFromSentItems } from "./microsoft";
@@ -429,7 +429,7 @@ export function matchSequence(groupName: string | null, sequences: OutreachSeque
   const want = normalizeSequenceName(groupName);
   if (!want) return null;
   // Only the "[E]" sequences are first-touch sequences; "[D-E]" and others are not.
-  const pool = sequences.filter((s) => s.enabled && /^\s*\[E\]/i.test(s.name));
+  const pool = preferredSequences(sequences.filter((s) => s.enabled && /^\s*\[E\]/i.test(s.name)), normalizeSequenceName);
   // 1. The fixed mapping, compared on normalized names so punctuation and
   //    stray spaces in Outreach do not matter.
   const mappedName = GROUP_SEQUENCE_NAMES[groupName] ?? Object.entries(GROUP_SEQUENCE_NAMES).find(([g]) => normalizeSequenceName(g) === want)?.[1];
@@ -1376,6 +1376,24 @@ export async function createMailingForSend(id: string, ids: { prospectId: string
  * the step template). Null until then (outside the sequence schedule the
  * state sits "pending" and neither exists yet).
  */
+/**
+ * Outreach gave up on this prospect's sequence (failed, bounced, opted out,
+ * finished or disabled): the reason in Outreach's words, or null while it is
+ * still running. ISoft Data (Nov 2026) sat on "Sending to Outreach" for a day
+ * because Outreach had failed the sequence ("Missing template variable") and
+ * nothing looked.
+ */
+export async function sequenceStateProblem(stateId: string): Promise<string | null> {
+  const res = await outreachRequest(`/sequenceStates/${stateId}?fields[sequenceState]=state,errorReason`);
+  if (res.status === 404) return "the prospect is no longer in the sequence";
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as { data?: { attributes?: { state?: string; errorReason?: string | null } } } | null;
+  const state = body?.data?.attributes?.state ?? "";
+  if (!["failed", "bounced", "opted_out", "finished", "disabled"].includes(state)) return null;
+  const why = body?.data?.attributes?.errorReason?.trim();
+  return `Outreach marked the sequence ${state.replace("_", " ")}${why ? `: ${why}` : ""}`;
+}
+
 export async function findStepMailing(stateId: string): Promise<{ taskId: string; mailingId: string; state: string } | null> {
   const res = await outreachRequest(`/tasks?filter[sequenceState][id]=${stateId}&page[size]=5`);
   if (!res.ok) return null;
