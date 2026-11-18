@@ -71,8 +71,18 @@ function domainOf(email: string): string {
   return email.toLowerCase().split("@")[1] ?? "";
 }
 
-/** Valstone's own domain. A reconnect is never addressed to a colleague. */
-const INTERNAL_DOMAINS = ["valstonecorp.com"];
+/**
+ * Valstone's own domains, including Valsoft (the company's name until 2024).
+ * A reconnect is never addressed to a colleague. FlashCut CNC (Nov 2026): an
+ * old Valsoft colleague's "[Outreach] ... FlashCut CNC & Valsoft" email was
+ * taken for a conversation with the company.
+ */
+const INTERNAL_DOMAINS = ["valstonecorp.com", "valsoftcorp.com", "valsoft.com"];
+
+/** Copies of sequence emails that Outreach files in the mailbox ("[Outreach] [Email] [Out] ..."): never a conversation. */
+export function isOutreachCopy(subject: string | null | undefined): boolean {
+  return /\[outreach\]/i.test(subject ?? "");
+}
 
 /** True for a Valstone address (or any address on the user's own mailbox domain). */
 export function isInternalAddress(email: string | null | undefined, mailboxAddress = ""): boolean {
@@ -80,7 +90,7 @@ export function isInternalAddress(email: string | null | undefined, mailboxAddre
   if (!d) return false;
   const own = domainOf(mailboxAddress);
   // The Microsoft tenant address (dan@valstonecorporation.onmicrosoft.com) is a colleague too.
-  if (/^valstone[a-z0-9-]*\.onmicrosoft\.com$/.test(d)) return true;
+  if (/^(valstone|valsoft)[a-z0-9-]*\.onmicrosoft\.com$/.test(d)) return true;
   return INTERNAL_DOMAINS.some((x) => d === x || d.endsWith(`.${x}`)) || (Boolean(own) && !PUBLIC_EMAIL_DOMAINS.has(own) && d === own);
 }
 
@@ -160,6 +170,7 @@ export function matchRceReplyThread(
   let best: { score: number; confidence: RceThreadConfidence; reason: string; target: OutlookRelationshipEmail } | null = null;
 
   for (const messages of threads.values()) {
+    if (messages.some((m) => isOutreachCopy(m.subject))) continue;
     // Only a real message the user received from outside Valstone can be
     // replied to. A colleague forwarding the chain (Alexis passing on
     // AssessTech's cancellation) is not someone to send a reconnect to.

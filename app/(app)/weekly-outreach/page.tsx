@@ -1226,8 +1226,10 @@ export default function WeeklyOutreachPage() {
       return;
     }
     let preparedCount = 0;
-    for (let index = 0; index < rces.length; index += 3) {
-      const results = await Promise.all(rces.slice(index, index + 3).map(prepareRce));
+    // Two at a time: each one runs several Outlook searches, and the mailbox
+    // refuses too many at once.
+    for (let index = 0; index < rces.length; index += 2) {
+      const results = await Promise.all(rces.slice(index, index + 2).map(prepareRce));
       preparedCount += results.filter(Boolean).length;
     }
     if (preparedCount > 0) {

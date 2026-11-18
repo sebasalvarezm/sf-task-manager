@@ -368,22 +368,30 @@ export async function searchMailboxMessages(
   const safe = searchTerm.replace(/"/g, "");
   const params = new URLSearchParams({
     $search: `"${safe}"`,
-    $select: "id,subject,from,toRecipients,sentDateTime,receivedDateTime,body,conversationId",
+    $select: "id,subject,from,toRecipients,sentDateTime,receivedDateTime,body,conversationId,isDraft",
     $top: String(Math.min(50, Math.max(1, limit))),
   });
-  const response = await fetch(
-    `https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`,
-    {
+  // Outlook allows only a few searches at once per mailbox and answers the
+  // rest with 429 "too many requests". Those used to come back as "no
+  // results", so a reconnect went out as a fresh email to the wrong person
+  // (TouchStar, Nov 2026). Wait as told and try again, up to three times.
+  let response: Response | null = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    response = await fetch(`https://graph.microsoft.com/v1.0/me/messages?${params.toString()}`, {
       headers: {
         Authorization: `Bearer ${credentials.access_token}`,
         ConsistencyLevel: "eventual",
         Prefer: 'outlook.body-content-type="text"',
       },
-    },
-  );
-  if (!response.ok) throw new Error(`Failed to search Outlook: ${await upstreamErrorText("Outlook", response)}`);
+    });
+    if (![429, 503, 504].includes(response.status) || attempt === 3) break;
+    const wait = Math.min(15, Math.max(1, Number(response.headers.get("Retry-After")) || 2 * (attempt + 1)));
+    await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+  }
+  if (!response || !response.ok) throw new Error(`Failed to search Outlook: ${response ? await upstreamErrorText("Outlook", response) : "no answer"}`);
   const data = (await response.json()) as {
     value?: Array<{
+      isDraft?: boolean;
       id: string;
       subject?: string;
       from?: { emailAddress?: { address?: string; name?: string } };
@@ -394,7 +402,8 @@ export async function searchMailboxMessages(
       conversationId?: string;
     }>;
   };
-  return (data.value ?? []).map((m) => ({
+  // Drafts (the tool's own unsent replies included) are not part of any conversation.
+  return (data.value ?? []).filter((m) => !m.isDraft).map((m) => ({
     id: m.id,
     subject: m.subject ?? "(No subject)",
     fromEmail: (m.from?.emailAddress?.address ?? "").toLowerCase(),

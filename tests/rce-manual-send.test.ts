@@ -73,3 +73,20 @@ describe("picking the chain in the first place (Smartapp, Nov 2026)", () => {
     expect(m.reason).toMatch(/last reconnect/);
   });
 });
+
+describe("old Valsoft colleagues and Outreach copies are never the company (FlashCut CNC, Nov 2026)", () => {
+  const msg = (p: Partial<OutlookRelationshipEmail> & { id: string; sentDateTime: string }): OutlookRelationshipEmail => ({ subject: "", fromEmail: me, fromName: "", toEmails: [], bodyText: "", conversationId: p.id.split("-")[0], ...p });
+  it("an '[Outreach] ... FlashCut CNC & Valsoft' email from a Valsoft colleague is not a chain to reply into", () => {
+    const emails = [
+      msg({ id: "vs-1", subject: "[Outreach] [Email] [Out] Let's Talk CNC: FlashCut CNC & Valsoft", fromEmail: "n.tully@valsoftcorp.com", fromName: "Nathaniel Tully", toEmails: [me], sentDateTime: daysAgo(1400) }),
+      // Seb's own emails to Ron that were never answered: nothing to reply to either.
+      msg({ id: "ron-1", subject: "Deerfield Lunch: FlashCut CNC & Valstone", toEmails: ["ron@flashcutcnc.com"], sentDateTime: daysAgo(340) }),
+    ];
+    const m = matchRceReplyThread(emails, "FlashCut CNC", "flashcutcnc.com", me);
+    expect(m.replyTarget).toBeNull();
+  });
+  it("a Valsoft address on its own is internal too", () => {
+    const m = matchRceReplyThread([msg({ id: "x-1", subject: "FlashCut CNC intro", fromEmail: "n.tully@valsoftcorp.com", toEmails: [me], sentDateTime: daysAgo(30) })], "FlashCut CNC", "flashcutcnc.com", me);
+    expect(m.replyTarget).toBeNull();
+  });
+});

@@ -291,10 +291,35 @@ export async function POST(request: Request) {
           )
           .catch(() => [])
       : [];
-    const [domainEmails, nameEmails, contactEmailsFound, personalAngleEmails, history] = await Promise.all([
-      domain ? searchMailboxMessages(domain, 50).catch(() => []) : Promise.resolve([]),
-      searchMailboxMessages(item.account_name, 50).catch(() => []),
-      Promise.all(contactEmails.slice(0, 5).map((email) => searchMailboxMessages(email, 25).catch(() => []))).then((lists) => lists.flat()),
+    // Outlook searches one at a time: the mailbox only takes a few at once,
+    // and a refused search used to look like "no conversation", so the
+    // reconnect went out as a fresh email to the wrong person (TouchStar,
+    // Nov 2026). A search that still fails after its retries stops the draft.
+    const failedSearches: string[] = [];
+    const search = async (term: string, limit: number) => {
+      try {
+        return await searchMailboxMessages(term, limit);
+      } catch (searchError) {
+        const message = searchError instanceof Error ? searchError.message : String(searchError);
+        if (message === "MS_NOT_CONNECTED" || message === "OUTLOOK_RECONNECT_REQUIRED") throw searchError;
+        failedSearches.push(term);
+        return [];
+      }
+    };
+    const domainEmails = domain ? await search(domain, 50) : [];
+    const nameEmails = await search(item.account_name, 50);
+    const contactEmailsFound: Awaited<ReturnType<typeof search>> = [];
+    for (const email of contactEmails.slice(0, 5)) contactEmailsFound.push(...(await search(email, 25)));
+    if (failedSearches.length > 0 || !mailboxAddress) {
+      return NextResponse.json(
+        {
+          error: `Outlook was busy and did not answer ${failedSearches.length ? `the search for ${failedSearches.slice(0, 2).join(", ")}` : "the mailbox lookup"}, so ${item.account_name} was not drafted (a draft without the email history could go to the wrong person). Prepare it again in a minute.`,
+          code: "OUTLOOK_SEARCH_FAILED",
+        },
+        { status: 503 },
+      );
+    }
+    const [personalAngleEmails, history] = await Promise.all([
       searchMailboxMessages("100th birthday", 12).catch(() => []),
       fetchAccountHistory(item.sf_account_id, { valstoneDomain: domainOfMailbox(mailboxAddress) }).catch(
         (): AccountHistory => ({ entries: [], lines: [], currentUserName: null, takeover: null }),
