@@ -20,6 +20,7 @@ import {
   type WeeklyOutreachItem,
 } from "@/lib/weekly-outreach";
 import { listAccountContacts, runTakeoverSalesforce, type NewContactInput } from "@/lib/rce-takeover";
+import { findManualSend, linkToManualSend, saveThreadOverride } from "@/lib/rce-manual-send";
 
 type ReviewAction = "save" | "send" | "dismiss" | "mark_sent" | "contacts" | "recipient";
 
@@ -117,6 +118,20 @@ export async function POST(request: Request) {
       // Sent by hand from Outlook: record it, and do the takeover bookkeeping.
       const sentDraft = body.draft?.trim() || item.draft || "";
       const notes = await takeoverSalesforce(sentDraft);
+      // Find the email in Sent Items and link the row to its chain, so the
+      // follow-up goes where Seb actually wrote (lib/rce-manual-send.ts).
+      // Read only; if it is not there yet, the follow-up looks again.
+      metadata.manualSentAt = new Date().toISOString();
+      let linkNote: string | null = null;
+      const lookup = await findManualSend(item, metadata).catch(() => null);
+      if (lookup?.found) {
+        const linked = linkToManualSend(metadata, lookup.found, lookup.identities);
+        Object.assign(metadata, linked.metadata);
+        linkNote = linked.note;
+        await saveThreadOverride(item.sf_account_id, lookup.found);
+      } else {
+        linkNote = "Your email isn't in Sent Items yet. The follow-up looks for it again.";
+      }
       const { data: updated, error: updateError } = await supabase
         .from("weekly_outreach")
         .update({ draft: sentDraft || null, status: "sent", source_reference: writeWeeklyOutreachSourceMetadata(metadata) })
@@ -124,7 +139,7 @@ export async function POST(request: Request) {
         .select("*")
         .single();
       if (updateError) throw new Error(updateError.message);
-      return NextResponse.json({ item: withWeeklyOutreachClientMetadata(updated), salesforceNotes: notes });
+      return NextResponse.json({ item: withWeeklyOutreachClientMetadata(updated), salesforceNotes: notes, linkNote });
     }
 
     if (body.action === "dismiss") {

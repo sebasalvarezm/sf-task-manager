@@ -447,6 +447,64 @@ export async function getMailboxIdentities(): Promise<Set<string>> {
   return identities;
 }
 
+export type SentMessage = {
+  id: string;
+  subject: string;
+  conversationId: string;
+  sentDateTime: string;
+  to: Array<{ name: string | null; email: string }>;
+  cc: Array<{ name: string | null; email: string }>;
+};
+
+/**
+ * What the user sent since `sinceIso`, newest first, from Sent Items only (so
+ * never a draft). Read only. Pages through up to `max` messages.
+ */
+export async function listSentMessagesSince(sinceIso: string, max = 600): Promise<SentMessage[]> {
+  const credentials = await getMsValidCredentials();
+  if (!credentials) throw new Error("MS_NOT_CONNECTED");
+  const params = new URLSearchParams({
+    $filter: `sentDateTime ge ${new Date(sinceIso).toISOString()}`,
+    $orderby: "sentDateTime desc",
+    $select: "id,subject,toRecipients,ccRecipients,sentDateTime,conversationId,isDraft",
+    $top: "100",
+  });
+  let next: string | null = `https://graph.microsoft.com/v1.0/me/mailFolders/SentItems/messages?${params.toString()}`;
+  const out: SentMessage[] = [];
+  for (let page = 0; next && out.length < max && page < 10; page++) {
+    const response: Response = await fetch(next, { headers: { Authorization: `Bearer ${credentials.access_token}` } });
+    if (!response.ok) {
+      if (response.status === 403) throw new Error("OUTLOOK_RECONNECT_REQUIRED");
+      throw new Error(`Failed to read Sent Items: ${await upstreamErrorText("Outlook", response)}`);
+    }
+    const data = (await response.json()) as {
+      value?: Array<{
+        id: string;
+        subject?: string;
+        conversationId?: string;
+        sentDateTime?: string;
+        isDraft?: boolean;
+        toRecipients?: Array<{ emailAddress?: { address?: string; name?: string } }>;
+        ccRecipients?: Array<{ emailAddress?: { address?: string; name?: string } }>;
+      }>;
+      "@odata.nextLink"?: string;
+    };
+    for (const m of data.value ?? []) {
+      if (m.isDraft) continue;
+      out.push({
+        id: m.id,
+        subject: m.subject ?? "(No subject)",
+        conversationId: m.conversationId ?? "",
+        sentDateTime: m.sentDateTime ?? "",
+        to: (m.toRecipients ?? []).map((r) => ({ name: r.emailAddress?.name?.trim() || null, email: (r.emailAddress?.address ?? "").toLowerCase() })).filter((r) => r.email),
+        cc: (m.ccRecipients ?? []).map((r) => ({ name: r.emailAddress?.name?.trim() || null, email: (r.emailAddress?.address ?? "").toLowerCase() })).filter((r) => r.email),
+      });
+    }
+    next = data["@odata.nextLink"] ?? null;
+  }
+  return out;
+}
+
 /** True when `email` is one of the user's own addresses (or looks like the
  *  tenant alias of one: same local part, *.onmicrosoft.com domain). */
 export function isSelfAddress(email: string | null | undefined, identities: Set<string>): boolean {

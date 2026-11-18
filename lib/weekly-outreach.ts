@@ -51,6 +51,7 @@ export type WeeklyOutreachItem = {
   /** Set when the first RCE email was sent from the tool; enables the follow-up button. */
   rce_first_sent_at?: string | null;
   rce_follow_up_trackable?: boolean;
+  rce_manual_link_pending?: boolean;
   outlook_draft_ready?: boolean;
   outlook_reply_subject?: string | null;
   outlook_reply_confidence?: RceThreadConfidence;
@@ -106,6 +107,8 @@ export type WeeklyOutreachSourceMetadata = {
   rceFirstSentAt: string | null;
   conversationId: string | null;
   recipients: Array<{ name: string | null; email: string }>;
+  /** Seb marked the reconnect sent by hand (sent from Outlook). Its chain is found in Sent Items (lib/rce-manual-send.ts). */
+  manualSentAt?: string | null;
 };
 
 export function readWeeklyOutreachSourceMetadata(
@@ -126,6 +129,7 @@ export function readWeeklyOutreachSourceMetadata(
       rceFirstSentAt: null,
       conversationId: null,
       recipients: [],
+      manualSentAt: null,
     };
   }
   try {
@@ -151,6 +155,7 @@ export function readWeeklyOutreachSourceMetadata(
         rceFirstSentAt: parsed.rceFirstSentAt ?? null,
         conversationId: parsed.conversationId ?? null,
         recipients: Array.isArray(parsed.recipients) ? parsed.recipients : [],
+        manualSentAt: parsed.manualSentAt ?? null,
       };
     }
   } catch {
@@ -186,7 +191,8 @@ export function writeWeeklyOutreachSourceMetadata(
     metadata.contextSource === "none" &&
     !metadata.takeover &&
     !metadata.rceFirstSentAt &&
-    !metadata.conversationId
+    !metadata.conversationId &&
+    !metadata.manualSentAt
   ) {
     return metadata.originalReference;
   }
@@ -203,6 +209,8 @@ export function withWeeklyOutreachClientMetadata(
     rce_second_sent: metadata.rceSecondSent,
     rce_first_sent_at: metadata.rceFirstSentAt,
     rce_follow_up_trackable: Boolean(metadata.rceFirstSentAt && metadata.conversationId),
+    /** Sent by hand and its Outlook chain not found yet: the follow-up looks again. */
+    rce_manual_link_pending: Boolean(metadata.manualSentAt && !metadata.conversationId),
     outlook_draft_ready: Boolean(metadata.outlookDraftId),
     outlook_reply_subject: metadata.replySubject,
     outlook_reply_confidence: metadata.replyConfidence,

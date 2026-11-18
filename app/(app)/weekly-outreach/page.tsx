@@ -238,6 +238,8 @@ export default function WeeklyOutreachPage() {
     threadError: string | null;
     firstNamePlaceholder: boolean;
     replyDetected: { from: string; at: string; preview: string } | null;
+    /** Set when the row was sent by hand and its chain was just found in Sent Items. */
+    linkNote?: string | null;
   } | null>(null);
   const [followUpNotTracked, setFollowUpNotTracked] = useState(false);
   // Phone layout for the review sheets: context collapsed, secondary actions
@@ -1029,8 +1031,10 @@ export default function WeeklyOutreachPage() {
     setFollowUpPreview(null);
     setFollowUpError(null);
     setFollowUpIgnoreReply(false);
-    setFollowUpNotTracked(!item.rce_follow_up_trackable);
-    if (!item.rce_follow_up_trackable) return;
+    // Sent by hand and not linked yet: the preview looks in Sent Items for the chain.
+    const canTry = Boolean(item.rce_follow_up_trackable || item.rce_manual_link_pending);
+    setFollowUpNotTracked(!canTry);
+    if (!canTry) return;
     setFollowUpLoading(true);
     try {
       const res = await fetch("/api/weekly-outreach/followup-rce", {
@@ -1042,6 +1046,7 @@ export default function WeeklyOutreachPage() {
       if (!res.ok) {
         if (data.code === "NOT_TRACKED") {
           setFollowUpNotTracked(true);
+          if (item.rce_manual_link_pending && data.error) setFollowUpError(data.error);
           return;
         }
         if (data.code === "OUTLOOK_RECONNECT_REQUIRED") setOutlookReconnectRequired(true);
@@ -1057,6 +1062,7 @@ export default function WeeklyOutreachPage() {
         threadError: data.threadError ?? null,
         firstNamePlaceholder: Boolean(data.firstNamePlaceholder),
         replyDetected: data.replyDetected ?? null,
+        linkNote: data.linkNote ?? null,
       });
     } catch (previewError) {
       setFollowUpError(
@@ -1562,21 +1568,21 @@ export default function WeeklyOutreachPage() {
         setSheetError("Your last edit didn't save, so this email stays open. Retry the save first.");
         return;
       }
+      // Every row goes through mark_sent: it also finds the email in Sent
+      // Items and links the row to the chain it actually went into, so the
+      // follow-up lands there (lib/rce-manual-send.ts).
       let saved = false;
-      if (sentItem.takeover) {
-        const res = await fetch("/api/weekly-outreach/review-rce", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: sentItem.id, action: "mark_sent", draft: reviewDraftRef.current }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.item) {
-          saved = true;
-          setItems((previous) => previous.map((row) => (row.id === sentItem.id ? data.item : row)));
-          reportSalesforceNotes(sentItem.account_name, data.salesforceNotes);
-        }
-      } else {
-        saved = Boolean(await updateRow(sentItem, { status: "sent", draft: reviewDraft }));
+      const res = await fetch("/api/weekly-outreach/review-rce", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: sentItem.id, action: "mark_sent", draft: reviewDraftRef.current }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.item) {
+        saved = true;
+        setItems((previous) => previous.map((row) => (row.id === sentItem.id ? data.item : row)));
+        reportSalesforceNotes(sentItem.account_name, data.salesforceNotes);
+        if (typeof data.linkNote === "string" && data.linkNote) setMessage(`${sentItem.account_name}: ${data.linkNote}`);
       }
       if (!saved) {
         setSheetError(`Couldn't mark ${sentItem.account_name} sent. Try again.`);
@@ -1940,17 +1946,17 @@ export default function WeeklyOutreachPage() {
                         variant="secondary"
                         className="col-span-2 w-full"
                         onClick={() =>
-                          item.rce_follow_up_trackable
+                          (item.rce_follow_up_trackable || item.rce_manual_link_pending)
                             ? void openFollowUp(item)
                             : armOrRun(`second:${item.id}`, () => void confirmSecondRceSent(item))
                         }
                         title={
-                          item.rce_follow_up_trackable
+                          (item.rce_follow_up_trackable || item.rce_manual_link_pending)
                             ? "Preview and send the short follow-up into the same Outlook thread"
                             : "Mark the second email as sent"
                         }
                       >
-                        {item.rce_follow_up_trackable
+                        {(item.rce_follow_up_trackable || item.rce_manual_link_pending)
                           ? `Send follow-up${item.rce_first_sent_at ? ` · ${Math.max(0, Math.floor((Date.now() - new Date(item.rce_first_sent_at).getTime()) / 86_400_000))}d` : ""}`
                           : armedKey === `second:${item.id}`
                             ? "Tap again to confirm"
@@ -2157,7 +2163,7 @@ export default function WeeklyOutreachPage() {
                             type="button"
                             onKeyDown={(event) => handleGridNavigation(event, index, 9)}
                             onClick={() =>
-                              item.rce_follow_up_trackable
+                              (item.rce_follow_up_trackable || item.rce_manual_link_pending)
                                 ? void openFollowUp(item)
                                 : armOrRun(`second:${item.id}`, () => void confirmSecondRceSent(item))
                             }
@@ -2165,12 +2171,12 @@ export default function WeeklyOutreachPage() {
                               armedKey === `second:${item.id}` ? "font-medium text-ok" : "text-info"
                             }`}
                             title={
-                              item.rce_follow_up_trackable
+                              (item.rce_follow_up_trackable || item.rce_manual_link_pending)
                                 ? "Preview and send the short follow-up into the same Outlook thread"
                                 : "Mark the second email as sent"
                             }
                           >
-                            {item.rce_follow_up_trackable
+                            {(item.rce_follow_up_trackable || item.rce_manual_link_pending)
                               ? `Follow-up${item.rce_first_sent_at ? ` · ${Math.max(0, Math.floor((Date.now() - new Date(item.rce_first_sent_at).getTime()) / 86_400_000))}d` : ""}`
                               : armedKey === `second:${item.id}`
                                 ? "Tap to confirm"
@@ -2437,6 +2443,7 @@ export default function WeeklyOutreachPage() {
                   <p className="text-sm text-ink-secondary">Reading the thread…</p>
                 ) : followUpPreview ? (
                   <>
+                    {followUpPreview.linkNote ? <p className="mb-3 text-xs text-ink-secondary">{followUpPreview.linkNote}</p> : null}
                     {followUpPreview.replyDetected ? (
                       <div className="mb-4 rounded-md border border-danger p-4 text-sm text-ink">
                         <p className="text-danger">

@@ -22,6 +22,7 @@ import {
   writeWeeklyOutreachSourceMetadata,
   type WeeklyOutreachItem,
 } from "@/lib/weekly-outreach";
+import { findManualSend, linkToManualSend, MANUAL_SEND_WINDOW_DAYS, saveThreadOverride } from "@/lib/rce-manual-send";
 
 /**
  * The short second email after a reconnect.
@@ -77,7 +78,28 @@ export async function POST(request: Request) {
   if (metadata.rceSecondSent) {
     return NextResponse.json({ error: "The follow-up was already sent" }, { status: 409 });
   }
+  // Sent by hand and not linked yet: look in Sent Items again (read only).
+  let linkNote: string | null = null;
+  if (metadata.manualSentAt && !metadata.conversationId) {
+    const lookup = await findManualSend(item, metadata).catch(() => null);
+    if (lookup?.found) {
+      const linked = linkToManualSend(metadata, lookup.found, lookup.identities);
+      Object.assign(metadata, linked.metadata);
+      linkNote = linked.note;
+      await saveThreadOverride(item.sf_account_id, lookup.found);
+      await supabase.from("weekly_outreach").update({ source_reference: writeWeeklyOutreachSourceMetadata(metadata) }).eq("id", item.id);
+    }
+  }
   if (!metadata.rceFirstSentAt || !metadata.conversationId) {
+    if (metadata.manualSentAt) {
+      return NextResponse.json(
+        {
+          error: `No email from you to ${item.account_name} in Sent Items in the ${MANUAL_SEND_WINDOW_DAYS} days before you marked it sent, so the chain is unknown. Send the follow-up from Outlook and mark it manually.`,
+          code: "NOT_TRACKED",
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       {
         error:
@@ -142,6 +164,7 @@ export async function POST(request: Request) {
         // Only claim "no reply" when the thread was actually read.
         threadChecked: threadKnown,
         threadError,
+        linkNote,
         replyDetected: replyFromRecipient
           ? {
               from: replyFromRecipient.from.name || replyFromRecipient.from.email,

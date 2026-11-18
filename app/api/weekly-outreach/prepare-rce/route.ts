@@ -3,6 +3,7 @@ import { recordDraft, refreshLearnedRules } from "@/lib/draft-learning";
 import { NextResponse } from "next/server";
 import { trackedCreate } from "@/lib/model-cost";
 import { fetchContactsForAccounts } from "@/lib/salesforce-contacts";
+import { getThreadOverride } from "@/lib/rce-manual-send";
 import { isAuthenticated } from "@/lib/auth";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { getAnthropicClient, MODELS } from "@/lib/anthropic";
@@ -324,7 +325,9 @@ export async function POST(request: Request) {
       .join("\n\n");
 
     // Tier 1: the user's own Outlook chain, scored on evidence.
-    const threadMatch = matchRceReplyThread(relationshipEmails, item.account_name, domain, mailboxAddress, contactEmails);
+    // The chain Seb sent in by hand last time for this account, if any (lib/rce-manual-send.ts).
+    const chosenBefore = await getThreadOverride(item.sf_account_id).catch(() => null);
+    const threadMatch = matchRceReplyThread(relationshipEmails, item.account_name, domain, mailboxAddress, contactEmails, chosenBefore?.conversationId ?? null);
     const replyTarget = threadMatch.replyTarget;
 
     // Tier 2: a colleague's exchange in Salesforce, only when Outlook has nothing.

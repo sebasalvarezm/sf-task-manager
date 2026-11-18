@@ -19,11 +19,18 @@ export type RceThreadMatch = {
   reason: string;
 };
 
-/** A Salesforce contact of the account is on the thread: the strongest evidence,
- * and the only one that works when the owner writes from another company's
- * domain (a holding company, a personal address). */
-const CONTACT_PARTICIPANT = 120;
-const DOMAIN_PARTICIPANT = 100;
+/**
+ * Someone from the company is on the thread: by address on its domain, or as
+ * one of its Salesforce contacts (the only way to spot an owner writing from a
+ * holding company or personal address). Both count the same; being a
+ * Salesforce contact only breaks a tie. It used to count for more, and an old
+ * chain with a Salesforce contact (Michael at Smartapp) beat the live one with
+ * a colleague who is not in Salesforce (Aasawari), Nov 2026.
+ */
+const COMPANY_PARTICIPANT = 100;
+const CONTACT_TIEBREAK = 2;
+/** The chain Seb picked by hand last time for this account (lib/rce-manual-send.ts). */
+const CHOSEN_BEFORE = 60;
 const NAME_IN_SUBJECT = 50;
 const USER_REPLIED = 25;
 const NAME_IN_BODY_ONLY = 5;
@@ -132,6 +139,8 @@ export function matchRceReplyThread(
   mailboxAddress: string,
   /** Email addresses of the account's Salesforce contacts, when known. */
   knownContactEmails: Iterable<string> = [],
+  /** The chain Seb sent in by hand last time, if any. */
+  preferredConversationId: string | null = null,
 ): RceThreadMatch {
   const mailbox = mailboxAddress.toLowerCase();
   const contactEmails = new Set(Array.from(knownContactEmails).map((e) => e.toLowerCase()).filter(Boolean));
@@ -181,15 +190,19 @@ export function matchRceReplyThread(
     // address on them). Once someone from the company is on the thread it adds
     // nothing: otherwise an old "Opportunity - NECS" chain outranked the live
     // conversation with the CEO whose subject did not happen to name the company.
-    if (contactParticipant) score += CONTACT_PARTICIPANT;
-    else if (domainParticipant) score += DOMAIN_PARTICIPANT;
+    if (contactParticipant || domainParticipant) score += COMPANY_PARTICIPANT + (contactParticipant ? CONTACT_TIEBREAK : 0);
     else if (subjectHit) score += NAME_IN_SUBJECT;
     else score += NAME_IN_BODY_ONLY;
     if (userReplied) score += USER_REPLIED;
     // Recency matters within a tier: the latest real exchange is the one to
     // continue, and a thread from two years ago earns nothing here.
-    const ageDays = (Date.now() - new Date(target.sentDateTime).getTime()) / 86_400_000;
+    // Age of the latest real message either way (Seb's own reply included), so
+    // the chain he last wrote in counts as live even before they answer.
+    const latest = Math.max(...messages.filter((m) => !isAutomaticReply(m)).map((m) => new Date(m.sentDateTime).getTime()).filter(Number.isFinite), new Date(target.sentDateTime).getTime());
+    const ageDays = (Date.now() - latest) / 86_400_000;
     score += RECENCY_MAX * Math.max(0, 1 - ageDays / RECENCY_HORIZON_DAYS);
+    const chosenBefore = !!preferredConversationId && (target.conversationId || target.id) === preferredConversationId;
+    if (chosenBefore) score += CHOSEN_BEFORE;
 
     const confidence: RceThreadConfidence = contactParticipant
       ? "contact"
@@ -198,7 +211,9 @@ export function matchRceReplyThread(
         : subjectHit
           ? "subject"
           : "none";
-    const reason = contactParticipant
+    const reason = chosenBefore
+      ? "You sent your last reconnect to this company in this chain"
+      : contactParticipant
       ? `${contactParticipant} (a Salesforce contact on this account) is on this thread`
       : domainParticipant
       ? `${domainParticipant} is on this thread`
