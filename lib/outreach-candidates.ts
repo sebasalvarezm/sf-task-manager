@@ -485,18 +485,20 @@ export type CheckRow = {
   accountName: string | null;
   accountUrl: string | null;
   owner: string | null;
+  /** Salesforce Account.NumberOfEmployees; null when blank. */
+  employees: number | null;
   matchCount: number;
   verdict: RuleVerdict | null;
   lastSend: OutreachSend | null;
 };
 
-type SfAccountLite = { Id: string; Name: string; Owner?: { Name?: string | null } | null };
+type SfAccountLite = { Id: string; Name: string; NumberOfEmployees?: number | null; Owner?: { Name?: string | null } | null };
 
 async function matchAccountsByNames(credentials: SfCredentials, names: string[]): Promise<Array<{ input: string; status: CheckRow["status"]; account: SfAccountLite | null; matchCount: number }>> {
   const all: SfAccountLite[] = [];
   for (let i = 0; i < names.length; i += 20) {
     const where = names.slice(i, i + 20).map((n) => `Name LIKE '%${esc(n)}%'`).join(" OR ");
-    all.push(...(await sfQuery<SfAccountLite>(`SELECT Id, Name, Owner.Name FROM Account WHERE ${where} ORDER BY Name ASC LIMIT 2000`, credentials)));
+    all.push(...(await sfQuery<SfAccountLite>(`SELECT Id, Name, NumberOfEmployees, Owner.Name FROM Account WHERE ${where} ORDER BY Name ASC LIMIT 2000`, credentials)));
   }
   const unique = [...new Map(all.map((a) => [a.Id, a])).values()];
   return names.map((input) => {
@@ -519,7 +521,7 @@ export async function checkAccountNames(names: string[]): Promise<CheckRow[]> {
   const ruleData = await loadAccountRuleData(credentials, ids);
   const today = toDateKey(new Date());
   return matches.map((m) => {
-    if (!m.account) return { input: m.input, status: m.status, accountId: null, accountName: null, accountUrl: null, owner: null, matchCount: m.matchCount, verdict: null, lastSend: null };
+    if (!m.account) return { input: m.input, status: m.status, accountId: null, accountName: null, accountUrl: null, owner: null, employees: null, matchCount: m.matchCount, verdict: null, lastSend: null };
     const data = ruleData.get(m.account.Id) ?? { sends: [], stepDates: [], hasOpenRce: false };
     const verdict = evaluateRule(data, today, settings);
     const lastSend = [...data.sends].sort((x, y) => (x.date < y.date ? 1 : -1))[0] ?? null;
@@ -530,6 +532,7 @@ export async function checkAccountNames(names: string[]): Promise<CheckRow[]> {
       accountName: m.account.Name,
       accountUrl: `${credentials.instance_url}/${m.account.Id}`,
       owner: m.account.Owner?.Name ?? null,
+      employees: typeof m.account.NumberOfEmployees === "number" ? m.account.NumberOfEmployees : null,
       matchCount: m.matchCount,
       verdict,
       lastSend,

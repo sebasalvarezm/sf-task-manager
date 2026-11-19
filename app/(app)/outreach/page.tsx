@@ -73,6 +73,7 @@ type CheckRow = {
   accountName: string | null;
   accountUrl: string | null;
   owner: string | null;
+  employees: number | null;
   matchCount: number;
   verdict: { status: RuleStatus; reason: string; eligibleOn: string | null; sendsInWindow: number } | null;
   lastSend: Send | null;
@@ -423,7 +424,7 @@ function OutreachInner() {
       {view === "rules" && settings ? (
         <RulesPanel settings={settings} onSaved={(s) => { setSettings(s); settingsRef.current = s; setShown(s.batchSize); setNotice("Rules saved. Rebuild the pool to apply them."); setView("next"); }} />
       ) : view === "check" ? (
-        <CheckList onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
+        <CheckList minEmployees={settings?.minEmployees ?? 15} onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
       ) : view === "discovery" ? (
         <DiscoveryPanel onPushed={() => setWeekCount((n) => (n === null ? null : n + 1))} />
       ) : loading ? (
@@ -679,7 +680,8 @@ function RulesPanel({ settings, onSaved }: { settings: Settings; onSaved: (s: Se
   );
 }
 
-function CheckList({ onPushed }: { onPushed: () => void }) {
+/** minEmployees: the module's own "Min employees" setting; smaller companies show in orange. */
+function CheckList({ onPushed, minEmployees }: { onPushed: () => void; minEmployees: number }) {
   const [text, setText] = useState("");
   const [rows, setRows] = useState<CheckRow[]>([]);
   const [checking, setChecking] = useState(false);
@@ -762,7 +764,15 @@ function CheckList({ onPushed }: { onPushed: () => void }) {
                     {row.status === "multiple" ? <span className="text-[13px] text-warn">{row.matchCount} matches, verify</span> : null}
                     {row.accountName && row.accountName !== row.input ? <span className="text-[13px] text-ink-muted">pasted as “{row.input}”</span> : null}
                   </div>
-                  <p className="text-[13px] text-ink-secondary">{[state, v?.reason].filter(Boolean).join(" · ")}</p>
+                  <p className="text-[13px] text-ink-secondary">
+                    {row.accountId ? (
+                      <span className={row.employees != null && row.employees < minEmployees ? "font-medium text-warn" : "text-ink"} title={`Employees on the Salesforce account. Orange means under ${minEmployees}, your Min employees setting.`}>
+                        {row.employees == null ? "Employees unknown" : `${row.employees.toLocaleString("en-CA")} employee${row.employees === 1 ? "" : "s"}`}
+                      </span>
+                    ) : null}
+                    {row.accountId && (state || v?.reason) ? " · " : null}
+                    {[state, v?.reason].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
                 {row.accountId ? (
                   isPushed ? (

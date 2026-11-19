@@ -69,6 +69,10 @@ function CallsPageContent() {
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
 
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+  // Saved per week (lib/call-logger-handled.ts): what was dismissed or logged
+  // on an earlier visit stays hidden when the week is loaded again.
+  const [handled, setHandled] = useState<Map<string, { status: "dismissed" | "logged"; at: string }>>(new Map());
+  const [showHidden, setShowHidden] = useState(false);
   const [manualMatches, setManualMatches] = useState<Map<string, ManualMatch>>(new Map());
 
   const [submitting, setSubmitting] = useState(false);
@@ -222,6 +226,8 @@ function CallsPageContent() {
     setSuggestions(new Map());
     setEntries(new Map());
     setDismissedIds(new Set());
+    setHandled(new Map());
+    setShowHidden(false);
     setManualMatches(new Map());
     setSubmitResult(null);
     setHasAnalyzed(false);
@@ -241,9 +247,18 @@ function CallsPageContent() {
       }
 
       const data = await res.json();
-      setMeetings(data.meetings ?? []);
+      const weekMeetings: MeetingRow[] = data.meetings ?? [];
+      // Meetings handled on an earlier visit this week stay hidden.
+      const saved = await fetch(`/api/calls/handled?week=${selectedWeek.start}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : { handled: {} }))
+        .catch(() => ({ handled: {} })) as { handled?: Record<string, { status: "dismissed" | "logged"; at: string }> };
+      const savedMap = new Map(Object.entries(saved.handled ?? {}).filter(([id]) => weekMeetings.some((m) => m.eventId === id)));
+      setHandled(savedMap);
+      setDismissedIds(new Set(savedMap.keys()));
+      setMeetings(weekMeetings);
       setHasAnalyzed(true);
-      void loadGranolaNotes(selectedWeek, data.meetings ?? []);
+      // No suggestions are written for meetings already handled.
+      void loadGranolaNotes(selectedWeek, weekMeetings.filter((m) => !savedMap.has(m.eventId)));
     } catch (err) {
       setAnalyzeError(
         err instanceof Error ? err.message : "Unexpected error"
@@ -380,6 +395,29 @@ function CallsPageContent() {
       next.add(eventId);
       return next;
     });
+    setHandled((prev) => new Map(prev).set(eventId, { status: "dismissed", at: new Date().toISOString() }));
+    if (selectedWeek) void saveHandled([eventId], "dismissed", selectedWeek.start);
+  }
+
+  /** Remember dismissals and logged calls for this week, so they stay hidden next visit. */
+  async function saveHandled(eventIds: string[], status: "dismissed" | "logged", week: string) {
+    const res = await fetch("/api/calls/handled", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventIds, status, week }) }).catch(() => null);
+    if (!res || !res.ok) setAnalyzeError("Couldn't save that for your next visit; the meeting may show again when you reload this week.");
+  }
+
+  /** Bring a hidden meeting back into the table. */
+  async function restoreMeeting(eventId: string) {
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(eventId);
+      return next;
+    });
+    setHandled((prev) => {
+      const next = new Map(prev);
+      next.delete(eventId);
+      return next;
+    });
+    await fetch("/api/calls/handled", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventIds: [eventId] }) }).catch(() => null);
   }
 
   // ── Entry management ───────────────────────────────────────────────────────
@@ -454,6 +492,12 @@ function CallsPageContent() {
             .map((x) => x.eventId as string),
         );
         if (successfulEventIds.size > 0) {
+          if (selectedWeek) void saveHandled([...successfulEventIds], "logged", selectedWeek.start);
+          setHandled((prev) => {
+            const next = new Map(prev);
+            successfulEventIds.forEach((id) => next.set(id, { status: "logged", at: new Date().toISOString() }));
+            return next;
+          });
           setDismissedIds((prev) => {
             const next = new Set(prev);
             successfulEventIds.forEach((id) => next.add(id));
@@ -813,10 +857,30 @@ function CallsPageContent() {
                   {meetings.length !== 1 ? "s" : ""} found
                   {dismissedIds.size > 0 && (
                     <span className="ml-2 text-ink-muted">
-                      ({dismissedIds.size} dismissed)
+                      · {dismissedIds.size} hidden ({[...handled.values()].filter((h) => h.status === "logged").length} logged, {dismissedIds.size - [...handled.values()].filter((h) => h.status === "logged").length} dismissed){" "}
+                      <button type="button" onClick={() => setShowHidden((v) => !v)} className="text-info underline-offset-2 hover:underline">
+                        {showHidden ? "Hide list" : "Show"}
+                      </button>
                     </span>
                   )}
                 </div>
+                {showHidden && dismissedIds.size > 0 && (
+                  <ul className="mb-3 divide-y divide-line rounded-md border border-line bg-white text-sm">
+                    {meetings.filter((m) => dismissedIds.has(m.eventId)).map((m) => (
+                      <li key={m.eventId} className="flex items-center justify-between gap-3 px-3 py-2">
+                        <span className="min-w-0 truncate text-ink-secondary">
+                          {m.subject}
+                          <span className="ml-2 text-xs text-ink-muted">{handled.get(m.eventId)?.status === "logged" ? "Logged" : "Dismissed"}</span>
+                        </span>
+                        {handled.get(m.eventId)?.status !== "logged" ? (
+                          <button type="button" onClick={() => void restoreMeeting(m.eventId)} className="shrink-0 text-info underline-offset-2 hover:underline">
+                            Bring back
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 <CallLoggerTable
                   meetings={meetings}
                   entries={entries}
