@@ -7,7 +7,9 @@ import { WeekRange, generateWeeks, currentWeekIndex } from "@/app/components/Wee
 import WeekPicker from "@/app/components/WeekPicker";
 import { addDays, format } from "date-fns";
 
-import TaskTable, { TaskAction } from "@/app/components/TaskTable";
+import TaskTable, { TaskAction, codeFor } from "@/app/components/TaskTable";
+import { ExportButton, exportName } from "@/app/components/ExportButton";
+import { linkCell, websiteCell, type ExportRequest } from "@/lib/xlsx-export-types";
 import { keepAfterFailure } from "@/lib/task-apply";
 import { shortDay, splitForSchedule, type ScheduledItem } from "@/lib/scheduled-actions-core";
 import ConnectSalesforce from "@/app/components/ConnectSalesforce";
@@ -286,6 +288,48 @@ function TasksPageContent() {
   const looksBs = (t: SalesforceTask) =>
     (t.AccountFounded != null && t.AccountFounded > BS_FOUNDED_AFTER) ||
     (t.AccountEmployees != null && t.AccountEmployees < BS_MIN_EMPLOYEES);
+  /** The week's tasks as on screen, with the codes queued so far. */
+  function tasksExport(): ExportRequest | null {
+    if (!selectedWeek || weekTasks.length === 0) return null;
+    return {
+      filename: exportName("Tasks", `week of ${selectedWeek.start}`),
+      sheets: [
+        {
+          name: `Tasks ${selectedWeek.start}`,
+          title: `Tasks · week of ${selectedWeek.start}`,
+          subtitle: `Open Salesforce tasks due ${selectedWeek.start} to ${selectedWeek.end}. Amber: founded after ${BS_FOUNDED_AFTER} or under ${BS_MIN_EMPLOYEES} employees.`,
+          columns: [
+            { key: "account", header: "Account" },
+            { key: "website", header: "Website" },
+            { key: "employees", header: "Employees", type: "integer" },
+            { key: "founded", header: "Founded", type: "year" },
+            { key: "kind", header: "Kind" },
+            { key: "subject", header: "Task subject", type: "wrap" },
+            { key: "due", header: "Due date", type: "date" },
+            { key: "priority", header: "Priority" },
+            { key: "queued", header: "Queued action" },
+          ],
+          rows: weekTasks.map((t) => {
+            const n = t.AccountId ? nudges?.[t.AccountId] : undefined;
+            const w = waitingByTask.get(t.Id);
+            const a = actions.get(t.Id);
+            return {
+              account: linkCell(t.AccountName, t.AccountUrl),
+              website: websiteCell(t.AccountWebsite),
+              employees: t.AccountEmployees != null && t.AccountEmployees < BS_MIN_EMPLOYEES ? { value: t.AccountEmployees, tone: "warn" as const } : t.AccountEmployees,
+              founded: t.AccountFounded != null && t.AccountFounded > BS_FOUNDED_AFTER ? { value: t.AccountFounded, tone: "warn" as const } : t.AccountFounded,
+              kind: !nudges ? null : !n ? "Reconnect" : n.via === "sent" ? "Follow-up" : `Nudge · ${n.topic}`,
+              subject: t.Subject,
+              due: t.ActivityDate,
+              priority: t.Priority,
+              queued: w ? `RCE waiting for ${w.runOn}` : a ? codeFor(a) || null : null,
+            };
+          }),
+        },
+      ],
+    };
+  }
+
   // ── Nudges: accounts that wrote in within 45 days ─────────────────────────
   const [nudges, setNudges] = useState<Record<string, { lastInAt: string; topic: string; via?: "email" | "call" | "sent" }> | undefined>(undefined);
   // Accounts already classified this visit. Sending a nudge removes one task,
@@ -660,6 +704,7 @@ function TasksPageContent() {
               >
                 Pre-mark BS{bsCandidates.length > 0 ? ` (${bsCandidates.length})` : ""}
               </Button>
+              <ExportButton build={tasksExport} disabled={tasksLoading || weekTasks.length === 0} />
               <Button
                 variant="ghost"
                 size="sm"

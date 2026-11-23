@@ -11,6 +11,8 @@ import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/app/components/ui/Button";
 import { staffLine, type CompanyStaff } from "@/lib/pdl";
+import { ExportButton, exportName } from "@/app/components/ExportButton";
+import { websiteCell, type ExportRequest } from "@/lib/xlsx-export-types";
 
 type Candidate = {
   id: string;
@@ -84,9 +86,53 @@ export default function DiscoveryPanel({ onPushed, onCount }: { onPushed?: () =>
   const quota = data ? `${data.pushed} of ${data.settings.pushesPerWeek} pushed this week` : "";
   const list = showDone ? done : fresh;
 
+  function buildExport(): ExportRequest | null {
+    if (list.length === 0) return null;
+    const label = showDone ? "Pushed and skipped" : "New";
+    return {
+      filename: exportName(`Discovery - ${label}`, new Date().toISOString().slice(0, 10)),
+      sheets: [
+        {
+          name: `Discovery ${label}`,
+          title: `Outreach · Discovery (${label.toLowerCase()})`,
+          subtitle: quota,
+          columns: [
+            { key: "company", header: "Company" },
+            { key: "website", header: "Website" },
+            { key: "thesis", header: "Thesis" },
+            { key: "what", header: "What they do", type: "wrap" },
+            { key: "staff", header: "Staff", type: "integer" },
+            { key: "core", header: "Staff in core regions", type: "percent" },
+            { key: "hq", header: "HQ" },
+            { key: "flag", header: "Staff flag", type: "wrap" },
+            { key: "found", header: "Found week", type: "date" },
+            { key: "status", header: "Status" },
+            { key: "why", header: "Why it fits", type: "wrap" },
+            { key: "sources", header: "Sources", type: "wrap" },
+          ],
+          rows: list.map((c) => ({
+            company: c.name,
+            website: websiteCell(c.website),
+            thesis: thesisName.get(c.thesis_id ?? "") ?? null,
+            what: c.description,
+            staff: c.staff?.total ?? null,
+            core: c.staff?.coreShare ?? null,
+            hq: [c.staff?.city, c.staff?.country].filter(Boolean).join(", ") || null,
+            flag: c.staff?.flag ? { value: c.staff.flag, tone: "warn" as const } : null,
+            found: c.found_week,
+            status: c.status === "new" ? "New" : c.status === "pushed" ? "Pushed" : c.status === "in_salesforce" ? "In Salesforce" : `Skipped${c.skip_reason ? `: ${c.skip_reason}` : ""}`,
+            why: Object.entries(c.reasoning).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`).join("\n"),
+            sources: c.citations.map((x) => x.url).join("\n"),
+          })),
+        },
+      ],
+    };
+  }
+
   return (
     <div>
-      <p className="mb-3 text-sm text-ink-secondary">
+      <div className="mb-3 flex items-start justify-between gap-3">
+      <p className="text-sm text-ink-secondary">
         {quota}
         {data?.settings.paused ? " · Discovery is paused" : ""}
         {" · "}
@@ -100,6 +146,8 @@ export default function DiscoveryPanel({ onPushed, onCount }: { onPushed?: () =>
           </>
         ) : null}
       </p>
+      {list.length > 0 ? <ExportButton build={buildExport} /> : null}
+      </div>
       {error ? <p className="mb-4 rounded-sm border border-danger bg-white px-3 py-2 text-sm text-ink">{error}</p> : null}
       {notice ? <p className="mb-4 text-sm text-ink-secondary">{notice}</p> : null}
       {list.length === 0 ? (

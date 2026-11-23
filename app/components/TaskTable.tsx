@@ -31,7 +31,7 @@ function parseShortcode(
 }
 
 /** The shortcode for an action, so a code set from outside the table (a draft restore, Pre-mark BS) shows in the box. */
-function codeFor(action: TaskAction): string {
+export function codeFor(action: TaskAction): string {
   if (action.actionType === "hard_delete") return "D";
   if (action.actionType === "complete_reschedule") return `RCE${action.days}`;
   if (action.actionType === "delay") return `P${action.days}`;

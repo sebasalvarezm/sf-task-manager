@@ -29,6 +29,8 @@ import { Table } from "@/app/components/ui/Table";
 import { Spinner } from "@/app/components/ui/Spinner";
 import { Input } from "@/app/components/ui/Input";
 import { Button } from "@/app/components/ui/Button";
+import { ExportButton, exportName } from "@/app/components/ExportButton";
+import { websiteCell, type ExportColumn } from "@/lib/xlsx-export-types";
 import {
   ExternalLink,
   Loader2,
@@ -2442,10 +2444,53 @@ function DrillModal({
     );
   }
 
+  /** The list as shown: opportunities in stage order, with the same columns. */
+  function buildExport() {
+    if (!rows || rows.length === 0) return null;
+    const ordered = isOpps && grouped ? grouped.flatMap((g) => g.rows) : rows;
+    const columns: ExportColumn[] = [
+      { key: "company", header: "Company" },
+      ...(isOpps ? [{ key: "opportunity", header: "Opportunity" }, { key: "originator", header: "Originator" }] : []),
+      { key: "website", header: "Website" },
+      { key: "employees", header: "Employees", type: "integer" },
+      { key: "country", header: "Country" },
+      { key: "founded", header: "Founded", type: "year" },
+      ...(isOpps
+        ? ([{ key: "stage", header: "Stage" }, { key: "amount", header: "Amount", type: "money" }, { key: "starred", header: "Starred" }] as ExportColumn[])
+        : ([{ key: "lastActivity", header: "Last activity", type: "date" }] as ExportColumn[])),
+    ];
+    const range = isOpps ? "current snapshot" : `${rangeStart} to ${rangeEnd}`;
+    return {
+      filename: exportName(target.title, isOpps ? new Date().toISOString().slice(0, 10) : range),
+      sheets: [
+        {
+          name: target.title,
+          title: target.title,
+          subtitle: `${range} · ${TEAM_CONFIG[team]?.label ?? team}`,
+          columns,
+          rows: ordered.map((r) => ({
+            company: r.accountName,
+            opportunity: r.opportunityName ?? null,
+            originator: r.originator ?? null,
+            website: websiteCell(r.website),
+            employees: r.numberOfEmployees,
+            country: r.country,
+            founded: r.yearEstablished,
+            stage: r.stage ?? null,
+            amount: r.amount ?? null,
+            starred: r.opportunityId && starredIds?.has(r.opportunityId) ? { value: "Starred", tone: "warn" as const } : null,
+            lastActivity: r.lastActivityDate,
+          })),
+        },
+      ],
+    };
+  }
+
   return (
     <Modal
       open
       onClose={onClose}
+      footer={rows && rows.length > 0 ? <ExportButton build={buildExport} /> : undefined}
       title={renderTitleWithNav()}
       description={
         rows == null

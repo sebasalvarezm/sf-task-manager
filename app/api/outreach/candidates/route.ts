@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { friendlyConnectionError, isConnectionError } from "@/lib/connection-errors";
 import { isAuthenticated } from "@/lib/auth";
 import { listCandidates, pushCandidate, refreshCandidates, reopenCandidate, skipCandidate } from "@/lib/outreach-candidates";
+import { withFit } from "@/lib/factor-fit";
+import { getQualityThresholds } from "@/lib/outreach-quality-settings";
 
 export const dynamic = "force-dynamic";
 // Refresh reads a year of E1s plus the task history of every account in the pool.
@@ -21,7 +23,13 @@ function fail(err: unknown) {
 export async function GET() {
   if (!(await isAuthenticated())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
-    return NextResponse.json({ items: await listCandidates() });
+    // Factor fit from the latest What gets replies results; read only.
+    const { rows, fit } = await withFit(
+      await listCandidates(),
+      (r) => ({ country: r.country, industry: r.industry, employees: r.employees, founded: r.founded ?? null, prior_sends: r.send_count ?? null }),
+      getQualityThresholds,
+    );
+    return NextResponse.json({ items: rows, fit });
   } catch (err) {
     return fail(err);
   }

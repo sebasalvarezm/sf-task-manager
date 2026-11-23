@@ -6,6 +6,8 @@ import { Modal } from "./ui/Modal";
 import { Table } from "./ui/Table";
 import { Button } from "./ui/Button";
 import { Alert } from "./ui/Alert";
+import { ExportButton, exportName } from "./ExportButton";
+import { linkCell, websiteCell, type ExportCell } from "@/lib/xlsx-export-types";
 import {
   QUALITY_FLAG_LABELS,
   parseYearInput,
@@ -237,6 +239,48 @@ export function OutreachQualityModal({
       }`
     : undefined;
 
+  /** As on screen: blank in Salesforce reads "Not set" in amber; a value that failed its check is red. */
+  function fieldCell(value: string | number | null, key: QualityFlagKey, row: FlaggedRow): ExportCell {
+    if (row.missing.includes(key)) return { value: "Not set", tone: "warn" };
+    return row.flags.includes(key) ? { value, tone: "bad" } : value;
+  }
+
+  function buildExport() {
+    if (!rows || rows.length === 0) return null;
+    return {
+      filename: exportName(target!.title, `${target!.start} to ${target!.end}`),
+      sheets: [
+        {
+          name: potential ? "Potential outreach" : "Flagged outreach",
+          title: target!.title,
+          subtitle: [`${target!.start} to ${target!.end}`, description].filter(Boolean).join(" · "),
+          columns: [
+            { key: "company", header: "Company" },
+            { key: "website", header: "Website" },
+            { key: "sent", header: "Sent", type: "date" as const },
+            { key: "sender", header: "Sender" },
+            { key: "type", header: "Type" },
+            { key: "country", header: "Country" },
+            { key: "founded", header: "Founded", type: "year" as const },
+            { key: "employees", header: "Employees", type: "integer" as const },
+            { key: "flags", header: "Failed checks" },
+          ],
+          rows: rows.map((row) => ({
+            company: linkCell(row.accountName, row.accountUrl),
+            website: websiteCell(row.website),
+            sent: row.activityDate,
+            sender: row.owner,
+            type: row.subjectType || null,
+            country: fieldCell(row.country, "geography", row),
+            founded: fieldCell(row.yearEstablished, "founded", row),
+            employees: fieldCell(row.numberOfEmployees != null && row.numberOfEmployees > 0 ? row.numberOfEmployees : null, "employees", row),
+            flags: row.flags.map((f) => (row.missing.includes(f) ? `${QUALITY_FLAG_LABELS[f]} not set` : QUALITY_FLAG_LABELS[f])).join(", "),
+          })),
+        },
+      ],
+    };
+  }
+
   return (
     <Modal
       open
@@ -244,6 +288,7 @@ export function OutreachQualityModal({
       size="xl"
       title={target.title}
       description={description}
+      footer={rows && rows.length > 0 ? <ExportButton build={buildExport} /> : undefined}
     >
       {!foundedAvailable && (
         <Alert variant="warn" className="mb-4">

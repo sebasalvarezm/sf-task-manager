@@ -1,7 +1,7 @@
 import { getValidCredentials } from "./token-manager";
 import { sfQuery, sfFetch, assertSalesforceId } from "./sf-query";
 import { getSupabaseAdmin, type SfCredentials } from "./supabase";
-import { canonicalizeCountry, isTierOneCountry } from "./outreach-quality";
+import { canonicalizeCountry, extractYear, isTierOneCountry } from "./outreach-quality";
 import { describeResponseFields, pickResponseTypeValue } from "./inbox-salesforce";
 import {
   coerceRuleSettings,
@@ -123,6 +123,10 @@ export type CandidateRow = {
   website: string | null;
   account_url: string | null;
   employees: number | null;
+  /** Year founded (Salesforce Year_Established__c). Needs the founded column; null until the pool is rebuilt. */
+  founded?: number | null;
+  /** Sequence starts to the account in the last 400 days (up to 12), counted before the list trims sends. */
+  send_count?: number;
   country: string | null;
   industry: string | null;
   owner_name: string | null;
@@ -225,6 +229,7 @@ type PoolRow = TaskRow & {
     NumberOfEmployees?: number | null;
     BillingCountry?: string | null;
     Industry?: string | null;
+    Year_Established__c?: string | null;
     Owner?: { Name?: string | null } | null;
     RecordType?: { Name?: string | null } | null;
     Responded__c?: string | boolean | null;
@@ -236,6 +241,7 @@ export type PoolAccount = {
   name: string;
   website: string | null;
   employees: number | null;
+  founded: number | null;
   country: string | null;
   industry: string | null;
   ownerName: string | null;
@@ -270,12 +276,15 @@ export async function fetchCandidatePool(credentials: SfCredentials, settings: C
   ]
     .filter(Boolean)
     .join(" AND ");
-  const rows = await sfQuery<PoolRow & { Account?: Record<string, unknown> }>(
+  const query = (withFounded: boolean) =>
     `SELECT AccountId, ActivityDate, CompletedDateTime, Owner.Name, ` +
-      `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry, Account.Industry, ` +
-      `Account.Owner.Name, Account.Responded__c${extra} FROM Task WHERE ${where} ORDER BY ActivityDate DESC`,
-    credentials,
-  );
+    `Account.Name, Account.Website, Account.NumberOfEmployees, Account.BillingCountry, Account.Industry, ` +
+    `${withFounded ? "Account.Year_Established__c, " : ""}Account.Owner.Name, Account.Responded__c${extra} FROM Task WHERE ${where} ORDER BY ActivityDate DESC`;
+  // Founded feeds factor fit only; an org without the field still gets its pool.
+  const rows = await sfQuery<PoolRow & { Account?: Record<string, unknown> }>(query(true), credentials).catch((err) => {
+    if (err instanceof Error && /Year_Established__c/i.test(err.message)) return sfQuery<PoolRow & { Account?: Record<string, unknown> }>(query(false), credentials);
+    throw err;
+  });
   const byAccount = new Map<string, PoolAccount>();
   for (const r of rows) {
     if (!r.AccountId || !r.Account) continue;
@@ -298,6 +307,7 @@ export async function fetchCandidatePool(credentials: SfCredentials, settings: C
       name: acc.Name ?? "Unknown account",
       website: acc.Website ?? null,
       employees: typeof acc.NumberOfEmployees === "number" ? acc.NumberOfEmployees : null,
+      founded: extractYear(acc.Year_Established__c ?? null),
       country,
       industry: acc.Industry ?? null,
       ownerName: acc.Owner?.Name ?? null,
@@ -339,6 +349,7 @@ export async function refreshCandidates(): Promise<RefreshSummary> {
       website: a.website,
       account_url: `${credentials.instance_url}/${a.id}`,
       employees: a.employees,
+      founded: a.founded,
       country: a.country,
       industry: a.industry,
       owner_name: a.ownerName,
@@ -356,8 +367,16 @@ export async function refreshCandidates(): Promise<RefreshSummary> {
   });
 
   const supabase = getSupabaseAdmin();
+  // Until supabase/2026-11-outreach-founded.sql is run there is no founded column: save the rest.
+  let withFounded = true;
   for (let i = 0; i < rows.length; i += 200) {
-    const { error } = await supabase.from("outreach_candidates").upsert(rows.slice(i, i + 200), { onConflict: "sf_account_id" });
+    const batch = withFounded ? rows.slice(i, i + 200) : rows.slice(i, i + 200).map(({ founded: _f, ...r }) => r);
+    const { error } = await supabase.from("outreach_candidates").upsert(batch, { onConflict: "sf_account_id" });
+    if (error && withFounded && isMissingFounded(error.message)) {
+      withFounded = false;
+      i -= 200;
+      continue;
+    }
     if (error) throw new Error(error.message);
   }
   const { data: dropped, error: dropError } = await supabase
@@ -378,19 +397,35 @@ const LIST_COLUMNS =
   "sf_account_id, account_name, website, account_url, employees, country, industry, owner_name, last_e1_at, last_e1_by, sends, " +
   "rule_status, rule_reason, eligible_on, sends_in_window, screen_status, screen_reason, screen_facts, review_status, skip_reason, reviewed_at, pushed_week_start, refreshed_at";
 
+/** The founded column arrives with supabase/2026-11-outreach-founded.sql; before that, reads and writes skip it. */
+export function isMissingFounded(message: string): boolean {
+  return /founded/i.test(message) && /column|schema cache|does not exist/i.test(message);
+}
+
 /** Every account in the pool. Supabase caps a single select at 1,000 rows, so this pages through. */
 export async function listCandidates(): Promise<CandidateRow[]> {
   const supabase = getSupabaseAdmin();
   const out: CandidateRow[] = [];
   const page = 1000;
+  let columns = `${LIST_COLUMNS}, founded`;
   for (let from = 0; ; from += page) {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("outreach_candidates")
-      .select(LIST_COLUMNS)
+      .select(columns)
       .eq("in_pool", true)
       .order("last_e1_at", { ascending: true, nullsFirst: true })
       .order("sf_account_id", { ascending: true })
       .range(from, from + page - 1);
+    if (error && columns !== LIST_COLUMNS && isMissingFounded(error.message)) {
+      columns = LIST_COLUMNS;
+      ({ data, error } = await supabase
+        .from("outreach_candidates")
+        .select(columns)
+        .eq("in_pool", true)
+        .order("last_e1_at", { ascending: true, nullsFirst: true })
+        .order("sf_account_id", { ascending: true })
+        .range(from, from + page - 1));
+    }
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as unknown as CandidateRow[];
     for (const r of rows) {
@@ -398,6 +433,8 @@ export async function listCandidates(): Promise<CandidateRow[]> {
       const g = (f?.group ?? null) as { matched?: boolean; group?: string | null; mainGroup?: string | null } | null;
       out.push({
         ...r,
+        founded: typeof r.founded === "number" ? r.founded : null,
+        send_count: Array.isArray(r.sends) ? r.sends.length : 0,
         sends: Array.isArray(r.sends) ? r.sends.slice(0, 5) : [],
         screen_facts: f ? { summary: f.summary ?? null, ownership: f.ownership ?? null, investment: f.investment ?? null, softwareType: f.softwareType ?? null, linkedin: typeof f.linkedin === "string" ? f.linkedin : null, linkedinChecked: f.linkedinChecked === true, group: g?.matched ? { group: g.group ?? null, mainGroup: g.mainGroup ?? null } : null } : null,
       });
@@ -487,18 +524,29 @@ export type CheckRow = {
   owner: string | null;
   /** Salesforce Account.NumberOfEmployees; null when blank. */
   employees: number | null;
+  founded: number | null;
+  country: string | null;
+  industry: string | null;
+  /** Sequence starts in the last 400 days. */
+  sendCount: number;
   matchCount: number;
   verdict: RuleVerdict | null;
   lastSend: OutreachSend | null;
 };
 
-type SfAccountLite = { Id: string; Name: string; NumberOfEmployees?: number | null; Owner?: { Name?: string | null } | null };
+type SfAccountLite = { Id: string; Name: string; NumberOfEmployees?: number | null; BillingCountry?: string | null; Industry?: string | null; Year_Established__c?: string | null; Owner?: { Name?: string | null } | null };
 
 async function matchAccountsByNames(credentials: SfCredentials, names: string[]): Promise<Array<{ input: string; status: CheckRow["status"]; account: SfAccountLite | null; matchCount: number }>> {
   const all: SfAccountLite[] = [];
   for (let i = 0; i < names.length; i += 20) {
     const where = names.slice(i, i + 20).map((n) => `Name LIKE '%${esc(n)}%'`).join(" OR ");
-    all.push(...(await sfQuery<SfAccountLite>(`SELECT Id, Name, NumberOfEmployees, Owner.Name FROM Account WHERE ${where} ORDER BY Name ASC LIMIT 2000`, credentials)));
+    const q = (withFounded: boolean) => `SELECT Id, Name, NumberOfEmployees, BillingCountry, Industry, ${withFounded ? "Year_Established__c, " : ""}Owner.Name FROM Account WHERE ${where} ORDER BY Name ASC LIMIT 2000`;
+    all.push(
+      ...(await sfQuery<SfAccountLite>(q(true), credentials).catch((err) => {
+        if (err instanceof Error && /Year_Established__c/i.test(err.message)) return sfQuery<SfAccountLite>(q(false), credentials);
+        throw err;
+      })),
+    );
   }
   const unique = [...new Map(all.map((a) => [a.Id, a])).values()];
   return names.map((input) => {
@@ -521,7 +569,7 @@ export async function checkAccountNames(names: string[]): Promise<CheckRow[]> {
   const ruleData = await loadAccountRuleData(credentials, ids);
   const today = toDateKey(new Date());
   return matches.map((m) => {
-    if (!m.account) return { input: m.input, status: m.status, accountId: null, accountName: null, accountUrl: null, owner: null, employees: null, matchCount: m.matchCount, verdict: null, lastSend: null };
+    if (!m.account) return { input: m.input, status: m.status, accountId: null, accountName: null, accountUrl: null, owner: null, employees: null, founded: null, country: null, industry: null, sendCount: 0, matchCount: m.matchCount, verdict: null, lastSend: null };
     const data = ruleData.get(m.account.Id) ?? { sends: [], stepDates: [], hasOpenRce: false };
     const verdict = evaluateRule(data, today, settings);
     const lastSend = [...data.sends].sort((x, y) => (x.date < y.date ? 1 : -1))[0] ?? null;
@@ -533,6 +581,10 @@ export async function checkAccountNames(names: string[]): Promise<CheckRow[]> {
       accountUrl: `${credentials.instance_url}/${m.account.Id}`,
       owner: m.account.Owner?.Name ?? null,
       employees: typeof m.account.NumberOfEmployees === "number" ? m.account.NumberOfEmployees : null,
+      founded: extractYear(m.account.Year_Established__c ?? null),
+      country: canonicalizeCountry(m.account.BillingCountry ?? null) ?? m.account.BillingCountry ?? null,
+      industry: m.account.Industry ?? null,
+      sendCount: data.sends.length,
       matchCount: m.matchCount,
       verdict,
       lastSend,

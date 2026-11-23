@@ -236,6 +236,42 @@ function holds(c: Cond, v: Derived): boolean {
 
 const all = (conds: Cond[] | undefined, v: Derived) => (conds ?? []).every((c) => holds(c, v));
 
+// ── Using a factor on an account before anything is sent ────────────────────
+
+/** Fields known about a company before it is emailed. A factor that only uses these can rank a list of accounts. */
+export const ACCOUNT_FIELDS: readonly Field[] = ["country", "country_group", "industry", "quality", "employees", "founded", "prior_sends"];
+
+export type AccountFacts = {
+  country: string | null;
+  industry: string | null;
+  quality: string | null;
+  employees: number | null;
+  founded: number | null;
+  /** Earlier sequence starts to the account. */
+  prior_sends: number | null;
+};
+
+/** True when every condition (test, compare, scope) is about the company itself, not the email, timing or contact. */
+export function isAccountFactor(spec: FactorSpec): boolean {
+  const conds = [...spec.test, ...(spec.compare ?? []), ...(spec.scope ?? [])];
+  return conds.length > 0 && conds.every((c) => ACCOUNT_FIELDS.includes(c.field));
+}
+
+/** Would a send to this account land in the factor's group A? Unknown values never count. Pure. */
+export function accountInGroupA(spec: FactorSpec, facts: AccountFacts): boolean {
+  const v = Object.fromEntries([...TEXT_FIELDS, ...NUMBER_FIELDS, ...FLAG_FIELDS].map((f) => [f, null])) as Derived;
+  Object.assign(v, {
+    country: facts.country,
+    country_group: countryGroup(facts.country),
+    industry: facts.industry,
+    quality: facts.quality,
+    employees: facts.employees,
+    founded: facts.founded,
+    prior_sends: facts.prior_sends,
+  });
+  return all(spec.scope, v) && all(spec.test, v);
+}
+
 // ── Checking a proposed factor ──────────────────────────────────────────────
 
 const ID = /^[a-z0-9][a-z0-9_-]{1,40}$/;

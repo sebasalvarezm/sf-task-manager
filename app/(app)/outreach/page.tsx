@@ -7,6 +7,9 @@ import { ChevronDown, MoreHorizontal } from "lucide-react";
 import { PageContent } from "@/app/components/ui/PageContent";
 import { Button } from "@/app/components/ui/Button";
 import DiscoveryPanel from "@/app/components/DiscoveryPanel";
+import { ExportButton, exportName } from "@/app/components/ExportButton";
+import { Banded, FitLegend, FitLine, SORT_LABEL, SortSelect, fitText, loadSort, saveSort, sortRows, type Fit, type FitContext, type SortKey } from "@/app/components/FitSort";
+import { linkCell, websiteCell, type ExportColumn, type ExportRequest } from "@/lib/xlsx-export-types";
 
 /**
  * Outreach: the next companies to email, prequalified.
@@ -47,6 +50,11 @@ type Row = {
   reviewed_at: string | null;
   pushed_week_start: string | null;
   refreshed_at: string;
+  /** Year founded; null until the founded column exists and the pool is rebuilt. */
+  founded?: number | null;
+  /** Sequence starts in the last 400 days (up to 12). */
+  send_count?: number;
+  fit?: Fit | null;
 };
 
 type Settings = {
@@ -74,6 +82,11 @@ type CheckRow = {
   accountUrl: string | null;
   owner: string | null;
   employees: number | null;
+  founded: number | null;
+  country: string | null;
+  industry: string | null;
+  sendCount: number;
+  fit?: Fit | null;
   matchCount: number;
   verdict: { status: RuleStatus; reason: string; eligibleOn: string | null; sendsInWindow: number } | null;
   lastSend: Send | null;
@@ -139,10 +152,77 @@ function describe(row: Row): string {
   else if (row.industry) parts.push(row.industry);
   if (row.country) parts.push(row.country);
   if (row.employees !== null) parts.push(`${row.employees} people`);
+  if (row.founded) parts.push(`founded ${row.founded}`);
   if (f?.group?.group) parts.push(f.group.group);
   if (!f?.summary && f?.ownership && OWNERSHIP[f.ownership]) parts.push(OWNERSHIP[f.ownership]);
   if (!f?.summary && f?.investment) parts.push(`raised ${f.investment}`);
   return parts.join(" · ");
+}
+
+/** The state a row is in, as line three shows it (or the rule for "next"). */
+function rowState(row: Row, view: View): string {
+  if (view === "waiting") return row.rule_reason;
+  if (view === "filtered") return row.screen_reason ?? "";
+  if (view === "done") return row.review_status === "pushed" ? `Pushed, week of ${row.pushed_week_start ?? ""}` : `Skipped${row.skip_reason ? `: ${row.skip_reason}` : ""}`;
+  return row.screen_status === "unclear" ? `Check was unclear: ${row.screen_reason ?? ""}` : "Ready";
+}
+
+/** The list on screen as an Excel sheet: same rows, same order, one column per fact. */
+function listExport(rows: Row[], view: View, minEmployees: number, statusLine: string, sort: SortKey | null): ExportRequest {
+  const columns: ExportColumn[] = [
+    { key: "company", header: "Company" },
+    { key: "website", header: "Website" },
+    { key: "what", header: "What they do", type: "wrap" },
+    { key: "country", header: "Country" },
+    { key: "employees", header: "Employees", type: "integer" },
+    { key: "founded", header: "Founded", type: "year" },
+    { key: "fit", header: "Factor fit", type: "number" },
+    { key: "fitWhy", header: "Fit from" },
+    { key: "group", header: "Group" },
+    { key: "ownership", header: "Ownership" },
+    { key: "linkedin", header: "LinkedIn" },
+    { key: "owner", header: "Account owner" },
+    { key: "lastE1", header: "Last contacted", type: "date" },
+    { key: "lastBy", header: "By" },
+    { key: "sequences", header: "Sequences sent (400 days)", type: "integer" },
+    { key: "sends", header: `Sends in window`, type: "integer" },
+    ...(view === "waiting" ? [{ key: "eligibleOn", header: "Eligible on", type: "date" as const }] : []),
+    { key: "state", header: view === "next" ? "Check" : "Status", type: "wrap" },
+  ];
+  return {
+    filename: exportName(`Outreach - ${VIEW_LABEL[view]}`, new Date().toISOString().slice(0, 10)),
+    sheets: [
+      {
+        name: VIEW_LABEL[view],
+        title: `Outreach · ${VIEW_LABEL[view]}`,
+        subtitle: sort ? `${statusLine} · sorted by ${SORT_LABEL[sort].toLowerCase()}` : statusLine,
+        columns,
+        rows: rows.map((r) => {
+          const f = r.screen_facts;
+          return {
+            company: linkCell(r.account_name, r.account_url),
+            website: websiteCell(r.website),
+            what: f?.summary ?? f?.softwareType ?? r.industry,
+            country: r.country,
+            employees: r.employees !== null && r.employees < minEmployees ? { value: r.employees, tone: "warn" as const } : r.employees,
+            founded: r.founded ?? null,
+            fit: r.fit && r.fit.hits.length ? { value: r.fit.score, tone: r.fit.score > 0 ? ("good" as const) : ("bad" as const) } : 0,
+            fitWhy: fitText(r.fit ?? null)?.replace(/^Fit [^·]+· /, "") ?? null,
+            group: f?.group?.group ?? null,
+            ownership: [f?.ownership ? OWNERSHIP[f.ownership] ?? f.ownership : null, f?.investment ? `raised ${f.investment}` : null].filter(Boolean).join(", ") || null,
+            linkedin: f?.linkedin ? { value: "LinkedIn", url: f.linkedin } : null,
+            owner: r.owner_name,
+            lastE1: r.last_e1_at,
+            lastBy: r.last_e1_by,
+            sequences: r.send_count ?? r.sends.length,
+            sends: r.sends_in_window,
+            eligibleOn: r.eligible_on,
+            state: rowState(r, view),
+          };
+        }),
+      },
+    ],
+  };
 }
 
 export default function OutreachPage() {
@@ -168,6 +248,14 @@ function OutreachInner() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [shown, setShown] = useState(50);
+  // Factor fit first by default; the choice is remembered on this device.
+  const [sort, setSortState] = useState<SortKey>("fit");
+  const [fitContext, setFitContext] = useState<FitContext | null>(null);
+  useEffect(() => setSortState(loadSort("fit")), []);
+  const setSort = (k: SortKey) => {
+    setSortState(k);
+    saveSort(k);
+  };
   const [screen, setScreen] = useState<{ pending: number; running: boolean; step: string | null; checkedToday: number; dailyCap: number; capped: boolean }>({ pending: 0, running: false, step: null, checkedToday: 0, dailyCap: 0, capped: false });
   const readyRef = useRef(0);
   const settingsRef = useRef<Settings | null>(null);
@@ -245,6 +333,7 @@ function OutreachInner() {
       if (!res.ok) throw new Error(data.error ?? "Could not load");
       const rows = (data.items ?? []) as Row[];
       setItems(rows);
+      setFitContext((data.fit ?? null) as FitContext | null);
       const week = await weekRes.json().catch(() => null);
       setWeekCount(Array.isArray(week?.items) ? week.items.length : null);
       const set = await setRes.json().catch(() => null);
@@ -343,10 +432,13 @@ function OutreachInner() {
   const eligibleAll = useMemo(() => open.filter((r) => r.rule_status === "eligible"), [open]);
   const next = useMemo(() => {
     const rank = (r: Row) => (r.screen_status === "software" ? 0 : 1);
-    return eligibleAll
+    const base = eligibleAll
       .filter((r) => r.screen_status === "software" || r.screen_status === "unclear")
       .sort((a, b) => rank(a) - rank(b) || ((a.last_e1_at ?? "") < (b.last_e1_at ?? "") ? -1 : 1));
-  }, [eligibleAll]);
+    // Checked-as-software rows stay above "unclear" ones whatever the sort.
+    const facts = (r: Row) => ({ fit: r.fit ?? null, founded: r.founded ?? null, employees: r.employees, sends: r.send_count ?? r.sends.length });
+    return [...sortRows(base.filter((r) => rank(r) === 0), sort, facts), ...sortRows(base.filter((r) => rank(r) === 1), sort, facts)];
+  }, [eligibleAll, sort]);
   const unchecked = useMemo(() => eligibleAll.filter((r) => r.screen_status === "pending" || r.screen_status === "error").length, [eligibleAll]);
   const waiting = useMemo(() => open.filter((r) => r.rule_status !== "eligible").sort((a, b) => ((a.eligible_on ?? "9999") < (b.eligible_on ?? "9999") ? -1 : 1)), [open]);
   const filtered = useMemo(() => eligibleAll.filter((r) => r.screen_status === "not_software" || r.screen_status === "wrong_market" || r.screen_status === "acquired"), [eligibleAll]);
@@ -373,7 +465,10 @@ function OutreachInner() {
           <h1 className="text-2xl font-normal tracking-tight text-ink">{VIEW_LABEL[view]}</h1>
           <p className="mt-1 text-sm text-ink-secondary">{statusLine}</p>
         </div>
-        <div className="relative shrink-0">
+        <div className="relative flex shrink-0 items-center gap-2">
+          {(view === "next" || view === "waiting" || view === "filtered" || view === "done") && list.length > 0 ? (
+            <ExportButton build={() => listExport(list, view, settings?.minEmployees ?? 15, statusLine, view === "next" ? sort : null)} />
+          ) : null}
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
@@ -440,8 +535,20 @@ function OutreachInner() {
             : "Nothing here."}
         </p>
       ) : (
+        <>
+        {view === "next" ? (
+          <div className="mb-3 space-y-1">
+            <SortSelect value={sort} onChange={setSort} />
+            <FitLegend context={fitContext} />
+          </div>
+        ) : null}
         <div className="rounded-md border border-line bg-white">
-          {list.map((row) => (
+          <Banded
+            rows={list}
+            on={view === "next" && sort === "fit"}
+            fit={(r) => r.fit ?? null}
+            rowKey={(r) => r.sf_account_id}
+            render={(row) => (
             <CandidateRow
               key={row.sf_account_id}
               row={row}
@@ -462,8 +569,10 @@ function OutreachInner() {
               onSkip={(reason) => void act(row, "skip", reason)}
               onReopen={() => void act(row, "reopen")}
             />
-          ))}
+            )}
+          />
         </div>
+        </>
       )}
 
       {view === "next" && next.length > shown ? (
@@ -510,7 +619,10 @@ function CandidateRow({
 }) {
   const isOpen = row.review_status === "open";
   const site = hrefOf(row.website);
-  const lastContact = row.last_e1_at ? `Last contacted ${fmtDate(row.last_e1_at)}${row.last_e1_by ? ` by ${firstName(row.last_e1_by)}` : ""}` : "Never contacted";
+  const sequences = row.send_count ?? row.sends.length;
+  const lastContact =
+    (row.last_e1_at ? `Last contacted ${fmtDate(row.last_e1_at)}${row.last_e1_by ? ` by ${firstName(row.last_e1_by)}` : ""}` : "Never contacted") +
+    (sequences > 0 ? ` · ${sequences} ${sequences === 1 ? "sequence" : "sequences"} in the last 400 days` : "");
   const lineTwo = describe(row);
   // Line three carries the state the row is in when it is not simply "next".
   const lineThree =
@@ -573,6 +685,7 @@ function CandidateRow({
             </a>
           </div>
           {lineTwo ? <p className="truncate text-[13px] text-ink-secondary">{lineTwo}</p> : null}
+          <FitLine fit={row.fit ?? null} />
           <p className="flex items-center gap-1 text-[13px] text-ink-secondary">
             <span className="truncate">{lastContact}</span>
             <ChevronDown size={14} strokeWidth={1.5} className={`shrink-0 text-ink-muted transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden />
@@ -680,6 +793,59 @@ function RulesPanel({ settings, onSaved }: { settings: Settings; onSaved: (s: Se
   );
 }
 
+/** "Check a list" results as a sheet, in the order pasted. */
+function checkExport(rows: CheckRow[], minEmployees: number, sort: SortKey): ExportRequest {
+  return {
+    filename: exportName("Outreach - Check a list", new Date().toISOString().slice(0, 10)),
+    sheets: [
+      {
+        name: "Check a list",
+        title: "Outreach · Check a list",
+        subtitle: `${rows.length} names checked against Salesforce, sorted by ${SORT_LABEL[sort].toLowerCase()}. Employees under ${minEmployees} (your Min employees rule) are amber.`,
+        columns: [
+          { key: "input", header: "Pasted as" },
+          { key: "company", header: "Salesforce account" },
+          { key: "match", header: "Match" },
+          { key: "employees", header: "Employees", type: "integer" },
+          { key: "founded", header: "Founded", type: "year" },
+          { key: "country", header: "Country" },
+          { key: "fit", header: "Factor fit", type: "number" },
+          { key: "fitWhy", header: "Fit from" },
+          { key: "sequences", header: "Sequences sent (400 days)", type: "integer" },
+          { key: "owner", header: "Account owner" },
+          { key: "status", header: "Status" },
+          { key: "eligibleOn", header: "Eligible on", type: "date" },
+          { key: "reason", header: "Why", type: "wrap" },
+          { key: "lastSend", header: "Last send", type: "date" },
+          { key: "lastType", header: "Type" },
+          { key: "lastBy", header: "By" },
+        ],
+        rows: rows.map((r) => {
+          const v = r.verdict;
+          return {
+            input: r.input,
+            company: linkCell(r.accountName, r.accountUrl),
+            match: r.status === "not_found" ? { value: "No Salesforce match", tone: "bad" as const } : r.status === "multiple" ? { value: `${r.matchCount} matches, verify`, tone: "warn" as const } : "Matched",
+            employees: !r.accountId ? null : r.employees == null ? { value: "Unknown", tone: "muted" as const } : r.employees < minEmployees ? { value: r.employees, tone: "warn" as const } : r.employees,
+            founded: r.founded,
+            country: r.country,
+            fit: !r.accountId ? null : r.fit && r.fit.hits.length ? { value: r.fit.score, tone: r.fit.score > 0 ? ("good" as const) : ("bad" as const) } : 0,
+            fitWhy: fitText(r.fit ?? null)?.replace(/^Fit [^·]+· /, "") ?? null,
+            sequences: r.accountId ? r.sendCount : null,
+            owner: r.owner,
+            status: !v ? null : v.status === "eligible" ? { value: "Eligible", tone: "good" as const } : v.status === "wait" ? "Wait" : { value: "Blocked", tone: "bad" as const },
+            eligibleOn: v?.status === "wait" ? v.eligibleOn : null,
+            reason: v?.reason ?? null,
+            lastSend: r.lastSend?.date ?? null,
+            lastType: r.lastSend?.type ?? null,
+            lastBy: r.lastSend?.by ?? null,
+          };
+        }),
+      },
+    ],
+  };
+}
+
 /** minEmployees: the module's own "Min employees" setting; smaller companies show in orange. */
 function CheckList({ onPushed, minEmployees }: { onPushed: () => void; minEmployees: number }) {
   const [text, setText] = useState("");
@@ -688,6 +854,18 @@ function CheckList({ onPushed, minEmployees }: { onPushed: () => void; minEmploy
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [pushed, setPushed] = useState<Set<string>>(new Set());
+  const [fitContext, setFitContext] = useState<FitContext | null>(null);
+  const [sort, setSortState] = useState<SortKey>("fit");
+  useEffect(() => setSortState(loadSort("fit")), []);
+  const setSort = (k: SortKey) => {
+    setSortState(k);
+    saveSort(k);
+  };
+  // Pasted order for "Longest since contact" (the list has no contact order of its own); no-match rows always last.
+  const sorted = useMemo(() => {
+    const facts = (r: CheckRow) => ({ fit: r.fit ?? null, founded: r.founded, employees: r.employees, sends: r.accountId ? r.sendCount : null });
+    return [...sortRows(rows.filter((r) => r.accountId), sort, facts), ...rows.filter((r) => !r.accountId)];
+  }, [rows, sort]);
 
   async function check() {
     const names = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -699,6 +877,7 @@ function CheckList({ onPushed, minEmployees }: { onPushed: () => void; minEmploy
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Check failed");
       setRows(data.rows ?? []);
+      setFitContext((data.fit ?? null) as FitContext | null);
       setPushed(new Set());
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Check failed");
@@ -747,8 +926,17 @@ function CheckList({ onPushed, minEmployees }: { onPushed: () => void; minEmploy
       </div>
       {err ? <p className="mt-3 text-sm text-danger">{err}</p> : null}
       {rows.length > 0 ? (
-        <div className="mt-5 rounded-md border border-line bg-white">
-          {rows.map((row) => {
+        <div className="mt-5 space-y-1">
+          <div className="flex items-center justify-between gap-3">
+            <SortSelect value={sort} onChange={setSort} />
+            <ExportButton build={() => checkExport(sorted, minEmployees, sort)} />
+          </div>
+          <FitLegend context={fitContext} />
+        </div>
+      ) : null}
+      {rows.length > 0 ? (
+        <div className="mt-2 rounded-md border border-line bg-white">
+          <Banded rows={sorted} on={sort === "fit"} fit={(r) => r.fit ?? null} bandOf={(r) => (r.accountId ? null : { key: "nomatch", label: "Not found in Salesforce" })} rowKey={(r) => r.input} render={(row) => {
             const v = row.verdict;
             const state = row.status === "not_found" ? "No Salesforce match" : !v ? "" : v.status === "eligible" ? "Eligible" : v.status === "wait" ? `Wait until ${fmtDate(v.eligibleOn)}` : "Blocked";
             const isPushed = !!row.accountId && pushed.has(row.accountId);
@@ -770,9 +958,11 @@ function CheckList({ onPushed, minEmployees }: { onPushed: () => void; minEmploy
                         {row.employees == null ? "Employees unknown" : `${row.employees.toLocaleString("en-CA")} employee${row.employees === 1 ? "" : "s"}`}
                       </span>
                     ) : null}
+                    {row.accountId ? [row.founded ? `founded ${row.founded}` : null, row.country, `${row.sendCount} ${row.sendCount === 1 ? "sequence" : "sequences"} in 400 days`].filter(Boolean).map((t) => ` · ${t}`).join("") : null}
                     {row.accountId && (state || v?.reason) ? " · " : null}
                     {[state, v?.reason].filter(Boolean).join(" · ")}
                   </p>
+                  {row.accountId ? <FitLine fit={row.fit ?? null} /> : null}
                 </div>
                 {row.accountId ? (
                   isPushed ? (
@@ -785,7 +975,7 @@ function CheckList({ onPushed, minEmployees }: { onPushed: () => void; minEmploy
                 ) : null}
               </div>
             );
-          })}
+          }} />
         </div>
       ) : null}
     </div>
